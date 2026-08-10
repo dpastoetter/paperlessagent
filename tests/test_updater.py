@@ -183,7 +183,10 @@ def test_apply_update_refuses_checksum_mismatch(isolated_root, monkeypatch):
 
 
 def test_apply_update_installs_verified_release(isolated_root, monkeypatch):
-    tarball = _make_tarball({"pyproject.toml": b'[project]\nversion = "9.9.9"\n'})
+    tarball = _make_tarball(
+        {"pyproject.toml": b'[project]\nversion = "9.9.9"\n'},
+        root="paperlessagent-9.9.9",
+    )
     digest = hashlib.sha256(tarball).hexdigest()
     monkeypatch.setattr(
         "paperless_agent.updater.check_for_update",
@@ -193,10 +196,15 @@ def test_apply_update_installs_verified_release(isolated_root, monkeypatch):
             "latest_version": "9.9.9",
             "update_available": True,
             "verifiable": True,
-            "download_url": "https://example.invalid/paperlessagent-9.9.9.tar.gz",
+            "download_url": (
+                "https://github.com/dpastoetter/paperlessagent/releases/download/"
+                "v9.9.9/paperlessagent-9.9.9.tar.gz"
+            ),
             "expected_sha256": digest,
             "artifact_name": "paperlessagent-9.9.9.tar.gz",
-            "commit_sha": None,
+            # Commit SHA is present for the release tag, but versioned archive
+            # roots must still install after checksum verification.
+            "commit_sha": "a" * 40,
         },
     )
     monkeypatch.setattr(

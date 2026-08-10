@@ -417,16 +417,9 @@ def apply_update() -> dict[str, Any]:
     except ValueError as exc:
         return {"status": "error", "error": str(exc)}
 
-    # Prefer commit-folder matching for GitHub-style archives; skip when the
-    # publisher shipped a custom-prefixed root that still has a checksum.
-    expect_commit = bool(info.get("commit_sha")) and "github.com" in (
-        info.get("download_url") or ""
-    )
-    result = apply_tarball(
-        tar_bytes,
-        commit_sha=info.get("commit_sha"),
-        expect_commit_match=expect_commit,
-    )
+    # Release assets use versioned roots (paperlessagent-0.1.2/), not GitHub's
+    # {owner}-{repo}-{sha}/ layout. Integrity comes from the SHA-256 check above.
+    result = apply_tarball(tar_bytes)
     if result.get("status") != "success":
         return result
 
