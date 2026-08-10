@@ -63,13 +63,13 @@ PAPERLESS_DIR=~/apps/paperlessagent curl -fsSL \
 curl -fsSL https://raw.githubusercontent.com/dpastoetter/paperlessagent/main/scripts/install.sh | bash
 ```
 
-Needs **Python 3.10+**, **git**, and **Poppler** (`pdftoppm`) for PDF OCR:
+Needs **Python 3.10+** (with the `venv` module), **git**, and **Poppler** (`pdftoppm`) for PDF OCR:
 
 ```bash
 # Fedora / RHEL
 sudo dnf install poppler-utils
-# Debian / Ubuntu
-sudo apt install poppler-utils
+# Debian / Ubuntu — python3-venv is required for .venv creation
+sudo apt install python3-venv poppler-utils
 # macOS
 brew install poppler
 ```
@@ -148,8 +148,8 @@ uvicorn app.main:app --port 8080
 
 | Symptom | Fix |
 | --- | --- |
-| `.venv/bin/activate: No such file or directory` | Run the [one-line install](#one-line-install-recommended) or the [manual setup](#manual-setup) venv steps |
-| `ModuleNotFoundError: No module named 'fastapi'` | Same — dependencies were never installed, or the venv was not activated |
+| `.venv/bin/activate: No such file or directory` | Re-run the installer. On Debian/Ubuntu also install `python3-venv`, then remove a broken leftover with `rm -rf ~/paperlessagent/.venv` and install again |
+| `ModuleNotFoundError: No module named 'fastapi'` | Same — dependencies were never installed into `.venv`, or the venv was not activated |
 
 Uvicorn binds to `127.0.0.1` by default — keep it that way. The API has no login; mutating routes are protected against cross-site form posts by a custom header the UI always sends, but binding with `--host 0.0.0.0` would still expose your documents and settings to anyone on the network.
 

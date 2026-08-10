@@ -64,17 +64,46 @@ fi
 cd "$INSTALL_DIR"
 
 # --- virtualenv + deps -------------------------------------------------------
+venv_usable() {
+  [ -x .venv/bin/python ] && [ -f .venv/bin/activate ]
+}
+
+create_venv() {
+  # Capture failures (common on Debian/Ubuntu when python3-venv is missing).
+  if ! python3 -m venv .venv; then
+    rm -rf .venv
+    die "python3 -m venv failed — install the venv package, then re-run:
+    Debian/Ubuntu:  sudo apt install python3-venv
+    Fedora/RHEL:    sudo dnf install python3
+    macOS:          brew install python"
+  fi
+  venv_usable || {
+    rm -rf .venv
+    die "venv was created but .venv/bin/activate is missing — re-run after:
+    Debian/Ubuntu:  sudo apt install python3-venv"
+  }
+}
+
 bold "Creating virtualenv"
-if [ ! -d .venv ]; then
-  python3 -m venv .venv
+if venv_usable; then
+  ok "reusing existing .venv"
+else
+  if [ -e .venv ]; then
+    warn "existing .venv is incomplete — recreating"
+    rm -rf .venv
+  fi
+  create_venv
+  ok "created .venv"
 fi
-# shellcheck disable=SC1091
-source .venv/bin/activate
+
+# Prefer the venv interpreter directly so a broken activate cannot silently
+# fall through to system pip/uvicorn.
+VENV_PY="$INSTALL_DIR/.venv/bin/python"
 ok "venv at $INSTALL_DIR/.venv"
 
 bold "Installing Python packages"
-python -m pip install -U pip >/dev/null
-pip install -r requirements.txt
+"$VENV_PY" -m pip install -U pip >/dev/null
+"$VENV_PY" -m pip install -r requirements.txt
 ok "dependencies installed"
 
 # --- config ------------------------------------------------------------------
