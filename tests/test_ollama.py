@@ -12,11 +12,14 @@ from paperless_agent import config, llm
 from paperless_agent.llm import complete_text, complete_with_images
 from paperless_agent.ollama_setup import (
     apply_llm_provider,
+    clear_ollama_tags_cache,
     enable_ollama,
     format_http_error,
     missing_models,
     model_name_matches,
     ollama_status,
+    resolve_installed_model,
+    resolve_runtime_model,
     upsert_env_values,
 )
 from paperless_agent.tools import rag_index
@@ -115,8 +118,33 @@ def test_embed_texts_rejects_bad_response_shape(monkeypatch):
 
 def test_model_name_matching():
     assert model_name_matches("gemma3:latest", "gemma3")
+    assert model_name_matches("gemma3:4b", "gemma3")
     assert model_name_matches("nomic-embed-text", "nomic-embed-text")
     assert not model_name_matches("llama3.2", "gemma3")
+
+
+def test_resolve_installed_model_prefers_size_tag():
+    assert (
+        resolve_installed_model("gemma3", ["gemma3:4b", "nomic-embed-text:latest"])
+        == "gemma3:4b"
+    )
+    assert (
+        resolve_installed_model("gemma3", ["gemma3:12b", "gemma3:latest"])
+        == "gemma3:latest"
+    )
+    assert resolve_installed_model("gemma3", ["llama3.2:latest"]) is None
+
+
+def test_complete_ollama_uses_resolved_local_tag(ollama_provider, monkeypatch):
+    clear_ollama_tags_cache()
+    monkeypatch.setattr(
+        "paperless_agent.llm.resolve_runtime_model",
+        lambda wanted, **_k: "gemma3:4b" if wanted == "gemma3" else wanted,
+    )
+    monkeypatch.setattr(config, "MODEL_NAME", "gemma3")
+    result = asyncio.run(complete_text("hello", instructions="sys"))
+    assert result == "transcribed text"
+    assert ollama_provider[0]["model"] == "gemma3:4b"
 
 
 def test_missing_models_detects_chat_and_embed():

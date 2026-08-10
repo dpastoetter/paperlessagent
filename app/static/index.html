@@ -300,17 +300,20 @@
           </div>
 
           <div id="cloud-auth-panel" class="cloud-auth-panel" data-locked="true">
-            <div id="cloud-disclaimer" class="cloud-disclaimer">
-              <p class="disclaimer-title">Cloud processing disclaimer</p>
-              <p class="fine">
-                ChatGPT, OpenAI API keys, and Gemini send document <strong>page images and text</strong>
-                to that cloud provider for OCR, extraction, naming, and Ask.
-                Files can still be stored on this machine, but AI processing is
-                <strong>not local</strong>. Choose <strong>Local Ollama</strong> if you want models to run only on this device.
-              </p>
+            <div id="cloud-disclaimer" class="cloud-disclaimer" data-accepted="false">
+              <div class="disclaimer-copy">
+                <p class="section-kicker">Before you continue</p>
+                <p class="disclaimer-lead">Cloud AI sends your documents off this machine.</p>
+                <p class="disclaimer-body">
+                  Page images and extracted text go to ChatGPT, OpenAI, or Gemini for OCR,
+                  filing, and Ask. Storage can stay local — processing does not.
+                  Use <span class="disclaimer-em">Local Ollama</span> to keep AI on-device.
+                </p>
+              </div>
               <label class="disclaimer-check">
                 <input type="checkbox" id="cloud-disclaimer-accept" />
-                <span>I understand and approve sending my documents to a cloud AI provider</span>
+                <span class="disclaimer-check-box" aria-hidden="true"></span>
+                <span class="disclaimer-check-label">I approve cloud processing for my documents</span>
               </label>
             </div>
 

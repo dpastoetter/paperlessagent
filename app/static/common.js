@@ -111,6 +111,8 @@ function setCloudAuthLocked(locked) {
 
 function applyCloudDisclaimerStatus(status) {
   cloudDisclaimerAccepted = Boolean(status?.accepted);
+  const box = document.getElementById("cloud-disclaimer");
+  if (box) box.dataset.accepted = cloudDisclaimerAccepted ? "true" : "false";
   setCloudAuthLocked(!cloudDisclaimerAccepted);
   return cloudDisclaimerAccepted;
 }
@@ -185,10 +187,12 @@ function renderOllamaStatus(ollama) {
     return;
   }
 
+  const chatLabel = ollama.resolved_chat_model || ollama.chat_model;
+  const embedLabel = ollama.resolved_embedding_model || ollama.embedding_model;
   if (statusEl) {
     statusEl.textContent = ollama.active
-      ? `Using local Ollama · ${ollama.chat_model} + ${ollama.embedding_model}`
-      : `Ollama ready · ${ollama.chat_model} + ${ollama.embedding_model}`;
+      ? `Using local Ollama · ${chatLabel} + ${embedLabel}`
+      : `Ollama ready · ${chatLabel} + ${embedLabel}`;
     statusEl.dataset.tone = "ok";
   }
   if (hintEl) {
@@ -199,7 +203,7 @@ function renderOllamaStatus(ollama) {
   if (ollama.active) {
     const authLine = document.getElementById("auth-status");
     if (authLine) {
-      authLine.textContent = `Local Ollama · ${ollama.chat_model}`;
+      authLine.textContent = `Local Ollama · ${chatLabel}`;
       authLine.dataset.tone = "ok";
     }
     if (section) section.dataset.ready = "true";

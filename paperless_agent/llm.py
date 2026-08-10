@@ -21,7 +21,7 @@ from paperless_agent.codex_oauth import (
     ORIGINATOR,
     get_valid_chatgpt_tokens,
 )
-from paperless_agent.ollama_setup import format_http_error
+from paperless_agent.ollama_setup import format_http_error, resolve_runtime_model
 
 # ChatGPT Codex backend rejects many Platform API model IDs (e.g. gpt-4.1).
 CODEX_DEFAULT_MODEL = os.getenv("PAPERLESS_CODEX_MODEL", "gpt-5.6-luna").strip() or "gpt-5.6-luna"
@@ -117,7 +117,7 @@ def get_model() -> Any:
         os.environ["OPENAI_BASE_URL"] = f"{config.OLLAMA_BASE_URL}/v1"
         if not os.environ.get("OPENAI_API_KEY"):
             os.environ["OPENAI_API_KEY"] = "ollama"
-        return OpenAILlm(model=model_name)
+        return OpenAILlm(model=resolve_runtime_model(model_name))
     if config.LLM_PROVIDER != "openai":
         return model_name
 
@@ -220,6 +220,8 @@ async def _complete_ollama(
     images: list[bytes] | None = None,
 ) -> str:
     """Text or multimodal completion via a local Ollama server."""
+    # Config may say "gemma3" while the local tag is "gemma3:4b".
+    resolved = resolve_runtime_model(model_name)
     user_message: dict[str, Any] = {"role": "user", "content": prompt}
     if images:
         user_message["images"] = [
@@ -227,7 +229,7 @@ async def _complete_ollama(
         ]
     data = await _ollama_request(
         {
-            "model": model_name,
+            "model": resolved,
             "messages": [
                 {"role": "system", "content": instructions},
                 user_message,

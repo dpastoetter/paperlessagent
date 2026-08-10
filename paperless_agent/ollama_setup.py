@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -15,8 +16,11 @@ DEFAULT_CHAT_MODEL = "gemma3"
 DEFAULT_EMBED_MODEL = "nomic-embed-text"
 PROBE_TIMEOUT = 0.6
 PULL_TIMEOUT = 600.0
+_TAGS_CACHE_TTL = 30.0
 
 _ENV_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+# (expires_at, base_url, models)
+_tags_cache: tuple[float, str, list[str]] | None = None
 
 
 def env_path() -> Path:
@@ -38,6 +42,60 @@ def model_name_matches(installed: str, wanted: str) -> bool:
 
 def tags_include(models: list[str], wanted: str) -> bool:
     return any(model_name_matches(name, wanted) for name in models)
+
+
+def resolve_installed_model(wanted: str, installed: list[str]) -> str | None:
+    """
+    Map a configured name (e.g. gemma3) to an installed Ollama tag (e.g. gemma3:4b).
+
+    Ollama does not always alias bare names to size-tagged variants, so API calls
+    must use a concrete local tag.
+    """
+    want = (wanted or "").strip()
+    if not want:
+        return None
+    matches = [name for name in installed if model_name_matches(name, want)]
+    if not matches:
+        return None
+
+    want_l = want.lower()
+
+    def rank(name: str) -> tuple[int, int, str]:
+        lower = name.lower()
+        if lower == want_l:
+            return (0, 0, lower)
+        if lower == f"{want_l}:latest":
+            return (1, 0, lower)
+        # Prefer shorter concrete tags (gemma3:4b before gemma3:27b).
+        return (2, len(lower), lower)
+
+    return sorted(matches, key=rank)[0]
+
+
+def clear_ollama_tags_cache() -> None:
+    global _tags_cache
+    _tags_cache = None
+
+
+def list_installed_models(base_url: str | None = None) -> list[str]:
+    """Cached list of local Ollama model tags."""
+    global _tags_cache
+    url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
+    now = time.monotonic()
+    if _tags_cache is not None:
+        expires_at, cached_url, models = _tags_cache
+        if cached_url == url and now < expires_at:
+            return list(models)
+    probe = probe_ollama(url)
+    models = list(probe.get("models") or []) if probe.get("reachable") else []
+    _tags_cache = (now + _TAGS_CACHE_TTL, url, models)
+    return list(models)
+
+
+def resolve_runtime_model(wanted: str, *, base_url: str | None = None) -> str:
+    """Resolve configured model to an installed tag; fall back to the configured name."""
+    installed = list_installed_models(base_url)
+    return resolve_installed_model(wanted, installed) or (wanted or "").strip()
 
 
 def probe_ollama(base_url: str | None = None, *, timeout: float = PROBE_TIMEOUT) -> dict[str, Any]:
@@ -248,7 +306,13 @@ def ollama_status(*, base_url: str | None = None) -> dict[str, Any]:
     chat, embed = required_models()
     probe = probe_ollama(url)
     installed = list(probe.get("models") or [])
+    # Keep the tags cache warm for subsequent chat/embed calls.
+    global _tags_cache
+    if probe.get("reachable"):
+        _tags_cache = (time.monotonic() + _TAGS_CACHE_TTL, url, installed)
     missing = missing_models(installed, chat=chat, embed=embed) if probe["reachable"] else [chat, embed]
+    resolved_chat = resolve_installed_model(chat, installed)
+    resolved_embed = resolve_installed_model(embed, installed)
     active = config.LLM_PROVIDER == "ollama"
     ready = bool(probe["reachable"] and not missing and active)
     return {
@@ -260,6 +324,8 @@ def ollama_status(*, base_url: str | None = None) -> dict[str, Any]:
         "installed_models": installed,
         "chat_model": chat,
         "embedding_model": embed,
+        "resolved_chat_model": resolved_chat,
+        "resolved_embedding_model": resolved_embed,
         "missing_models": missing,
         "pull_command": pull_hint(missing),
         "error": probe.get("error"),
@@ -311,6 +377,7 @@ def pull_model(model: str, *, base_url: str | None = None) -> dict[str, Any]:
     except httpx.HTTPError as exc:
         raise RuntimeError(format_http_error(exc, model=name, kind="pull")) from exc
 
+    clear_ollama_tags_cache()
     status = ollama_status(base_url=url)
     return {
         "status": "success",

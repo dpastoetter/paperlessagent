@@ -942,9 +942,9 @@ input:focus, textarea:focus {
 
 /* ————— Auth / settings ————— */
 .provider-switch .btn[data-active="true"] {
-  background: var(--panel-2, var(--bg-2));
+  background: var(--panel-2);
   border-color: var(--accent);
-  color: var(--text);
+  color: var(--ink);
 }
 
 .ollama-panel {
@@ -959,43 +959,127 @@ input:focus, textarea:focus {
 }
 
 .cloud-disclaimer {
-  margin-top: 0.85rem;
-  padding: 0.85rem 1rem;
+  margin-top: 0.9rem;
+  padding: 1rem 1.1rem;
   border: 1px solid var(--line);
-  border-radius: 0.55rem;
-  background: color-mix(in srgb, var(--warn) 8%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
   display: grid;
-  gap: 0.55rem;
+  gap: 0.9rem;
 }
 
-.disclaimer-title {
+.disclaimer-copy {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.disclaimer-lead {
   margin: 0;
+  color: var(--ink);
+  font-size: var(--type-md);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.3;
+}
+
+.disclaimer-body {
+  margin: 0;
+  color: var(--muted);
   font-size: var(--type-sm);
-  font-weight: 650;
-  letter-spacing: -0.02em;
+  line-height: 1.5;
+  max-width: 46rem;
+}
+
+.disclaimer-em {
+  color: var(--ink);
+  font-weight: 550;
 }
 
 .disclaimer-check {
   display: flex;
-  gap: 0.55rem;
-  align-items: flex-start;
+  gap: 0.7rem;
+  align-items: center;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+  color: var(--ink);
   font-size: var(--type-sm);
-  color: var(--text);
   cursor: pointer;
+  transition: border-color 160ms var(--ease), background 160ms var(--ease);
+}
+
+.disclaimer-check:hover {
+  border-color: var(--line-strong);
+  background: var(--hover);
 }
 
 .disclaimer-check input {
-  margin-top: 0.2rem;
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}
+
+.disclaimer-check-box {
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 0.3rem;
+  border: 1.5px solid var(--line-strong);
+  background: var(--bg-deep);
   flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  transition: border-color 160ms var(--ease), background 160ms var(--ease), box-shadow 160ms var(--ease);
+}
+
+.disclaimer-check-box::after {
+  content: "";
+  width: 0.35rem;
+  height: 0.6rem;
+  border: solid transparent;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) translate(-0.5px, -1px);
+  opacity: 0;
+}
+
+.disclaimer-check input:focus-visible + .disclaimer-check-box {
+  box-shadow: 0 0 0 3px var(--accent-dim);
+  border-color: var(--accent);
+}
+
+.disclaimer-check input:checked + .disclaimer-check-box {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.disclaimer-check input:checked + .disclaimer-check-box::after {
+  border-color: var(--accent-ink);
+  opacity: 1;
+}
+
+.disclaimer-check-label {
+  line-height: 1.35;
+}
+
+.cloud-disclaimer[data-accepted="true"] {
+  border-color: color-mix(in srgb, var(--ok) 28%, var(--line));
+  background: color-mix(in srgb, var(--ok) 6%, var(--inset));
+}
+
+.cloud-disclaimer[data-accepted="true"] .disclaimer-check {
+  border-color: color-mix(in srgb, var(--ok) 35%, var(--line));
 }
 
 .cloud-auth-panel[data-locked="true"] .cloud-auth-bar,
 .cloud-auth-panel[data-locked="true"] #auth-details {
-  opacity: 0.55;
+  opacity: 0.45;
+  pointer-events: none;
 }
 
 .cloud-auth-bar {
-  margin-top: 0.75rem;
+  margin-top: 0.9rem;
   padding-top: 0;
 }
 
