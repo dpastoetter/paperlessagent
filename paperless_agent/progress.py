@@ -1,0 +1,140 @@
+"""In-memory progress bus for live ingest workflow visualization (SSE)."""
+
+from __future__ import annotations
+
+import asyncio
+import contextvars
+import time
+import uuid
+from collections import deque
+from collections.abc import AsyncIterator
+from typing import Any
+
+# Bound to the file currently being ingested (set by process_inbox / ingest).
+current_file_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "progress_file_id", default=None
+)
+current_job_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "progress_job_id", default=None
+)
+
+_BUFFER_SIZE = 200
+_lock = asyncio.Lock()
+_buffer: deque[dict[str, Any]] = deque(maxlen=_BUFFER_SIZE)
+_subscribers: set[asyncio.Queue[dict[str, Any] | None]] = set()
+
+
+def _now() -> float:
+    return time.time()
+
+
+async def publish(event: dict[str, Any]) -> dict[str, Any]:
+    """Publish a progress event to the ring buffer and all SSE subscribers."""
+    payload = {
+        **event,
+        "ts": event.get("ts") or _now(),
+        "job_id": event.get("job_id") or current_job_id.get(),
+        "file_id": event.get("file_id") or current_file_id.get(),
+    }
+    async with _lock:
+        _buffer.append(payload)
+        dead: list[asyncio.Queue[dict[str, Any] | None]] = []
+        for queue in _subscribers:
+            try:
+                queue.put_nowait(payload)
+            except asyncio.QueueFull:
+                dead.append(queue)
+        for queue in dead:
+            _subscribers.discard(queue)
+    return payload
+
+
+def publish_sync(event: dict[str, Any]) -> None:
+    """Schedule publish from sync code (best-effort)."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.create_task(publish(event))
+
+
+async def emit_step(
+    step_id: str,
+    *,
+    label: str,
+    status: str,
+    detail: str | None = None,
+    file_id: str | None = None,
+    job_id: str | None = None,
+    filename: str | None = None,
+) -> None:
+    await publish(
+        {
+            "type": "step",
+            "step_id": step_id,
+            "label": label,
+            "status": status,
+            "detail": detail,
+            "file_id": file_id,
+            "job_id": job_id,
+            "filename": filename,
+        }
+    )
+
+
+def emit_step_sync(
+    step_id: str,
+    *,
+    label: str,
+    status: str,
+    detail: str | None = None,
+    filename: str | None = None,
+) -> None:
+    publish_sync(
+        {
+            "type": "step",
+            "step_id": step_id,
+            "label": label,
+            "status": status,
+            "detail": detail,
+            "filename": filename,
+        }
+    )
+
+
+async def subscribe(*, replay: bool = True) -> AsyncIterator[dict[str, Any]]:
+    """Yield progress events; optionally replay recent buffer first."""
+    queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(maxsize=256)
+    async with _lock:
+        snapshot = list(_buffer) if replay else []
+        _subscribers.add(queue)
+    try:
+        for item in snapshot:
+            yield item
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            yield item
+    finally:
+        async with _lock:
+            _subscribers.discard(queue)
+
+
+def new_job_id() -> str:
+    return str(uuid.uuid4())
+
+
+def new_file_id() -> str:
+    return str(uuid.uuid4())
+
+
+PIPELINE_STEPS = (
+    {"id": "read", "label": "Read"},
+    {"id": "ai_ocr", "label": "AI OCR"},
+    {"id": "extract", "label": "Extract"},
+    {"id": "name", "label": "Name"},
+    {"id": "review", "label": "Review"},
+    {"id": "file", "label": "File"},
+    {"id": "index", "label": "Index"},
+)

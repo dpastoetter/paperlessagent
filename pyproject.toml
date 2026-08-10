@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paperlessagent"
+version = "0.1.0"
+description = "Local ADK agent for ingesting, filing, and querying scanned documents with RAG"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+dependencies = [
+  "google-adk>=2.0",
+  "google-genai",
+  "openai",
+  "fastapi",
+  "uvicorn[standard]",
+  "chromadb",
+  "pypdf",
+  "python-dotenv",
+  "watchdog",
+  "pillow",
+  "pdf2image",
+  "httpx",
+  "python-multipart",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["paperless_agent*", "query_agent*", "app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

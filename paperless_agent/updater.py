@@ -1,0 +1,217 @@
+"""Self-update: check GitHub for a newer release and install it in place."""
+
+from __future__ import annotations
+
+import io
+import logging
+import os
+import re
+import shutil
+import sys
+import tarfile
+import tempfile
+import threading
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+from paperless_agent import config
+
+logger = logging.getLogger(__name__)
+
+UPDATE_REPO = os.getenv("PAPERLESS_UPDATE_REPO", "dpastoetter/paperlessagent")
+GITHUB_API = "https://api.github.com"
+
+# Never overwritten by an update: user data, credentials, environments.
+PROTECTED_TOP_LEVEL = {"data", ".env", ".venv", "venv", ".git", "node_modules"}
+
+
+def get_current_version() -> str:
+    """Read the installed version from pyproject.toml."""
+    pyproject = Path(config.PROJECT_ROOT) / "pyproject.toml"
+    try:
+        text = pyproject.read_text(encoding="utf-8")
+    except OSError:
+        return "0.0.0"
+    match = re.search(r'^version\s*=\s*"([^"]+)"', text, flags=re.MULTILINE)
+    return match.group(1) if match else "0.0.0"
+
+
+def parse_version(value: str) -> tuple[int, ...]:
+    """'v1.2.3' → (1, 2, 3); non-numeric parts are ignored."""
+    numbers = re.findall(r"\d+", value or "")
+    return tuple(int(n) for n in numbers) or (0,)
+
+
+def is_newer(candidate: str, current: str) -> bool:
+    return parse_version(candidate) > parse_version(current)
+
+
+def _fetch_latest_release() -> dict[str, Any] | None:
+    """Latest GitHub release, falling back to the newest tag when none exist."""
+    headers = {"Accept": "application/vnd.github+json"}
+    with httpx.Client(timeout=15, follow_redirects=True, headers=headers) as client:
+        resp = client.get(f"{GITHUB_API}/repos/{UPDATE_REPO}/releases/latest")
+        if resp.status_code == 200:
+            data = resp.json()
+            return {
+                "tag": data.get("tag_name") or "",
+                "name": data.get("name") or data.get("tag_name") or "",
+                "notes": (data.get("body") or "")[:2000],
+                "published_at": data.get("published_at"),
+                "html_url": data.get("html_url"),
+                "tarball_url": data.get("tarball_url"),
+            }
+        if resp.status_code != 404:
+            resp.raise_for_status()
+
+        # No releases published — use the newest tag instead.
+        resp = client.get(f"{GITHUB_API}/repos/{UPDATE_REPO}/tags", params={"per_page": 1})
+        resp.raise_for_status()
+        tags = resp.json()
+        if not tags:
+            return None
+        tag = tags[0].get("name") or ""
+        return {
+            "tag": tag,
+            "name": tag,
+            "notes": "",
+            "published_at": None,
+            "html_url": f"https://github.com/{UPDATE_REPO}/releases",
+            "tarball_url": f"{GITHUB_API}/repos/{UPDATE_REPO}/tarball/{tag}",
+        }
+
+
+def check_for_update() -> dict[str, Any]:
+    """Compare the installed version against the latest GitHub release."""
+    current = get_current_version()
+    base = {
+        "status": "success",
+        "repo": UPDATE_REPO,
+        "current_version": current,
+        "update_available": False,
+    }
+    try:
+        latest = _fetch_latest_release()
+    except httpx.HTTPError as exc:
+        return {
+            "status": "error",
+            "repo": UPDATE_REPO,
+            "current_version": current,
+            "error": f"Could not reach GitHub: {exc}",
+        }
+    if latest is None:
+        return {**base, "message": "No releases or tags published on GitHub yet."}
+
+    return {
+        **base,
+        "latest_version": latest["tag"].lstrip("v"),
+        "latest_tag": latest["tag"],
+        "release_name": latest["name"],
+        "notes": latest["notes"],
+        "published_at": latest["published_at"],
+        "html_url": latest["html_url"],
+        "tarball_url": latest["tarball_url"],
+        "update_available": is_newer(latest["tag"], current),
+    }
+
+
+def _download_tarball(url: str) -> bytes:
+    with httpx.Client(timeout=120, follow_redirects=True) as client:
+        resp = client.get(url)
+        resp.raise_for_status()
+        return resp.content
+
+
+def _is_protected(relative: Path) -> bool:
+    parts = relative.parts
+    if not parts:
+        return True
+    if parts[0] in PROTECTED_TOP_LEVEL:
+        return True
+    # Never clobber local env files anywhere in the tree.
+    return relative.name == ".env"
+
+
+def apply_tarball(tar_bytes: bytes) -> dict[str, Any]:
+    """
+    Extract a GitHub source tarball and copy it over the install directory.
+
+    User data (data/), credentials (.env), virtualenvs, and .git are untouched.
+    """
+    root = Path(config.PROJECT_ROOT)
+    updated: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="paperless-update-") as tmp:
+        tmp_path = Path(tmp)
+        with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:*") as tar:
+            tar.extractall(tmp_path, filter="data")
+
+        # GitHub tarballs wrap everything in a single "{owner}-{repo}-{sha}/" dir.
+        entries = [p for p in tmp_path.iterdir() if p.is_dir()]
+        if len(entries) != 1:
+            return {"status": "error", "error": "unexpected tarball layout"}
+        source_root = entries[0]
+
+        for path in sorted(source_root.rglob("*")):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(source_root)
+            if _is_protected(relative):
+                continue
+            dest = root / relative
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, dest)
+            updated.append(str(relative))
+
+    return {"status": "success", "updated_count": len(updated), "updated": updated}
+
+
+def apply_update() -> dict[str, Any]:
+    """Download the latest release and install it over the current version."""
+    info = check_for_update()
+    if info.get("status") != "success":
+        return info
+    if not info.get("tarball_url"):
+        return {"status": "error", "error": info.get("message") or "no release to install"}
+    if not info.get("update_available"):
+        return {
+            "status": "error",
+            "error": f"Already up to date (v{info['current_version']}).",
+        }
+
+    try:
+        tar_bytes = _download_tarball(info["tarball_url"])
+    except httpx.HTTPError as exc:
+        return {"status": "error", "error": f"Download failed: {exc}"}
+
+    result = apply_tarball(tar_bytes)
+    if result.get("status") != "success":
+        return result
+
+    return {
+        **result,
+        "installed_version": info.get("latest_version"),
+        "previous_version": info["current_version"],
+        "restart_required": True,
+    }
+
+
+def schedule_restart(delay_seconds: float = 0.75) -> dict[str, Any]:
+    """
+    Restart the server process in-place after a short delay.
+
+    Re-executes the original command line (works for `uvicorn …` console
+    scripts and `python -m uvicorn …` alike), so the response below can still
+    be delivered before the process is replaced.
+    """
+    argv = [sys.executable, *sys.argv]
+
+    def _restart() -> None:
+        logger.info("Restarting: %s", " ".join(argv))
+        os.execv(sys.executable, argv)  # noqa: S606
+
+    timer = threading.Timer(delay_seconds, _restart)
+    timer.daemon = True
+    timer.start()
+    return {"status": "success", "message": "Restarting…", "command": argv}

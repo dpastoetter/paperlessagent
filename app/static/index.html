@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PaperlessAgent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <script>
+    // Apply the theme before first paint to avoid a flash (?theme= wins over stored).
+    try {
+      var t = new URLSearchParams(location.search).get("theme") || localStorage.getItem("pa-theme");
+      if (t) document.documentElement.dataset.theme = t;
+    } catch (e) { /* private mode */ }
+  </script>
+</head>
+<body>
+  <svg xmlns="http://www.w3.org/2000/svg" class="sprite" aria-hidden="true">
+    <symbol id="i-inbox" viewBox="0 0 24 24">
+      <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+      <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+    </symbol>
+    <symbol id="i-archive" viewBox="0 0 24 24">
+      <polyline points="21 8 21 21 3 21 3 8" />
+      <rect x="1" y="3" width="22" height="5" />
+      <line x1="10" y1="12" x2="14" y2="12" />
+    </symbol>
+    <symbol id="i-ask" viewBox="0 0 24 24">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24">
+      <line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" />
+      <line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" />
+      <line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" />
+      <line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" />
+      <line x1="17" y1="16" x2="23" y2="16" />
+    </symbol>
+    <symbol id="i-search" viewBox="0 0 24 24">
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </symbol>
+    <symbol id="i-file" viewBox="0 0 24 24">
+      <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+      <polyline points="13 2 13 9 20 9" />
+    </symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="17 8 12 3 7 8" />
+      <line x1="12" y1="3" x2="12" y2="15" />
+    </symbol>
+    <symbol id="i-play" viewBox="0 0 24 24">
+      <polygon points="5 3 19 12 5 21 5 3" />
+    </symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24">
+      <polyline points="23 4 23 10 17 10" />
+      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+    </symbol>
+    <symbol id="i-external" viewBox="0 0 24 24">
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      <polyline points="15 3 21 3 21 9" />
+      <line x1="10" y1="14" x2="21" y2="3" />
+    </symbol>
+    <symbol id="i-check" viewBox="0 0 24 24">
+      <polyline points="20 6 9 17 4 12" />
+    </symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24">
+      <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </symbol>
+    <symbol id="i-review" viewBox="0 0 24 24">
+      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+      <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+      <polyline points="9 13 11 15 15 11" />
+    </symbol>
+  </svg>
+
+  <div class="app">
+    <aside class="sidebar">
+      <div class="side-brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg class="icon"><use href="#i-file" /></svg>
+        </span>
+        <span class="brand-name">PaperlessAgent</span>
+      </div>
+
+      <nav class="side-nav" aria-label="Main navigation">
+        <a href="#/inbox" class="nav-item" data-view="inbox">
+          <svg class="icon" aria-hidden="true"><use href="#i-inbox" /></svg>
+          <span>Inbox</span>
+        </a>
+        <a href="#/review" class="nav-item" data-view="review">
+          <svg class="icon" aria-hidden="true"><use href="#i-review" /></svg>
+          <span>Review</span>
+          <span class="nav-badge hidden" id="review-badge">0</span>
+        </a>
+        <a href="#/archive" class="nav-item" data-view="archive">
+          <svg class="icon" aria-hidden="true"><use href="#i-archive" /></svg>
+          <span>Archive</span>
+        </a>
+        <a href="#/ask" class="nav-item" data-view="ask">
+          <svg class="icon" aria-hidden="true"><use href="#i-ask" /></svg>
+          <span>Ask</span>
+        </a>
+        <a href="#/settings" class="nav-item" data-view="settings">
+          <svg class="icon" aria-hidden="true"><use href="#i-settings" /></svg>
+          <span>Settings</span>
+        </a>
+      </nav>
+
+      <div class="side-status" id="status-chip" data-state="loading">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span class="side-status-text">
+          <span class="side-status-label">System</span>
+          <span id="health">checking…</span>
+        </span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <!-- ————— Inbox ————— -->
+      <section class="view" data-view="inbox" id="view-inbox">
+        <header class="view-head">
+          <div>
+            <h1>Inbox</h1>
+            <p>Drop scans into the inbox, then run the pipeline.</p>
+          </div>
+        </header>
+
+        <div class="inbox-grid">
+          <section class="card">
+            <h2 class="card-title">
+              <svg class="icon" aria-hidden="true"><use href="#i-upload" /></svg>
+              Add scans
+            </h2>
+            <form id="upload-form" class="upload" aria-label="Upload scan">
+              <label class="drop-zone" for="file">
+                <input type="file" id="file" accept=".pdf,image/*" required />
+                <span class="drop-visual" aria-hidden="true">
+                  <span class="drop-mark">+</span>
+                  <span class="drop-cue">Drop scan</span>
+                  <span class="drop-sub">PDF or image</span>
+                </span>
+              </label>
+              <p id="file-label" class="file-label">No file selected</p>
+              <button type="submit" class="btn primary stretch">Upload to inbox</button>
+            </form>
+
+            <p id="inbox-summary" class="status-line">Inbox: checking…</p>
+            <p id="process-status" class="status-line" aria-live="polite"></p>
+
+            <div class="actions tight">
+              <button id="refresh-inbox" type="button" class="btn ghost">
+                <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg>
+                Refresh
+              </button>
+              <button id="clear-inbox" type="button" class="btn ghost danger">Remove all</button>
+              <button id="process-inbox" type="button" class="btn secondary">
+                <svg class="icon" aria-hidden="true"><use href="#i-play" /></svg>
+                Process inbox
+              </button>
+            </div>
+          </section>
+
+          <section class="card workflow" id="workflow" data-state="idle" aria-live="polite">
+            <header class="workflow-head">
+              <div>
+                <p class="section-kicker">Workflow</p>
+                <p id="workflow-title" class="workflow-title">Waiting for files…</p>
+              </div>
+              <p id="workflow-count" class="workflow-count"></p>
+            </header>
+            <ol id="pipeline" class="pipeline" aria-label="Ingest pipeline steps"></ol>
+            <div class="job-queue-wrap">
+              <p class="section-kicker">Queue</p>
+              <ul id="job-queue" class="job-queue">
+                <li class="queue-empty">No active job</li>
+              </ul>
+            </div>
+          </section>
+        </div>
+
+        <details class="debug card">
+          <summary>Console</summary>
+          <pre id="inbox-out" class="out"></pre>
+          <pre id="process-out" class="out"></pre>
+        </details>
+      </section>
+
+      <!-- ————— Review ————— -->
+      <section class="view" data-view="review" id="view-review">
+        <header class="view-head">
+          <div>
+            <h1>Review</h1>
+            <p>Nothing is written to your archive until you approve it. Edit, approve, or reject each proposal.</p>
+          </div>
+          <button id="refresh-reviews" type="button" class="btn ghost">
+            <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg>
+            Refresh
+          </button>
+        </header>
+        <div id="reviews" class="reviews">
+          <div class="empty-state">
+            <svg class="icon" aria-hidden="true"><use href="#i-review" /></svg>
+            <p>Loading review queue…</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ————— Archive ————— -->
+      <section class="view" data-view="archive" id="view-archive">
+        <header class="view-head">
+          <div>
+            <h1>Archive</h1>
+            <p>Filed documents, searchable by keyword or type.</p>
+          </div>
+        </header>
+
+        <form id="search-form" class="search card">
+          <label class="field grow">
+            <span>Search</span>
+            <input type="search" id="search-q" placeholder="Acme, invoice, tax…" />
+          </label>
+          <label class="field narrow">
+            <span>Type</span>
+            <input type="text" id="search-type" placeholder="invoice" />
+          </label>
+          <button type="submit" class="btn secondary">
+            <svg class="icon" aria-hidden="true"><use href="#i-search" /></svg>
+            Search
+          </button>
+        </form>
+
+        <div id="docs" class="docs"></div>
+      </section>
+
+      <!-- ————— Ask ————— -->
+      <section class="view" data-view="ask" id="view-ask">
+        <header class="view-head">
+          <div>
+            <h1>Ask</h1>
+            <p>Natural-language questions over indexed documents.</p>
+          </div>
+        </header>
+
+        <form id="ask-form" class="ask-form card">
+          <label class="field grow">
+            <span>Question</span>
+            <textarea id="question" rows="3" placeholder="Which invoices from Acme are over €100?"></textarea>
+          </label>
+          <button type="submit" class="btn primary">Ask</button>
+        </form>
+
+        <div id="ask-out" class="answer" aria-live="polite">
+          <div class="ask-reply idle">Answers appear here.</div>
+        </div>
+      </section>
+
+      <!-- ————— Settings ————— -->
+      <section class="view" data-view="settings" id="view-settings">
+        <header class="view-head">
+          <div>
+            <h1>Settings</h1>
+            <p>Authentication, filing rules, and data management.</p>
+          </div>
+        </header>
+
+        <section class="card auth" id="auth-section" data-ready="false">
+          <div class="auth-bar">
+            <div>
+              <p class="section-kicker">Auth</p>
+              <h2>Authentication</h2>
+              <p id="auth-status" class="auth-line">Checking credentials…</p>
+            </div>
+            <div class="actions">
+              <button id="oauth-start" type="button" class="btn primary">Sign in with ChatGPT</button>
+              <button id="auth-toggle" type="button" class="btn ghost">More options</button>
+              <button id="auth-logout" type="button" class="btn ghost">Log out</button>
+            </div>
+          </div>
+
+          <div id="auth-details" class="auth-details hidden">
+            <div id="oauth-panel" class="oauth hidden">
+              <p id="oauth-hint" class="fine"></p>
+              <a id="oauth-link" class="text-link" href="#" target="_blank" rel="noopener">Open ChatGPT login</a>
+              <label class="field">
+                <span>Paste callback URL if redirect fails</span>
+                <textarea id="oauth-paste" rows="2" placeholder="http://localhost:1455/auth/callback?code=…"></textarea>
+              </label>
+              <button id="oauth-complete" type="button" class="btn primary">Complete sign-in</button>
+            </div>
+
+            <form id="api-key-form" class="key-row">
+              <label class="field grow">
+                <span>OpenAI API key</span>
+                <input type="password" id="api-key" placeholder="sk-…" autocomplete="off" />
+              </label>
+              <button type="submit" class="btn secondary">Save key</button>
+              <button id="auth-refresh" type="button" class="btn ghost">Refresh</button>
+            </form>
+            <details class="debug">
+              <summary>Auth details</summary>
+              <pre id="auth-out" class="out"></pre>
+            </details>
+          </div>
+        </section>
+
+        <section class="card auth setup" id="setup-section">
+          <div class="auth-bar">
+            <div>
+              <p class="section-kicker">Filing</p>
+              <h2>Filing &amp; scanning</h2>
+              <p id="setup-status" class="auth-line">Configure source folder, categories, and inbox scanning.</p>
+            </div>
+            <div class="actions">
+              <button id="setup-save" type="button" class="btn primary">Save setup</button>
+            </div>
+          </div>
+
+          <div id="setup-details" class="auth-details">
+            <label class="field">
+              <span>Source folder (inbox)</span>
+              <input type="text" id="setup-source" placeholder="/path/to/inbox" autocomplete="off" />
+            </label>
+
+            <div class="setup-cats">
+              <div class="setup-cats-head">
+                <h3>Document categories</h3>
+                <button id="setup-add-category" type="button" class="btn ghost compact">Add category</button>
+              </div>
+              <p class="fine">Map each category name to an archive folder. An <code>other</code> category is required.</p>
+              <div id="setup-categories" class="cat-list"></div>
+            </div>
+
+            <div class="setup-batch">
+              <h3>Inbox scanning</h3>
+              <p class="fine">How often the agent should look for new files in the source folder and process them automatically.</p>
+              <div class="batch-row">
+                <label class="field narrow">
+                  <span>Poll interval (seconds)</span>
+                  <input type="number" id="setup-poll-interval" min="0" step="1" value="30" />
+                </label>
+                <p class="fine batch-hint">Use <code>0</code> for manual processing only (Process inbox button).</p>
+              </div>
+            </div>
+
+            <div class="setup-batch">
+              <h3>Human review</h3>
+              <label class="check-field">
+                <input type="checkbox" id="setup-require-approval" checked />
+                <span>Require approval before filing — every proposal waits in Review until you approve it</span>
+              </label>
+              <p class="fine">When off, documents are filed automatically. Suspected duplicates always stop for review.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="card auth" id="appearance-section">
+          <div class="auth-bar">
+            <div>
+              <p class="section-kicker">Appearance</p>
+              <h2>Look &amp; feel</h2>
+              <p class="auth-line">Pick a preset. Applies instantly and is remembered in this browser.</p>
+            </div>
+          </div>
+          <div class="theme-grid" id="theme-grid">
+            <button type="button" class="theme-card" data-theme-preset="graphite">
+              <span class="theme-preview" data-preview="graphite" aria-hidden="true">
+                <span class="tp-side"></span>
+                <span class="tp-body">
+                  <span class="tp-accent"></span>
+                  <span class="tp-line"></span>
+                  <span class="tp-line short"></span>
+                </span>
+              </span>
+              <span class="theme-name">Graphite</span>
+              <span class="theme-desc">Dark · steel cyan</span>
+            </button>
+            <button type="button" class="theme-card" data-theme-preset="carbon">
+              <span class="theme-preview" data-preview="carbon" aria-hidden="true">
+                <span class="tp-side"></span>
+                <span class="tp-body">
+                  <span class="tp-accent"></span>
+                  <span class="tp-line"></span>
+                  <span class="tp-line short"></span>
+                </span>
+              </span>
+              <span class="theme-name">Carbon</span>
+              <span class="theme-desc">Black · amber</span>
+            </button>
+            <button type="button" class="theme-card" data-theme-preset="slate">
+              <span class="theme-preview" data-preview="slate" aria-hidden="true">
+                <span class="tp-side"></span>
+                <span class="tp-body">
+                  <span class="tp-accent"></span>
+                  <span class="tp-line"></span>
+                  <span class="tp-line short"></span>
+                </span>
+              </span>
+              <span class="theme-name">Slate</span>
+              <span class="theme-desc">Light · teal</span>
+            </button>
+            <button type="button" class="theme-card" data-theme-preset="paper">
+              <span class="theme-preview" data-preview="paper" aria-hidden="true">
+                <span class="tp-side"></span>
+                <span class="tp-body">
+                  <span class="tp-accent"></span>
+                  <span class="tp-line"></span>
+                  <span class="tp-line short"></span>
+                </span>
+              </span>
+              <span class="theme-name">Paper</span>
+              <span class="theme-desc">Warm · terracotta</span>
+            </button>
+          </div>
+
+          <div class="mock-block">
+            <label class="check-field">
+              <input type="checkbox" id="mock-toggle" />
+              <span>Mockup mode — fill every view with demo data for screenshots</span>
+            </label>
+            <p class="fine">Client-side only: nothing is read from or written to your archive while enabled. Also available via <code>?mock=1</code> in the URL.</p>
+          </div>
+        </section>
+
+        <section class="card auth" id="update-section">
+          <div class="auth-bar">
+            <div>
+              <p class="section-kicker">Updates</p>
+              <h2>Software update</h2>
+              <p id="update-status" class="auth-line">Version —</p>
+            </div>
+            <div class="actions">
+              <button id="update-check" type="button" class="btn secondary">
+                <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg>
+                Check for updates
+              </button>
+              <button id="update-apply" type="button" class="btn primary hidden">Download &amp; install</button>
+              <button id="update-restart" type="button" class="btn primary hidden">Restart now</button>
+            </div>
+          </div>
+          <p class="fine">Updates are downloaded from <a id="update-repo-link" class="text-link" href="#" target="_blank" rel="noopener">GitHub</a>. Your documents, settings, and credentials are kept.</p>
+          <pre id="update-notes" class="out hidden"></pre>
+        </section>
+
+        <section class="card auth danger-zone">
+          <div class="auth-bar">
+            <div>
+              <p class="section-kicker">Danger</p>
+              <h2>Danger zone</h2>
+              <p class="auth-line">Delete archived files, inbox scans, metadata, and the RAG index. Setup settings are kept.</p>
+            </div>
+            <div class="actions">
+              <button id="clear-all-data" type="button" class="btn ghost danger">
+                Remove all stored data
+              </button>
+            </div>
+          </div>
+          <p id="danger-status" class="status-line" aria-live="polite"></p>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+
+  <script src="/static/mock.js"></script>
+  <script src="/static/common.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
