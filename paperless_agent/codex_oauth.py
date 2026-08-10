@@ -10,6 +10,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from html import escape as html_escape
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
@@ -320,7 +321,7 @@ def _ensure_callback_server() -> None:
             if error:
                 html = (
                     "<!doctype html><html><body style='font-family:sans-serif;padding:2rem'>"
-                    f"<h2>Sign-in failed</h2><p>{error}</p></body></html>"
+                    f"<h2>Sign-in failed</h2><p>{html_escape(error)}</p></body></html>"
                 )
                 self.send_response(400)
                 self.send_header("Content-Type", "text/html")

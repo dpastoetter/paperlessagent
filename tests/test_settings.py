@@ -95,7 +95,10 @@ def test_settings_api_poll_interval_and_process_all(isolated_settings, monkeypat
     for name in ("a.pdf", "b.pdf", "c.pdf"):
         (custom_inbox / name).write_bytes(b"%PDF-1.4 stub")
 
+    from app.main import CSRF_HEADER_NAME, CSRF_HEADER_VALUE
+
     client = TestClient(app)
+    client.headers.update({CSRF_HEADER_NAME: CSRF_HEADER_VALUE})
     put = client.put(
         "/api/settings",
         json={

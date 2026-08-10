@@ -10,8 +10,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -23,23 +28,37 @@ from paperless_agent.codex_oauth import (
     save_api_key,
     start_oauth_login,
 )
-from paperless_agent.config import EMBEDDING_MODEL, LLM_PROVIDER, MODEL_NAME, ensure_data_dirs
-from paperless_agent.inbox_worker import inbox_poll_loop, process_inbox
+from paperless_agent.config import (
+    ARCHIVE_DIR,
+    EMBEDDING_MODEL,
+    LLM_PROVIDER,
+    MODEL_NAME,
+    ensure_data_dirs,
+)
+from paperless_agent.inbox_worker import (
+    inbox_poll_loop,
+    is_processing,
+    process_inbox,
+    process_single_file,
+)
 from paperless_agent.llm import resolve_model_name
 from paperless_agent.progress import PIPELINE_STEPS, subscribe
 from paperless_agent.review import (
     approve_review,
     get_review,
     list_pending,
+    recover_stale_processing,
     reject_review,
 )
-from paperless_agent.runner import run_pipeline_on_path, run_query
+from paperless_agent.runner import run_query
 from paperless_agent.settings import (
+    get_source_dir,
     load_settings,
     save_settings,
     validate_path,
 )
 from paperless_agent.tools.filesystem import (
+    SUPPORTED_SUFFIXES,
     clear_inbox,
     list_inbox,
     reveal_in_explorer,
@@ -60,11 +79,39 @@ from paperless_agent.updater import (
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 logger = logging.getLogger(__name__)
 
+# Simple CSRF guard: browsers cannot attach custom headers to cross-site form
+# posts or fetches without a CORS preflight (which this app never grants), so
+# requiring this header on mutations blocks malicious websites from driving
+# the unauthenticated local API.
+CSRF_HEADER_NAME = "X-Requested-With"
+CSRF_HEADER_VALUE = "PaperlessAgent"
+_MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # generous cap for large scans
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        return path.is_relative_to(root)
+    except (OSError, ValueError):
+        return False
+
+
+def _archive_roots() -> list[Path]:
+    """Directories archived documents are allowed to be served from."""
+    roots = [Path(ARCHIVE_DIR).expanduser().resolve()]
+    for category in load_settings().get("categories", []):
+        folder = category.get("folder")
+        if folder:
+            roots.append(Path(folder).expanduser().resolve())
+    return roots
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     ensure_data_dirs()
     load_settings()
+    recover_stale_processing()
     stop_event = asyncio.Event()
     poller = asyncio.create_task(inbox_poll_loop(stop_event), name="inbox-poller")
     logger.info("Started inbox poller task")
@@ -85,6 +132,26 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def csrf_guard(request: Request, call_next):
+    """Reject state-changing API calls that lack the app's custom header."""
+    if (
+        request.method in _MUTATING_METHODS
+        and request.url.path.startswith("/api/")
+        and request.headers.get(CSRF_HEADER_NAME) != CSRF_HEADER_VALUE
+    ):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": (
+                    f"missing {CSRF_HEADER_NAME} header — "
+                    "cross-site request blocked"
+                )
+            },
+        )
+    return await call_next(request)
 
 
 class AskRequest(BaseModel):
@@ -245,20 +312,43 @@ def api_clear_all_data() -> dict[str, Any]:
 async def api_upload(file: UploadFile = File(...)) -> dict[str, Any]:
     if not file.filename:
         raise HTTPException(status_code=400, detail="filename required")
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in SUPPORTED_SUFFIXES:
+        raise HTTPException(
+            status_code=415,
+            detail=f"unsupported file type: {suffix or 'none'} "
+            f"(supported: {', '.join(sorted(SUPPORTED_SUFFIXES))})",
+        )
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="empty file")
-    saved = save_upload_to_inbox(file.filename, content)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"file too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)",
+        )
+    try:
+        saved = save_upload_to_inbox(file.filename, content)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"could not save file: {exc}") from exc
+    if saved.get("status") != "success":
+        raise HTTPException(status_code=400, detail=saved.get("error", "upload failed"))
     return saved
 
 
 @app.post("/api/process")
 async def api_process(body: ProcessRequest) -> dict[str, Any]:
     path = Path(body.path).expanduser().resolve()
-    if not path.exists():
+    inbox = get_source_dir().resolve()
+    if not _is_within(path, inbox):
+        raise HTTPException(
+            status_code=400,
+            detail="only files inside the configured inbox can be processed",
+        )
+    if not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail=f"file not found: {body.path}")
     try:
-        return await run_pipeline_on_path(str(path))
+        return await process_single_file(str(path))
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -324,6 +414,11 @@ def api_update_apply() -> dict[str, Any]:
 @app.post("/api/update/restart")
 def api_update_restart() -> dict[str, Any]:
     """Restart the server process (used after installing an update)."""
+    if is_processing():
+        raise HTTPException(
+            status_code=409,
+            detail="documents are being processed — try again in a moment",
+        )
     return schedule_restart()
 
 
@@ -360,6 +455,8 @@ def api_review_file(review_id: str) -> FileResponse:
     if review is None:
         raise HTTPException(status_code=404, detail=f"review not found: {review_id}")
     path = Path(review["source_path"]).expanduser().resolve()
+    if not _is_within(path, get_source_dir().resolve()):
+        raise HTTPException(status_code=403, detail="scan is outside the inbox")
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="source scan is missing on disk")
     guessed, _ = mimetypes.guess_type(str(path))
@@ -427,6 +524,8 @@ def api_document_file(document_id: str) -> FileResponse:
     if not path_value:
         raise HTTPException(status_code=404, detail="document has no path")
     path = Path(path_value).expanduser().resolve()
+    if not any(_is_within(path, root) for root in _archive_roots()):
+        raise HTTPException(status_code=403, detail="file is outside the archive")
     if not path.exists() or not path.is_file():
         raise HTTPException(
             status_code=404,
@@ -444,19 +543,16 @@ def api_document_file(document_id: str) -> FileResponse:
         media_type = guessed
     else:
         media_type = "application/octet-stream"
-    headers = {
-        # Prefer inline viewing; avoid attachment downloads for PDFs/images.
-        "Content-Disposition": (
-            f'inline; filename="{document.get("filename") or path.name}"'
-        ),
-        "X-Content-Type-Options": "nosniff",
-    }
+    # Strip header-breaking characters; Starlette builds Content-Disposition.
+    safe_filename = "".join(
+        ch for ch in (document.get("filename") or path.name) if ch.isprintable()
+    ).replace('"', "")
     return FileResponse(
         path,
         media_type=media_type,
-        filename=document.get("filename") or path.name,
+        filename=safe_filename or path.name,
         content_disposition_type="inline",
-        headers=headers,
+        headers={"X-Content-Type-Options": "nosniff"},
     )
 
 

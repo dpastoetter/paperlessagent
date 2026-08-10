@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import pytest
+from fastapi.testclient import TestClient
 
+from app.main import CSRF_HEADER_NAME, CSRF_HEADER_VALUE, app
 from paperless_agent.config import ensure_data_dirs
 from paperless_agent.settings import clear_settings_cache, load_settings
 
@@ -35,3 +37,11 @@ def stub_rag_index(monkeypatch):
         "paperless_agent.pipeline.agents.index_document",
         lambda **_kw: {"status": "success", "chunk_count": 1},
     )
+
+
+@pytest.fixture()
+def client(isolated_data):
+    """TestClient that always sends the CSRF header required by mutating routes."""
+    with TestClient(app) as tc:
+        tc.headers.update({CSRF_HEADER_NAME: CSRF_HEADER_VALUE})
+        yield tc

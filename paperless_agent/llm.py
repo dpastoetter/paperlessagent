@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
 import os
 from collections.abc import AsyncGenerator
 from typing import Any
 
+import httpx
 from google.adk.labs.openai import OpenAILlm, OpenAIResponsesLlm
 from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
@@ -17,11 +20,17 @@ from paperless_agent.codex_oauth import (
     ORIGINATOR,
     get_valid_chatgpt_tokens,
 )
-from paperless_agent.config import LLM_PROVIDER, MODEL_NAME
+from paperless_agent.config import LLM_PROVIDER, MODEL_NAME, OLLAMA_BASE_URL
 
 # ChatGPT Codex backend rejects many Platform API model IDs (e.g. gpt-4.1).
 CODEX_DEFAULT_MODEL = os.getenv("PAPERLESS_CODEX_MODEL", "gpt-5.6-luna").strip() or "gpt-5.6-luna"
 _CODEX_MODEL_PREFIXES = ("gpt-5.6", "gpt-5.5", "gpt-5.4", "gpt-5.3-codex", "codex-")
+
+# Bound every provider so a hung LLM call cannot stall the inbox forever.
+# Vision OCR gets a longer budget; text completion stays shorter.
+LLM_TEXT_TIMEOUT = float(os.getenv("PAPERLESS_LLM_TIMEOUT", "120"))
+LLM_VISION_TIMEOUT = float(os.getenv("PAPERLESS_LLM_VISION_TIMEOUT", "300"))
+OLLAMA_CHAT_TIMEOUT = float(os.getenv("PAPERLESS_OLLAMA_TIMEOUT", "300"))
 
 
 class CodexResponsesLlm(OpenAIResponsesLlm):
@@ -81,6 +90,8 @@ def _build_codex_responses_llm(model_name: str) -> CodexResponsesLlm:
     client = AsyncOpenAI(
         api_key=tokens["access_token"],
         base_url=CODEX_RESPONSES_BASE_URL,
+        timeout=LLM_TEXT_TIMEOUT,
+        max_retries=2,
         default_headers={
             "ChatGPT-Account-Id": tokens["account_id"],
             "originator": ORIGINATOR,
@@ -96,8 +107,16 @@ def get_model() -> Any:
     - gemini: model name string (uses GOOGLE_API_KEY)
     - openai + API key: OpenAILlm (api.openai.com)
     - openai + ChatGPT OAuth: CodexResponsesLlm via Codex backend
+    - ollama: OpenAILlm against Ollama's OpenAI-compatible endpoint
     """
     model_name = resolve_model_name()
+    if LLM_PROVIDER == "ollama":
+        # OpenAILlm builds its AsyncOpenAI() from env; point it at Ollama's
+        # OpenAI-compatible endpoint (any non-empty api key is accepted).
+        os.environ["OPENAI_BASE_URL"] = f"{OLLAMA_BASE_URL}/v1"
+        if not os.environ.get("OPENAI_API_KEY"):
+            os.environ["OPENAI_API_KEY"] = "ollama"
+        return OpenAILlm(model=model_name)
     if LLM_PROVIDER != "openai":
         return model_name
 
@@ -119,14 +138,24 @@ async def complete_text(prompt: str, *, instructions: str) -> str:
     which often yields empty final text parts through the ADK Runner.
     """
     model_name = resolve_model_name()
-    if LLM_PROVIDER == "openai":
+    if LLM_PROVIDER == "ollama":
+        coro = _complete_ollama(prompt, instructions=instructions, model_name=model_name)
+    elif LLM_PROVIDER == "openai":
         mode = resolve_auth_mode()
         if mode == "chatgpt_oauth":
-            return await _complete_codex(prompt, instructions=instructions, model_name=model_name)
-        return await _complete_openai_api(
-            prompt, instructions=instructions, model_name=model_name
-        )
-    return await _complete_gemini(prompt, instructions=instructions, model_name=model_name)
+            coro = _complete_codex(prompt, instructions=instructions, model_name=model_name)
+        else:
+            coro = _complete_openai_api(
+                prompt, instructions=instructions, model_name=model_name
+            )
+    else:
+        coro = _complete_gemini(prompt, instructions=instructions, model_name=model_name)
+    try:
+        return await asyncio.wait_for(coro, timeout=LLM_TEXT_TIMEOUT)
+    except TimeoutError as exc:
+        raise RuntimeError(
+            f"LLM text completion timed out after {LLM_TEXT_TIMEOUT:.0f}s"
+        ) from exc
 
 
 async def _complete_codex(prompt: str, *, instructions: str, model_name: str) -> str:
@@ -137,6 +166,8 @@ async def _complete_codex(prompt: str, *, instructions: str, model_name: str) ->
     client = AsyncOpenAI(
         api_key=tokens["access_token"],
         base_url=CODEX_RESPONSES_BASE_URL,
+        timeout=LLM_TEXT_TIMEOUT,
+        max_retries=2,
         default_headers={
             "ChatGPT-Account-Id": tokens["account_id"],
             "originator": ORIGINATOR,
@@ -164,11 +195,51 @@ async def _complete_codex(prompt: str, *, instructions: str, model_name: str) ->
     return "".join(chunks).strip()
 
 
+async def _ollama_request(payload: dict[str, Any]) -> dict[str, Any]:
+    """POST a chat payload to the local Ollama server."""
+    try:
+        async with httpx.AsyncClient(timeout=OLLAMA_CHAT_TIMEOUT) as client:
+            resp = await client.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.ConnectError as exc:
+        raise RuntimeError(
+            f"Cannot reach Ollama at {OLLAMA_BASE_URL} — is `ollama serve` running?"
+        ) from exc
+
+
+async def _complete_ollama(
+    prompt: str,
+    *,
+    instructions: str,
+    model_name: str,
+    images: list[bytes] | None = None,
+) -> str:
+    """Text or multimodal completion via a local Ollama server."""
+    user_message: dict[str, Any] = {"role": "user", "content": prompt}
+    if images:
+        user_message["images"] = [
+            base64.b64encode(raw).decode("ascii") for raw in images
+        ]
+    data = await _ollama_request(
+        {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": instructions},
+                user_message,
+            ],
+            "stream": False,
+            "options": {"temperature": 0.2},
+        }
+    )
+    return ((data.get("message") or {}).get("content") or "").strip()
+
+
 async def _complete_openai_api(prompt: str, *, instructions: str, model_name: str) -> str:
     from paperless_agent.auth import ensure_openai_env
 
     ensure_openai_env()
-    client = AsyncOpenAI()
+    client = AsyncOpenAI(timeout=LLM_TEXT_TIMEOUT, max_retries=2)
     response = await client.chat.completions.create(
         model=model_name,
         messages=[
@@ -187,12 +258,17 @@ async def _complete_gemini(prompt: str, *, instructions: str, model_name: str) -
 
     if not GOOGLE_API_KEY:
         raise RuntimeError("GOOGLE_API_KEY is not set")
-    client = genai.Client(api_key=GOOGLE_API_KEY)
-    response = client.models.generate_content(
-        model=model_name,
-        contents=f"{instructions}\n\n{prompt}",
-    )
-    return (getattr(response, "text", None) or "").strip()
+
+    def _call() -> str:
+        client = genai.Client(api_key=GOOGLE_API_KEY)
+        response = client.models.generate_content(
+            model=model_name,
+            contents=f"{instructions}\n\n{prompt}",
+        )
+        return (getattr(response, "text", None) or "").strip()
+
+    # Sync Gemini client would otherwise freeze the whole asyncio event loop.
+    return await asyncio.to_thread(_call)
 
 
 async def complete_with_images(
@@ -211,30 +287,43 @@ async def complete_with_images(
         raise ValueError("images must not be empty")
 
     model_name = resolve_model_name()
-    if LLM_PROVIDER == "openai":
+    if LLM_PROVIDER == "ollama":
+        # Ollama multimodal models take base64 images on the chat message.
+        coro = _complete_ollama(
+            prompt, instructions=instructions, model_name=model_name, images=images
+        )
+    elif LLM_PROVIDER == "openai":
         mode = resolve_auth_mode()
         if mode == "chatgpt_oauth":
-            return await _complete_codex_images(
+            coro = _complete_codex_images(
                 prompt,
                 images=images,
                 instructions=instructions,
                 model_name=model_name,
                 mime_type=mime_type,
             )
-        return await _complete_openai_images(
+        else:
+            coro = _complete_openai_images(
+                prompt,
+                images=images,
+                instructions=instructions,
+                model_name=model_name,
+                mime_type=mime_type,
+            )
+    else:
+        coro = _complete_gemini_images(
             prompt,
             images=images,
             instructions=instructions,
             model_name=model_name,
             mime_type=mime_type,
         )
-    return await _complete_gemini_images(
-        prompt,
-        images=images,
-        instructions=instructions,
-        model_name=model_name,
-        mime_type=mime_type,
-    )
+    try:
+        return await asyncio.wait_for(coro, timeout=LLM_VISION_TIMEOUT)
+    except TimeoutError as exc:
+        raise RuntimeError(
+            f"LLM vision completion timed out after {LLM_VISION_TIMEOUT:.0f}s"
+        ) from exc
 
 
 async def _complete_codex_images(
@@ -258,6 +347,8 @@ async def _complete_codex_images(
     client = AsyncOpenAI(
         api_key=tokens["access_token"],
         base_url=CODEX_RESPONSES_BASE_URL,
+        timeout=LLM_VISION_TIMEOUT,
+        max_retries=2,
         default_headers={
             "ChatGPT-Account-Id": tokens["account_id"],
             "originator": ORIGINATOR,
@@ -301,7 +392,7 @@ async def _complete_openai_images(
     for url in images_to_data_urls(images, mime_type=mime_type):
         content.append({"type": "image_url", "image_url": {"url": url}})
 
-    client = AsyncOpenAI()
+    client = AsyncOpenAI(timeout=LLM_VISION_TIMEOUT, max_retries=2)
     response = await client.chat.completions.create(
         model=model_name,
         messages=[
@@ -328,12 +419,16 @@ async def _complete_gemini_images(
 
     if not GOOGLE_API_KEY:
         raise RuntimeError("GOOGLE_API_KEY is not set")
-    client = genai.Client(api_key=GOOGLE_API_KEY)
-    parts: list[Any] = [types.Part.from_text(text=f"{instructions}\n\n{prompt}")]
-    for raw in images:
-        parts.append(types.Part.from_bytes(data=raw, mime_type=mime_type))
-    response = client.models.generate_content(
-        model=model_name,
-        contents=parts,
-    )
-    return (getattr(response, "text", None) or "").strip()
+
+    def _call() -> str:
+        client = genai.Client(api_key=GOOGLE_API_KEY)
+        parts: list[Any] = [types.Part.from_text(text=f"{instructions}\n\n{prompt}")]
+        for raw in images:
+            parts.append(types.Part.from_bytes(data=raw, mime_type=mime_type))
+        response = client.models.generate_content(
+            model=model_name,
+            contents=parts,
+        )
+        return (getattr(response, "text", None) or "").strip()
+
+    return await asyncio.to_thread(_call)

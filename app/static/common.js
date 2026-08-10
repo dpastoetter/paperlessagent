@@ -3,7 +3,11 @@ async function api(path, options = {}) {
   if (window.PA_MOCK?.enabled) {
     return window.PA_MOCK.respond(path, options);
   }
-  const res = await fetch(path, options);
+  const headers = new Headers(options.headers || {});
+  // Custom header required by the server on mutating routes — blocks CSRF
+  // from cross-site form posts (browsers cannot attach it without CORS).
+  headers.set("X-Requested-With", "PaperlessAgent");
+  const res = await fetch(path, { ...options, headers });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(data.detail || data.error || res.statusText);
@@ -22,7 +26,8 @@ function escapeHtml(value) {
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function setStatus(state, label) {
@@ -124,6 +129,13 @@ async function refreshAuth() {
 async function refreshHealth() {
   try {
     const data = await api("/api/health");
+    if (data.llm_provider === "ollama") {
+      // Local models — no cloud account needed, OpenAI auth panel is irrelevant.
+      setStatus("ready", `ollama · ${data.model || "local"}`);
+      const el = document.getElementById("auth-status");
+      if (el) el.textContent = "Using local Ollama — no cloud sign-in needed";
+      return;
+    }
     if (data.auth) {
       renderAuthStatus(data.auth);
     } else {

@@ -4,9 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
-from app.main import app
 from paperless_agent.review import create_review
 from paperless_agent.settings import get_source_dir
 
@@ -31,16 +28,14 @@ def _queue_scan(name: str = "scan.pdf", **proposal_overrides) -> tuple[str, str]
     return queued["review_id"], str(scan)
 
 
-def test_reviews_empty(isolated_data):
-    client = TestClient(app)
+def test_reviews_empty(client):
     resp = client.get("/api/reviews")
     assert resp.status_code == 200
     assert resp.json() == {"status": "success", "count": 0, "reviews": []}
 
 
-def test_reviews_list_and_file_serving(isolated_data):
+def test_reviews_list_and_file_serving(client):
     review_id, _ = _queue_scan()
-    client = TestClient(app)
 
     listed = client.get("/api/reviews").json()
     assert listed["count"] == 1
@@ -54,9 +49,8 @@ def test_reviews_list_and_file_serving(isolated_data):
     assert client.get("/api/reviews/missing-id/file").status_code == 404
 
 
-def test_approve_with_overrides_files_document(isolated_data, stub_rag_index):
+def test_approve_with_overrides_files_document(client, stub_rag_index):
     review_id, scan_path = _queue_scan()
-    client = TestClient(app)
 
     resp = client.post(
         f"/api/reviews/{review_id}/approve",
@@ -78,9 +72,8 @@ def test_approve_with_overrides_files_document(isolated_data, stub_rag_index):
     assert any(d["filename"] == "2024-01-01_Tax_Acme.pdf" for d in docs)
 
 
-def test_reject_removes_scan(isolated_data):
+def test_reject_removes_scan(client):
     review_id, scan_path = _queue_scan("dupe.pdf")
-    client = TestClient(app)
 
     resp = client.post(
         f"/api/reviews/{review_id}/reject", json={"delete_file": True}
@@ -95,8 +88,7 @@ def test_reject_removes_scan(isolated_data):
     assert client.post("/api/reviews/nope/reject", json={}).status_code == 409
 
 
-def test_settings_review_toggle_roundtrip(isolated_data):
-    client = TestClient(app)
+def test_settings_review_toggle_roundtrip(client):
     settings = client.get("/api/settings").json()["settings"]
     assert settings["review"]["require_approval"] is True
 

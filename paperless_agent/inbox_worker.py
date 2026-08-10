@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -24,14 +25,39 @@ logger = logging.getLogger(__name__)
 _process_lock = asyncio.Lock()
 
 
-async def process_inbox() -> dict[str, Any]:
-    """Process all supported files currently in the configured source folder."""
+def is_processing() -> bool:
+    """True while an ingest run holds the processing lock."""
+    return _process_lock.locked()
+
+
+async def process_single_file(path: str) -> dict[str, Any]:
+    """Process one file under the shared lock (no overlap with inbox runs)."""
+    async with _process_lock:
+        if path in pending_source_paths():
+            return {
+                "status": "pending_review",
+                "message": "file is already awaiting review",
+            }
+        return await run_pipeline_on_path(path)
+
+
+async def process_inbox(min_age_seconds: float | None = None) -> dict[str, Any]:
+    """
+    Process all supported files currently in the configured source folder.
+
+    min_age_seconds, when set, skips files modified more recently than that —
+    used by the background poller so half-copied scans are left for the next
+    cycle instead of being ingested truncated.
+    """
     async with _process_lock:
         inbox = list_inbox()
         all_files = inbox.get("files", [])
         awaiting = pending_source_paths()
         files = [f for f in all_files if f.get("path") not in awaiting]
         held_for_review = len(all_files) - len(files)
+        if min_age_seconds is not None:
+            cutoff = time.time() - min_age_seconds
+            files = [f for f in files if (f.get("mtime") or 0) <= cutoff]
         job_id = new_job_id()
         job_token = current_job_id.set(job_id)
 
@@ -207,7 +233,8 @@ async def inbox_poll_loop(stop_event: asyncio.Event) -> None:
 
         if interval > 0:
             try:
-                result = await process_inbox()
+                # Skip files still being copied in (e.g. by a network scanner).
+                result = await process_inbox(min_age_seconds=5.0)
                 processed = int(result.get("processed") or 0)
                 if processed:
                     logger.info(

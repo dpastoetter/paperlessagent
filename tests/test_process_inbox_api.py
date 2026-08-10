@@ -16,7 +16,10 @@ def test_process_inbox_empty(tmp_path, monkeypatch):
     (tmp_path / "inbox").mkdir(parents=True)
     load_settings()
 
+    from app.main import CSRF_HEADER_NAME, CSRF_HEADER_VALUE
+
     client = TestClient(app)
+    client.headers.update({CSRF_HEADER_NAME: CSRF_HEADER_VALUE})
     response = client.post("/api/process-inbox")
     assert response.status_code == 200
     payload = response.json()

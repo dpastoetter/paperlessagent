@@ -149,23 +149,84 @@ def _mark_resolved(review_id: str, status: str, document_id: str | None = None) 
         conn.commit()
 
 
+def _claim_pending(review_id: str) -> dict[str, Any] | None:
+    """
+    Atomically move a review from 'pending' to 'processing'.
+
+    Returns the review record, or None if it was not pending (missing, already
+    resolved, or claimed by a concurrent request — e.g. a double-clicked
+    Approve button).
+    """
+    _init_reviews_table()
+    with _connect() as conn:
+        cursor = conn.execute(
+            "UPDATE reviews SET status = 'processing' "
+            "WHERE id = ? AND status = 'pending'",
+            (review_id,),
+        )
+        conn.commit()
+        if cursor.rowcount != 1:
+            return None
+        row = conn.execute("SELECT * FROM reviews WHERE id = ?", (review_id,)).fetchone()
+    return _row_to_dict(row)
+
+
+def _release_claim(review_id: str) -> None:
+    """Return a claimed review to 'pending' after a failed resolve attempt."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE reviews SET status = 'pending' "
+            "WHERE id = ? AND status = 'processing'",
+            (review_id,),
+        )
+        conn.commit()
+
+
+def recover_stale_processing() -> int:
+    """
+    Reset reviews stuck in 'processing' back to 'pending'.
+
+    Called at server startup: if the process died mid-approve, the item
+    becomes visible and actionable again instead of disappearing forever.
+    """
+    _init_reviews_table()
+    with _connect() as conn:
+        cursor = conn.execute(
+            "UPDATE reviews SET status = 'pending' WHERE status = 'processing'"
+        )
+        conn.commit()
+    return cursor.rowcount
+
+
 def approve_review(review_id: str, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
     """
     Approve a pending review (with optional human corrections) and file it.
 
     This is the only path from a pending proposal to actual filesystem writes.
     """
-    review = get_review(review_id)
+    review = _claim_pending(review_id)
     if review is None:
-        return {"status": "error", "error": f"review not found: {review_id}"}
-    if review["status"] != "pending":
-        return {"status": "error", "error": f"review already {review['status']}"}
+        existing = get_review(review_id)
+        if existing is None:
+            return {"status": "error", "error": f"review not found: {review_id}"}
+        return {"status": "error", "error": f"review already {existing['status']}"}
 
     source = Path(review["source_path"])
-    if not source.exists() or not source.is_file():
+    try:
+        inbox = get_source_dir().resolve()
+        # Filing moves files; never act on a source outside the inbox.
+        source_ok = (
+            source.exists()
+            and source.is_file()
+            and source.resolve().is_relative_to(inbox)
+        )
+    except OSError:
+        source_ok = False
+    if not source_ok:
+        _release_claim(review_id)
         return {
             "status": "error",
-            "error": f"source file no longer exists: {source}",
+            "error": f"source file is missing or outside the inbox: {source}",
         }
 
     proposal = dict(review["proposal"])
@@ -199,6 +260,7 @@ def approve_review(review_id: str, overrides: dict[str, Any] | None = None) -> d
         content_hash=review.get("content_hash"),
     )
     if result.get("status") not in {"success", "partial"}:
+        _release_claim(review_id)
         return result
 
     _mark_resolved(review_id, "approved", result.get("document_id"))
@@ -207,11 +269,12 @@ def approve_review(review_id: str, overrides: dict[str, Any] | None = None) -> d
 
 def reject_review(review_id: str, *, delete_file: bool = True) -> dict[str, Any]:
     """Reject a pending review; optionally remove the scan from the inbox."""
-    review = get_review(review_id)
+    review = _claim_pending(review_id)
     if review is None:
-        return {"status": "error", "error": f"review not found: {review_id}"}
-    if review["status"] != "pending":
-        return {"status": "error", "error": f"review already {review['status']}"}
+        existing = get_review(review_id)
+        if existing is None:
+            return {"status": "error", "error": f"review not found: {review_id}"}
+        return {"status": "error", "error": f"review already {existing['status']}"}
 
     removed = False
     if delete_file:
@@ -223,6 +286,7 @@ def reject_review(review_id: str, *, delete_file: bool = True) -> dict[str, Any]
                 source.unlink()
                 removed = True
         except OSError as exc:
+            _release_claim(review_id)
             return {"status": "error", "error": f"could not remove file: {exc}"}
 
     _mark_resolved(review_id, "rejected")

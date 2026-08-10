@@ -93,7 +93,10 @@ def test_clear_all_data_api(tmp_path, monkeypatch):
     (tmp_path / "inbox").mkdir(parents=True)
     load_settings()
 
+    from app.main import CSRF_HEADER_NAME, CSRF_HEADER_VALUE
+
     client = TestClient(app)
+    client.headers.update({CSRF_HEADER_NAME: CSRF_HEADER_VALUE})
     response = client.delete("/api/data")
     assert response.status_code == 200
     assert response.json()["status"] == "success"

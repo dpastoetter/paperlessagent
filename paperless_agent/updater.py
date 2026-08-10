@@ -20,10 +20,27 @@ from paperless_agent import config
 
 logger = logging.getLogger(__name__)
 
-UPDATE_REPO = os.getenv("PAPERLESS_UPDATE_REPO", "dpastoetter/paperlessagent")
+_DEFAULT_UPDATE_REPO = "dpastoetter/paperlessagent"
+_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+
+
+def _resolve_update_repo() -> str:
+    raw = os.getenv("PAPERLESS_UPDATE_REPO", _DEFAULT_UPDATE_REPO).strip()
+    if not _REPO_RE.fullmatch(raw):
+        logger.warning(
+            "Ignoring invalid PAPERLESS_UPDATE_REPO=%r; using %s",
+            raw,
+            _DEFAULT_UPDATE_REPO,
+        )
+        return _DEFAULT_UPDATE_REPO
+    return raw
+
+
+UPDATE_REPO = _resolve_update_repo()
 GITHUB_API = "https://api.github.com"
 
 # Never overwritten by an update: user data, credentials, environments.
+# Matched case-insensitively so a tarball cannot sneak past with Data/ or .ENV.
 PROTECTED_TOP_LEVEL = {"data", ".env", ".venv", "venv", ".git", "node_modules"}
 
 
@@ -128,10 +145,10 @@ def _is_protected(relative: Path) -> bool:
     parts = relative.parts
     if not parts:
         return True
-    if parts[0] in PROTECTED_TOP_LEVEL:
+    if parts[0].lower() in PROTECTED_TOP_LEVEL:
         return True
     # Never clobber local env files anywhere in the tree.
-    return relative.name == ".env"
+    return relative.name.lower() == ".env"
 
 
 def apply_tarball(tar_bytes: bytes) -> dict[str, Any]:
@@ -139,8 +156,10 @@ def apply_tarball(tar_bytes: bytes) -> dict[str, Any]:
     Extract a GitHub source tarball and copy it over the install directory.
 
     User data (data/), credentials (.env), virtualenvs, and .git are untouched.
+    Destinations that are symlinks (or would resolve outside PROJECT_ROOT) are
+    skipped so a malicious archive cannot write through a symlink escape.
     """
-    root = Path(config.PROJECT_ROOT)
+    root = Path(config.PROJECT_ROOT).resolve()
     updated: list[str] = []
     with tempfile.TemporaryDirectory(prefix="paperless-update-") as tmp:
         tmp_path = Path(tmp)
@@ -160,6 +179,19 @@ def apply_tarball(tar_bytes: bytes) -> dict[str, Any]:
             if _is_protected(relative):
                 continue
             dest = root / relative
+            # Refuse to write through an existing symlink (could point outside).
+            if dest.is_symlink() or any(parent.is_symlink() for parent in dest.parents):
+                logger.warning("Skipping symlink destination during update: %s", relative)
+                continue
+            try:
+                resolved = dest.resolve()
+                if not resolved.is_relative_to(root):
+                    logger.warning(
+                        "Skipping path that escapes project root: %s", relative
+                    )
+                    continue
+            except OSError:
+                continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, dest)
             updated.append(str(relative))

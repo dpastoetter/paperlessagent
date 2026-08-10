@@ -31,19 +31,21 @@ def list_inbox() -> dict[str, Any]:
     ensure_data_dirs()
     inbox = get_source_dir()
     inbox.mkdir(parents=True, exist_ok=True)
-    files = sorted(
-        [
+    entries = []
+    for p in inbox.iterdir():
+        if not p.is_file() or p.suffix.lower() not in SUPPORTED_SUFFIXES:
+            continue
+        stat = p.stat()
+        entries.append(
             {
                 "name": p.name,
                 "path": str(p.resolve()),
                 "suffix": p.suffix.lower(),
-                "size_bytes": p.stat().st_size,
+                "size_bytes": stat.st_size,
+                "mtime": stat.st_mtime,
             }
-            for p in inbox.iterdir()
-            if p.is_file() and p.suffix.lower() in SUPPORTED_SUFFIXES
-        ],
-        key=lambda item: item["name"],
-    )
+        )
+    files = sorted(entries, key=lambda item: item["name"])
     return {
         "status": "success",
         "count": len(files),
@@ -237,12 +239,17 @@ def move_to_archive(
     filename: str,
     doc_type: str = "other",
     year: str | None = None,
+    *,
+    delete_source: bool = True,
 ) -> dict[str, Any]:
     """
-    Move a file into {category_folder}/{yyyy}/ with the given filename.
+    File a document into {category_folder}/{yyyy}/ with the given filename.
 
     Category folders come from Setup settings; unknown types fall back to 'other'.
     Uses a numeric suffix if the destination already exists.
+
+    With delete_source=False the file is copied instead of moved, so the caller
+    can commit metadata first and only then remove the source (atomic filing).
     """
     ensure_data_dirs()
     src = Path(source_path).expanduser().resolve()
@@ -258,22 +265,37 @@ def move_to_archive(
 
     category_root = get_folder_for_category(safe_type)
     dest_dir = category_root / year_part
-    dest_dir.mkdir(parents=True, exist_ok=True)
 
     safe_name = Path(filename).name
-    dest = dest_dir / safe_name
-    if dest.exists():
-        stem = dest.stem
-        suffix = dest.suffix
-        n = 2
-        while True:
-            candidate = dest_dir / f"{stem}_{n}{suffix}"
-            if not candidate.exists():
-                dest = candidate
-                break
-            n += 1
+    try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / safe_name
+        if dest.exists():
+            stem = dest.stem
+            suffix = dest.suffix
+            n = 2
+            while True:
+                candidate = dest_dir / f"{stem}_{n}{suffix}"
+                if not candidate.exists():
+                    dest = candidate
+                    break
+                n += 1
 
-    shutil.move(str(src), str(dest))
+        if delete_source:
+            shutil.move(str(src), str(dest))
+        else:
+            # Copy via a temp name so a crash never leaves a half-written
+            # file under the final name.
+            partial = dest.with_name(dest.name + ".part")
+            try:
+                shutil.copy2(str(src), str(partial))
+                os.replace(str(partial), str(dest))
+            except OSError:
+                partial.unlink(missing_ok=True)
+                raise
+    except OSError as exc:
+        return {"status": "error", "error": f"could not file document: {exc}"}
+
     return {
         "status": "success",
         "archive_path": str(dest.resolve()),
@@ -290,7 +312,18 @@ def save_upload_to_inbox(filename: str, content: bytes) -> dict[str, Any]:
     inbox = get_source_dir()
     inbox.mkdir(parents=True, exist_ok=True)
     safe_name = Path(filename).name
+    if not safe_name or safe_name in {".", ".."}:
+        return {"status": "error", "error": "invalid filename"}
+    if Path(safe_name).suffix.lower() not in SUPPORTED_SUFFIXES:
+        return {
+            "status": "error",
+            "error": f"unsupported file type: {Path(safe_name).suffix.lower() or 'none'}",
+            "supported": sorted(SUPPORTED_SUFFIXES),
+        }
     dest = inbox / safe_name
+    # Final path must stay inside the inbox even after resolve (symlink parents).
+    if not dest.resolve().is_relative_to(inbox.resolve()):
+        return {"status": "error", "error": "upload path escapes inbox"}
     if dest.exists():
         stem = dest.stem
         suffix = dest.suffix
@@ -301,7 +334,10 @@ def save_upload_to_inbox(filename: str, content: bytes) -> dict[str, Any]:
                 dest = candidate
                 break
             n += 1
-    dest.write_bytes(content)
+    try:
+        dest.write_bytes(content)
+    except OSError as exc:
+        return {"status": "error", "error": f"could not save file: {exc}"}
     return {
         "status": "success",
         "path": str(dest.resolve()),

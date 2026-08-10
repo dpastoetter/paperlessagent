@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 import chromadb
+import httpx
 
 from paperless_agent.config import (
     CHROMA_DIR,
@@ -14,6 +15,7 @@ from paperless_agent.config import (
     EMBEDDING_MODEL,
     GOOGLE_API_KEY,
     LLM_PROVIDER,
+    OLLAMA_BASE_URL,
     RETRIEVE_TOP_K,
     ensure_data_dirs,
 )
@@ -71,6 +73,25 @@ def _embed_openai(texts: list[str]) -> list[list[float]]:
     return [list(item.embedding) for item in ordered]
 
 
+def _embed_ollama(texts: list[str]) -> list[list[float]]:
+    """Embeddings via a local Ollama server (/api/embed, batch input)."""
+    try:
+        resp = httpx.post(
+            f"{OLLAMA_BASE_URL}/api/embed",
+            json={"model": EMBEDDING_MODEL, "input": texts},
+            timeout=120,
+        )
+        resp.raise_for_status()
+    except httpx.ConnectError as exc:
+        raise RuntimeError(
+            f"Cannot reach Ollama at {OLLAMA_BASE_URL} — is `ollama serve` running?"
+        ) from exc
+    embeddings = resp.json().get("embeddings")
+    if not embeddings or len(embeddings) != len(texts):
+        raise RuntimeError("Unexpected embedding response shape from Ollama")
+    return [list(vec) for vec in embeddings]
+
+
 def _embed_local(texts: list[str]) -> list[list[float]]:
     """Deterministic local embeddings when no Platform API key is available."""
     vectors: list[list[float]] = []
@@ -123,11 +144,13 @@ def chunk_text(
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
-    """Embed texts with the configured provider (Gemini or OpenAI)."""
+    """Embed texts with the configured provider (Gemini, OpenAI, or Ollama)."""
     if not texts:
         return []
     if LLM_PROVIDER == "openai":
         return _embed_openai(texts)
+    if LLM_PROVIDER == "ollama":
+        return _embed_ollama(texts)
     return _embed_gemini(texts)
 
 

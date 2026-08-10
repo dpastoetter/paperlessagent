@@ -2,7 +2,7 @@
 
 Local-first document agent: drop scanned PDFs and photos into an inbox, and it recovers the text with AI vision OCR, extracts structured metadata, proposes a meaningful filename, and files everything into your folder structure — with you in the loop before anything is written. Metadata lands in SQLite, content is indexed for RAG so you can ask questions about your archive in natural language.
 
-Built with [Google ADK](https://adk.dev/) (Python) + FastAPI. Works with **OpenAI (ChatGPT OAuth or API key)** or **Gemini**. Everything runs and stays on your machine.
+Built with [Google ADK](https://adk.dev/) (Python) + FastAPI. Works with **OpenAI (ChatGPT OAuth or API key)**, **Gemini**, or **Ollama (fully local)**. Everything runs and stays on your machine.
 
 ![Inbox with live pipeline](docs/screenshots/inbox.png)
 
@@ -23,23 +23,62 @@ All screenshots use the built-in mockup mode (Settings → Look & feel), which f
 
 | Review queue | Archive (Slate theme) |
 | --- | --- |
-| ![Review](docs/screenshots/review.png) | ![Archive](docs/screenshots/archive-slate.png) |
+| ![Review](docs/screenshots/review.png) | ![Archive](docs/screenshots/archive.png) |
 
 | Ask the archive | Settings |
 | --- | --- |
 | ![Ask](docs/screenshots/ask.png) | ![Settings](docs/screenshots/settings.png) |
 
-## Setup
+## Install
+
+One command — clones into `~/paperlessagent`, creates a venv, installs dependencies, and writes a starter `.env`:
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/dpastoetter/paperlessagent/main/scripts/install.sh | bash
+```
+
+Then start it:
+
+```bash
+cd ~/paperlessagent
+source .venv/bin/activate
+uvicorn app.main:app --port 8080
+```
+
+Open [http://localhost:8080](http://localhost:8080). Sign in under **Settings → Authentication**, point the inbox at your scan folder, and process a document.
+
+Optional:
+
+```bash
+# Install somewhere else
+PAPERLESS_DIR=~/apps/paperlessagent curl -fsSL \
+  https://raw.githubusercontent.com/dpastoetter/paperlessagent/main/scripts/install.sh | bash
+
+# Re-run anytime to pull the latest code and refresh dependencies
+curl -fsSL https://raw.githubusercontent.com/dpastoetter/paperlessagent/main/scripts/install.sh | bash
+```
+
+Needs **Python 3.10+**, **git**, and **Poppler** (`pdftoppm`) for PDF OCR:
+
+```bash
+# Fedora / RHEL
+sudo dnf install poppler-utils
+# Debian / Ubuntu
+sudo apt install poppler-utils
+# macOS
+brew install poppler
+```
+
+### Manual setup
+
+```bash
+git clone https://github.com/dpastoetter/paperlessagent.git
+cd paperlessagent
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-
 cp .env.example .env
 ```
-
-PDF rasterization for AI OCR requires Poppler (`pdftoppm`), e.g. `sudo dnf install poppler-utils`.
 
 ### OpenAI / Codex auth
 
@@ -69,7 +108,23 @@ PAPERLESS_MODEL=gemini-flash-latest
 PAPERLESS_EMBEDDING_MODEL=text-embedding-004
 ```
 
-If `PAPERLESS_LLM_PROVIDER` is unset, the app auto-selects OpenAI when an OpenAI/Codex key is available, otherwise Gemini when `GOOGLE_API_KEY` is set.
+### Ollama (alternative, fully local)
+
+Run everything on your own hardware — no cloud account, no API key. The agent, AI vision OCR, and RAG embeddings all go through your local Ollama server. Pick a **multimodal** model, since OCR sends page images to the same model:
+
+```bash
+ollama pull gemma3            # or llama3.2-vision, qwen2.5vl, minicpm-v
+ollama pull nomic-embed-text  # embeddings for RAG
+```
+
+```bash
+PAPERLESS_LLM_PROVIDER=ollama
+PAPERLESS_MODEL=gemma3
+PAPERLESS_EMBEDDING_MODEL=nomic-embed-text
+# OLLAMA_BASE_URL=http://localhost:11434   (default)
+```
+
+If `PAPERLESS_LLM_PROVIDER` is unset, the app auto-selects OpenAI when an OpenAI/Codex key is available, otherwise Gemini when `GOOGLE_API_KEY` is set. Ollama must be selected explicitly.
 
 ## Run the web app
 
@@ -77,6 +132,8 @@ If `PAPERLESS_LLM_PROVIDER` is unset, the app auto-selects OpenAI when an OpenAI
 source .venv/bin/activate
 uvicorn app.main:app --port 8080
 ```
+
+Uvicorn binds to `127.0.0.1` by default — keep it that way. The API has no login; mutating routes are protected against cross-site form posts by a custom header the UI always sends, but binding with `--host 0.0.0.0` would still expose your documents and settings to anyone on the network.
 
 Open [http://localhost:8080](http://localhost:8080).
 
@@ -139,7 +196,7 @@ paperless_agent/       # ingest pipeline, review queue, dedup, updater, auth/llm
   updater.py           #   self-update from GitHub releases
 query_agent/           # RAG Q&A agent
 app/                   # FastAPI backend + single-page web UI (app/static/)
-scripts/               # watch_inbox.py, precommit.sh
+scripts/               # install.sh, watch_inbox.py, precommit.sh
 tests/                 # offline test suite
 docs/screenshots/      # README screenshots (generated with mockup mode)
 data/                  # created at runtime (gitignored)
@@ -148,7 +205,7 @@ data/                  # created at runtime (gitignored)
 ## Notes
 
 - Text recovery on ingest always uses AI vision OCR on rendered page images; a PDF text layer, when present, serves as a hint and fallback.
-- If you switch embedding providers (Gemini ↔ OpenAI), re-index documents — vector spaces are not compatible.
+- If you switch embedding providers (Gemini / OpenAI / Ollama), re-index documents — vector spaces are not compatible.
 
 ## License
 

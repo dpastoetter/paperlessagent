@@ -136,7 +136,7 @@ function reviewCardHtml(item, index) {
       </label>
       <label class="field narrow">
         <span>Amount</span>
-        <input type="number" step="0.01" class="rv-amount" value="${p.amount ?? ""}" />
+        <input type="number" step="0.01" class="rv-amount" value="${escapeHtml(p.amount ?? "")}" />
       </label>
       <label class="field narrow">
         <span>Currency</span>
@@ -474,7 +474,12 @@ function renderAskResult(data) {
             .map((s) => {
               const id = encodeURIComponent(s.document_id);
               const name = escapeHtml(s.filename || "document");
-              const openUrl = s.open_url || `/api/documents/${id}/file`;
+              // Only allow same-origin API file paths — never trust open_url schemes.
+              const candidate = typeof s.open_url === "string" ? s.open_url : "";
+              const openUrl =
+                candidate.startsWith("/api/documents/") && !candidate.includes("://")
+                  ? candidate
+                  : `/api/documents/${id}/file`;
               return `<li>
                 <span class="source-meta">${name}</span>
                 <span class="source-actions">
@@ -500,31 +505,55 @@ async function openDocumentFile(url) {
   if (window.PA_MOCK?.enabled) {
     throw new Error("Mockup mode is on — files are demo data. Turn it off in Settings.");
   }
-  const res = await fetch(url);
-  if (!res.ok) {
-    let detail = res.statusText;
+  // Open the tab synchronously while we still have the click gesture.
+  // After `await fetch(...)` browsers treat window.open as a popup and either
+  // block it or leave a blank tab — which is what Review "Open scan" hit.
+  const win = window.open("about:blank", "_blank");
+  if (!win) {
+    throw new Error("Popup blocked — allow popups for this site to open documents");
+  }
+  try {
+    win.document.title = "Loading…";
+  } catch (_err) {
+    // cross-origin about:blank quirks — ignore
+  }
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        const data = await res.json();
+        detail = data.detail || data.error || detail;
+      } catch (_err) {
+        // ignore
+      }
+      throw new Error(detail || "Could not open file");
+    }
+    const bytes = await res.arrayBuffer();
+    const headerType = (res.headers.get("content-type") || "").split(";")[0].trim();
+    // Review/document URLs have no .pdf suffix — sniff magic bytes so the
+    // browser PDF viewer always gets application/pdf.
+    const head = new Uint8Array(bytes, 0, Math.min(bytes.byteLength, 5));
+    const isPdf =
+      head.length >= 4 &&
+      head[0] === 0x25 &&
+      head[1] === 0x50 &&
+      head[2] === 0x44 &&
+      head[3] === 0x46; // %PDF
+    const mime = isPdf
+      ? "application/pdf"
+      : headerType || "application/octet-stream";
+    const objectUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
+    win.location.href = objectUrl;
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+  } catch (err) {
     try {
-      const data = await res.json();
-      detail = data.detail || data.error || detail;
-    } catch (_err) {
+      win.close();
+    } catch (_closeErr) {
       // ignore
     }
-    throw new Error(detail || "Could not open file");
+    throw err;
   }
-  const blob = await res.blob();
-  const type = blob.type || res.headers.get("content-type") || "";
-  // Ensure PDFs get a viewable MIME even if the server omitted it.
-  const viewBlob =
-    type.includes("pdf") || url.toLowerCase().includes(".pdf")
-      ? new Blob([blob], { type: "application/pdf" })
-      : blob;
-  const objectUrl = URL.createObjectURL(viewBlob);
-  const opened = window.open(objectUrl, "_blank", "noopener");
-  if (!opened) {
-    // Popup blocked — fall back to same-tab navigation.
-    window.location.href = objectUrl;
-  }
-  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
 }
 
 document.getElementById("ask-out").addEventListener("click", async (e) => {
@@ -981,8 +1010,12 @@ document.getElementById("oauth-start").addEventListener("click", async () => {
     document.getElementById("oauth-panel").classList.remove("hidden");
     document.getElementById("oauth-hint").textContent = data.hint || "";
     const link = document.getElementById("oauth-link");
-    link.href = data.authorize_url;
-    window.open(data.authorize_url, "_blank", "noopener");
+    const authorizeUrl = data.authorize_url || "";
+    if (!/^https:\/\//i.test(authorizeUrl)) {
+      throw new Error("OAuth authorize URL rejected (expected https)");
+    }
+    link.href = authorizeUrl;
+    window.open(authorizeUrl, "_blank", "noopener");
     setText("auth-out", {
       message: "Browser login opened. Waiting for callback…",
       callback_ready: data.callback_ready,

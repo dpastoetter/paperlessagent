@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+from pathlib import Path
 from typing import Any
 
 from google.adk.agents import Agent
@@ -13,6 +15,8 @@ from paperless_agent.settings import get_category_names
 from paperless_agent.tools.filesystem import move_to_archive, propose_filename, read_document
 from paperless_agent.tools.metadata_db import upsert_metadata
 from paperless_agent.tools.rag_index import index_document
+
+logger = logging.getLogger(__name__)
 
 
 def file_and_persist(
@@ -30,9 +34,11 @@ def file_and_persist(
     content_hash: str | None = None,
 ) -> dict[str, Any]:
     """
-    Move the source file into the archive, save SQLite metadata, and RAG-index it.
+    File the source into the archive, save SQLite metadata, and RAG-index it.
 
-    Call this once you have finalized doc_type, filename, and extracted fields.
+    Filing is atomic from the caller's perspective: the document is copied to
+    the archive first, metadata is committed, and only then is the inbox source
+    removed. A failure at any point leaves the source untouched in the inbox.
     """
     source_name = source_path.rsplit("/", 1)[-1]
     year = None
@@ -45,6 +51,7 @@ def file_and_persist(
         filename=filename,
         doc_type=doc_type,
         year=year,
+        delete_source=False,
     )
     if moved.get("status") != "success":
         emit_step_sync(
@@ -57,21 +64,35 @@ def file_and_persist(
         return moved
 
     original_name = source_name
-    saved = upsert_metadata(
-        original_name=original_name,
-        filename=moved["filename"],
-        path=moved["archive_path"],
-        doc_type=doc_type,
-        doc_date=doc_date,
-        counterparties=counterparties,
-        amount=amount,
-        currency=currency,
-        summary=summary,
-        extracted_json=extracted_json,
-        checksum=checksum,
-        content_hash=content_hash,
-    )
+    try:
+        saved = upsert_metadata(
+            original_name=original_name,
+            filename=moved["filename"],
+            path=moved["archive_path"],
+            doc_type=doc_type,
+            doc_date=doc_date,
+            counterparties=counterparties,
+            amount=amount,
+            currency=currency,
+            summary=summary,
+            extracted_json=extracted_json,
+            checksum=checksum,
+            content_hash=content_hash,
+        )
+    except Exception as exc:  # noqa: BLE001
+        # Metadata failed: remove the archive copy so the inbox source stays
+        # the single authoritative copy and can be reprocessed.
+        Path(moved["archive_path"]).unlink(missing_ok=True)
+        emit_step_sync(
+            "file",
+            label="File",
+            status="error",
+            detail=str(exc),
+            filename=source_name,
+        )
+        return {"status": "error", "error": f"metadata save failed: {exc}"}
     if saved.get("status") != "success":
+        Path(moved["archive_path"]).unlink(missing_ok=True)
         emit_step_sync(
             "file",
             label="File",
@@ -80,6 +101,13 @@ def file_and_persist(
             filename=source_name,
         )
         return saved
+
+    # Both archive copy and metadata are in place — retire the inbox source.
+    try:
+        Path(source_path).unlink(missing_ok=True)
+    except OSError as exc:
+        # Duplicate copy remains in the inbox; safe direction (no data loss).
+        logger.warning("Could not remove inbox source %s: %s", source_path, exc)
 
     emit_step_sync(
         "file",
