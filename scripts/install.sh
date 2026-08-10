@@ -92,13 +92,15 @@ echo
 bold "Install complete"
 cat <<EOF
 
-  Start the app:
+  Start the app (activate .venv first — do not use a system uvicorn):
 
     cd $INSTALL_DIR
     source .venv/bin/activate
     uvicorn app.main:app --port $PORT
 
   Then open http://localhost:$PORT
+
+  If activate fails or you see ModuleNotFoundError: fastapi, re-run this installer.
 
   First-run tips:
     • Settings → Authentication — sign in with ChatGPT, or paste an API key

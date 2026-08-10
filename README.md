@@ -31,7 +31,11 @@ All screenshots use the built-in mockup mode (Settings → Look & feel), which f
 
 ## Install
 
-One command — clones into `~/paperlessagent`, creates a venv, installs dependencies, and writes a starter `.env`:
+Cloning the repo alone is not enough — Python dependencies must be installed into a local virtualenv (`.venv`). Without that step you will see `No such file or directory: .venv/bin/activate` and/or `ModuleNotFoundError: No module named 'fastapi'` when starting the app (often because a system-wide `uvicorn` is used instead of the venv one).
+
+### One-line install (recommended)
+
+Creates `~/paperlessagent` (or updates it), builds `.venv`, installs dependencies, and writes a starter `.env`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dpastoetter/paperlessagent/main/scripts/install.sh | bash
@@ -45,7 +49,7 @@ source .venv/bin/activate
 uvicorn app.main:app --port 8080
 ```
 
-Open [http://localhost:8080](http://localhost:8080). Sign in under **Settings → Authentication**, point the inbox at your scan folder, and process a document.
+Confirm the prompt shows `(.venv)` (or that `which uvicorn` points at `…/paperlessagent/.venv/bin/uvicorn`) before starting. Open [http://localhost:8080](http://localhost:8080). Sign in under **Settings → Authentication**, point the inbox at your scan folder, and process a document.
 
 Optional:
 
@@ -55,6 +59,7 @@ PAPERLESS_DIR=~/apps/paperlessagent curl -fsSL \
   https://raw.githubusercontent.com/dpastoetter/paperlessagent/main/scripts/install.sh | bash
 
 # Re-run anytime to pull the latest code and refresh dependencies
+# (safe to run again if you already cloned but never created .venv)
 curl -fsSL https://raw.githubusercontent.com/dpastoetter/paperlessagent/main/scripts/install.sh | bash
 ```
 
@@ -71,14 +76,19 @@ brew install poppler
 
 ### Manual setup
 
+Use this if you cloned with `git` and skipped the installer:
+
 ```bash
 git clone https://github.com/dpastoetter/paperlessagent.git
 cd paperlessagent
 python3 -m venv .venv
 source .venv/bin/activate
+pip install -U pip
 pip install -r requirements.txt
-cp .env.example .env
+cp .env.example .env   # skip if .env already exists
 ```
+
+If you already have a clone but no `.venv`, run the `python3 -m venv` / `pip install` steps above (or re-run the one-line installer) before starting the server.
 
 ### OpenAI / Codex auth
 
@@ -128,10 +138,18 @@ If `PAPERLESS_LLM_PROVIDER` is unset, the app auto-selects OpenAI when an OpenAI
 
 ## Run the web app
 
+Always activate the project venv first so you use its `uvicorn` and packages, not the system ones:
+
 ```bash
+cd ~/paperlessagent   # or your install directory
 source .venv/bin/activate
 uvicorn app.main:app --port 8080
 ```
+
+| Symptom | Fix |
+| --- | --- |
+| `.venv/bin/activate: No such file or directory` | Run the [one-line install](#one-line-install-recommended) or the [manual setup](#manual-setup) venv steps |
+| `ModuleNotFoundError: No module named 'fastapi'` | Same — dependencies were never installed, or the venv was not activated |
 
 Uvicorn binds to `127.0.0.1` by default — keep it that way. The API has no login; mutating routes are protected against cross-site form posts by a custom header the UI always sends, but binding with `--host 0.0.0.0` would still expose your documents and settings to anyone on the network.
 
