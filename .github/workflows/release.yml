@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev python3-venv build-essential
+
+      - name: Build release assets
+        run: |
+          chmod +x scripts/make-release-assets.sh scripts/build-deb.sh
+          ./scripts/make-release-assets.sh "${GITHUB_REF_NAME}"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+
+          cat > /tmp/release-notes.md <<EOF
+          ## PaperlessAgent ${TAG}
+
+          ### Assets
+          - \`paperlessagent-${VERSION}.tar.gz\` — source archive for the in-app updater (SHA-256 verified)
+          - \`paperlessagent_${VERSION}_amd64.deb\` — Debian/Ubuntu package (\`/opt/paperlessagent\` + systemd user unit)
+          - \`SHA256SUMS\` — checksums for both artifacts
+
+          ### Debian / Ubuntu install
+          \`\`\`bash
+          sudo apt install ./paperlessagent_${VERSION}_amd64.deb
+          systemctl --user enable --now paperlessagent
+          # open http://127.0.0.1:8080
+          \`\`\`
+
+          ### Tarball / installer
+          \`\`\`bash
+          curl -fsSL https://raw.githubusercontent.com/dpastoetter/paperlessagent/main/scripts/install.sh | bash
+          \`\`\`
+          EOF
+          # Strip the common leading indent from the heredoc body.
+          sed -i 's/^          //' /tmp/release-notes.md
+
+          ASSETS=(dist/paperlessagent-"${VERSION}".tar.gz dist/SHA256SUMS)
+          shopt -s nullglob
+          for deb in dist/*.deb; do
+            ASSETS+=("$deb")
+          done
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+            gh release edit "$TAG" --notes-file /tmp/release-notes.md
+          else
+            gh release create "$TAG" "${ASSETS[@]}" \
+              --title "$TAG" \
+              --notes-file /tmp/release-notes.md
+          fi

@@ -63,9 +63,24 @@ PAPERLESS_DIR=~/apps/paperlessagent curl -fsSL \
 curl -fsSL https://raw.githubusercontent.com/dpastoetter/paperlessagent/main/scripts/install.sh | bash
 ```
 
+### Debian / Ubuntu package
+
+Each GitHub release also ships an `amd64` `.deb` (built automatically on version tags). It installs under `/opt/paperlessagent` with a `paperlessagent` command and a systemd **user** unit:
+
+```bash
+# download paperlessagent_<version>_amd64.deb from the GitHub release, then:
+sudo apt install ./paperlessagent_0.1.3_amd64.deb
+systemctl --user enable --now paperlessagent
+# open http://127.0.0.1:8080
+```
+
+Data defaults to `~/.local/share/paperlessagent`. Stop/remove with `systemctl --user disable --now paperlessagent` and `sudo apt remove paperlessagent`.
+
+In-app **Software update** still uses the release tarball + `SHA256SUMS`; `.deb` installs are updated by installing the newer `.deb` from the next release.
+
 ### Uninstall
 
-Removes the install directory (app code, `.venv`, local `data/`, and `.env`):
+For the curl/git install, remove the install directory (app code, `.venv`, local `data/`, and `.env`):
 
 ```bash
 rm -rf "${PAPERLESS_DIR:-$HOME/paperlessagent}"
@@ -188,12 +203,12 @@ Filing rules (source folder, category → folder mapping, poll interval, review 
 
 Installs are **fail-closed on integrity checks**: the updater only applies a release that includes a `.tar.gz` asset with a SHA-256 digest (GitHub asset `digest` and/or a `SHA256SUMS` file). Tag-only or checksum-less releases are shown but refused at install time.
 
-To publish a verifiable release:
+Pushing a version tag (`v*`) runs GitHub Actions, which builds the tarball, `.deb`, and `SHA256SUMS`, then publishes/updates the GitHub Release. Local dry-run:
 
 ```bash
 git checkout v0.2.0
 ./scripts/make-release-assets.sh v0.2.0
-# Upload dist/paperlessagent-0.2.0.tar.gz and dist/SHA256SUMS to the GitHub release
+# dist/ contains paperlessagent-0.2.0.tar.gz, the .deb (if dpkg-deb is available), and SHA256SUMS
 ```
 
 ## Mockup mode
@@ -242,7 +257,7 @@ paperless_agent/       # ingest pipeline, review queue, dedup, updater, auth/llm
   updater.py           #   self-update from GitHub releases
 query_agent/           # RAG Q&A agent
 app/                   # FastAPI backend + single-page web UI (app/static/)
-scripts/               # install.sh, make-release-assets.sh, watch_inbox.py, precommit.sh
+scripts/               # install.sh, build-deb.sh, make-release-assets.sh, watch_inbox.py, precommit.sh
 tests/                 # offline test suite
 docs/screenshots/      # README screenshots (generated with mockup mode)
 data/                  # created at runtime (gitignored)
