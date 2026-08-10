@@ -65,18 +65,34 @@ curl -fsSL https://raw.githubusercontent.com/dpastoetter/paperlessagent/main/scr
 
 ### Debian / Ubuntu package
 
-Each GitHub release also ships an `amd64` `.deb` (built automatically on version tags). It installs under `/opt/paperlessagent` with a `paperlessagent` command and a systemd **user** unit:
+Each GitHub release also ships an `amd64` `.deb` (built automatically on version tags). It installs under `/opt/paperlessagent` with a `paperlessagent` command, a **native desktop window** (pywebview), and an optional systemd **user** unit:
 
 ```bash
 # download paperlessagent_<version>_amd64.deb from the GitHub release, then:
-sudo apt install ./paperlessagent_0.1.3_amd64.deb
+sudo apt install ./paperlessagent_0.1.4_amd64.deb
+
+# Desktop app (default) — no browser required
+paperlessagent desktop
+# or open “PaperlessAgent” from your application menu
+
+# Optional: always-on headless server instead
 systemctl --user enable --now paperlessagent
-# open http://127.0.0.1:8080
+# then browse http://127.0.0.1:8080 if you want
 ```
 
-Data defaults to `~/.local/share/paperlessagent`. Stop/remove with `systemctl --user disable --now paperlessagent` and `sudo apt remove paperlessagent`.
+Data defaults to `~/.local/share/paperlessagent`. The desktop command starts a local server for the window and stops it when you close the app (or attaches to an already-running user service on the same port).
+
+Stop/remove with `systemctl --user disable --now paperlessagent` (if enabled) and `sudo apt remove paperlessagent`.
 
 In-app **Software update** still uses the release tarball + `SHA256SUMS`; `.deb` installs are updated by installing the newer `.deb` from the next release.
+
+### Desktop window (optional, non-deb)
+
+From a venv install, after `pip install -r requirements-desktop.txt` (needs WebKitGTK on Linux):
+
+```bash
+python -m paperless_agent.desktop
+```
 
 ### Uninstall
 
@@ -257,6 +273,7 @@ paperless_agent/       # ingest pipeline, review queue, dedup, updater, auth/llm
   updater.py           #   self-update from GitHub releases
 query_agent/           # RAG Q&A agent
 app/                   # FastAPI backend + single-page web UI (app/static/)
+packaging/             # deb icon and desktop metadata helpers
 scripts/               # install.sh, build-deb.sh, make-release-assets.sh, watch_inbox.py, precommit.sh
 tests/                 # offline test suite
 docs/screenshots/      # README screenshots (generated with mockup mode)

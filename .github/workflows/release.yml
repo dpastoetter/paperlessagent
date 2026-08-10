@@ -49,8 +49,9 @@ jobs:
           ### Debian / Ubuntu install
           \`\`\`bash
           sudo apt install ./paperlessagent_${VERSION}_amd64.deb
-          systemctl --user enable --now paperlessagent
-          # open http://127.0.0.1:8080
+          paperlessagent desktop
+          # or open “PaperlessAgent” from the application menu
+          # headless: systemctl --user enable --now paperlessagent
           \`\`\`
 
           ### Tarball / installer

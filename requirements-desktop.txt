@@ -1,0 +1,2 @@
+# Optional desktop window shell (Debian package / python -m paperless_agent.desktop)
+pywebview>=5.0

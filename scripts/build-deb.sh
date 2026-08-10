@@ -30,7 +30,13 @@ python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1
   || { echo "Python 3.10+ required to build the package venv" >&2; exit 1; }
 
 rm -rf "$STAGE"
-mkdir -p "$BUILD_APP" "$STAGE/DEBIAN" "$STAGE/usr/bin" "$STAGE/usr/lib/systemd/user"
+mkdir -p \
+  "$BUILD_APP" \
+  "$STAGE/DEBIAN" \
+  "$STAGE/usr/bin" \
+  "$STAGE/usr/lib/systemd/user" \
+  "$STAGE/usr/share/applications" \
+  "$STAGE/usr/share/icons/hicolor/scalable/apps"
 
 # --- application files -------------------------------------------------------
 if command -v git >/dev/null && git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -70,9 +76,12 @@ python3 -m venv "$BUILD_APP/.venv"
 # shellcheck disable=SC1091
 source "$BUILD_APP/.venv/bin/activate"
 python -m pip install -U pip >/dev/null
-# Production install — skip pytest from requirements.txt.
+# Production install — skip pytest from requirements.txt; add desktop shell.
 grep -vE '^(pytest|[[:space:]]*#|$)' "$BUILD_APP/requirements.txt" \
   | python -m pip install -r /dev/stdin
+if [ -f "$BUILD_APP/requirements-desktop.txt" ]; then
+  python -m pip install -r "$BUILD_APP/requirements-desktop.txt"
+fi
 deactivate
 
 # Make the venv relocatable to /opt/paperlessagent/.venv after dpkg install.
@@ -120,9 +129,15 @@ if [ -f "$DATA_DIR/.env" ]; then
   set +a
 fi
 
-cmd="${1:-start}"
+cmd="${1:-desktop}"
 case "$cmd" in
-  start)
+  desktop|gui|window)
+    cd "$APP"
+    export PAPERLESS_HOST="$HOST"
+    export PAPERLESS_PORT="$PORT"
+    exec "$VENV/bin/python" -m paperless_agent.desktop --host "$HOST" --port "$PORT"
+    ;;
+  start|serve)
     cd "$APP"
     exec "$VENV/bin/uvicorn" app.main:app --host "$HOST" --port "$PORT"
     ;;
@@ -152,9 +167,10 @@ HINT
     ;;
   *)
     cat <<USAGE
-usage: paperlessagent [start|stop|status|uninstall]
+usage: paperlessagent [desktop|start|stop|status|uninstall]
 
-  start      run the web UI on ${HOST}:${PORT} (default)
+  desktop    open the native desktop window (default)
+  start      run the headless web server on ${HOST}:${PORT}
   stop       stop the systemd --user service
   status     show systemd --user status
   uninstall  print package removal hints
@@ -169,6 +185,25 @@ USAGE
 esac
 EOF
 chmod 755 "$STAGE/usr/bin/paperlessagent"
+
+# --- desktop menu entry + icon ----------------------------------------------
+if [ -f "$BUILD_APP/packaging/paperlessagent.svg" ]; then
+  cp "$BUILD_APP/packaging/paperlessagent.svg" \
+    "$STAGE/usr/share/icons/hicolor/scalable/apps/paperlessagent.svg"
+fi
+
+cat > "$STAGE/usr/share/applications/paperlessagent.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=PaperlessAgent
+Comment=Local-first document agent
+Exec=paperlessagent desktop
+Icon=paperlessagent
+Terminal=false
+Categories=Office;Utility;
+StartupNotify=true
+EOF
 
 # --- systemd user unit -------------------------------------------------------
 cat > "$STAGE/usr/lib/systemd/user/paperlessagent.service" <<EOF
@@ -201,7 +236,7 @@ Version: ${VERSION}
 Section: utils
 Priority: optional
 Architecture: ${ARCH}
-Depends: python3 (>= 3.10), poppler-utils
+Depends: python3 (>= 3.10), poppler-utils, python3-gi, gir1.2-webkit2-4.1 | gir1.2-webkit2-4.0
 Maintainer: Dominik Pastoetter <266259608+dpastoetter@users.noreply.github.com>
 Installed-Size: ${INSTALLED_SIZE}
 Homepage: https://github.com/dpastoetter/paperlessagent
@@ -209,6 +244,7 @@ Description: Local-first document agent with human-in-the-loop filing
  PaperlessAgent ingests scanned PDFs and photos, recovers text with AI
  vision OCR, extracts metadata, and files documents locally with optional
  RAG search. Supports OpenAI, Gemini, or fully local Ollama.
+ Includes a native desktop window (pywebview) and a headless systemd user service.
 EOF
 
 cat > "$STAGE/DEBIAN/postinst" <<EOF
@@ -222,9 +258,10 @@ cat <<MSG
 
 PaperlessAgent ${VERSION} installed to /opt/paperlessagent
 
-  Start now:     paperlessagent start
-  As a service:  systemctl --user enable --now paperlessagent
-  Open:          http://127.0.0.1:8080
+  Desktop app:   paperlessagent desktop
+                 (also in your application menu as “PaperlessAgent”)
+  Headless:      systemctl --user enable --now paperlessagent
+  Browser URL:   http://127.0.0.1:8080  (when the server is running)
 
 Data directory defaults to ~/.local/share/paperlessagent
 
