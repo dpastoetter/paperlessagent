@@ -21,6 +21,9 @@ def test_mutating_routes_require_csrf_header(isolated_data):
         "/api/update/apply",
         "/api/update/restart",
         "/api/auth/logout",
+        "/api/ollama/enable",
+        "/api/llm/provider",
+        "/api/privacy/cloud-disclaimer",
     ):
         resp = bare.post(path)
         assert resp.status_code == 403, path

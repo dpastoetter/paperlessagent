@@ -14,13 +14,14 @@ from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 from openai import AsyncOpenAI
 
+from paperless_agent import config
 from paperless_agent.auth import resolve_auth_mode, resolve_openai_api_key
 from paperless_agent.codex_oauth import (
     CODEX_RESPONSES_BASE_URL,
     ORIGINATOR,
     get_valid_chatgpt_tokens,
 )
-from paperless_agent.config import LLM_PROVIDER, MODEL_NAME, OLLAMA_BASE_URL
+from paperless_agent.ollama_setup import format_http_error
 
 # ChatGPT Codex backend rejects many Platform API model IDs (e.g. gpt-4.1).
 CODEX_DEFAULT_MODEL = os.getenv("PAPERLESS_CODEX_MODEL", "gpt-5.6-luna").strip() or "gpt-5.6-luna"
@@ -63,14 +64,14 @@ class CodexResponsesLlm(OpenAIResponsesLlm):
 
 def resolve_model_name() -> str:
     """Pick a model ID valid for the active auth mode."""
-    if LLM_PROVIDER != "openai":
-        return MODEL_NAME
+    if config.LLM_PROVIDER != "openai":
+        return config.MODEL_NAME
 
     mode = resolve_auth_mode()
     if mode != "chatgpt_oauth":
-        return MODEL_NAME
+        return config.MODEL_NAME
 
-    configured = os.getenv("PAPERLESS_CODEX_MODEL", "").strip() or MODEL_NAME
+    configured = os.getenv("PAPERLESS_CODEX_MODEL", "").strip() or config.MODEL_NAME
     if configured.startswith(_CODEX_MODEL_PREFIXES) or configured in {
         "gpt-5.6-sol",
         "gpt-5.6-terra",
@@ -110,14 +111,14 @@ def get_model() -> Any:
     - ollama: OpenAILlm against Ollama's OpenAI-compatible endpoint
     """
     model_name = resolve_model_name()
-    if LLM_PROVIDER == "ollama":
+    if config.LLM_PROVIDER == "ollama":
         # OpenAILlm builds its AsyncOpenAI() from env; point it at Ollama's
         # OpenAI-compatible endpoint (any non-empty api key is accepted).
-        os.environ["OPENAI_BASE_URL"] = f"{OLLAMA_BASE_URL}/v1"
+        os.environ["OPENAI_BASE_URL"] = f"{config.OLLAMA_BASE_URL}/v1"
         if not os.environ.get("OPENAI_API_KEY"):
             os.environ["OPENAI_API_KEY"] = "ollama"
         return OpenAILlm(model=model_name)
-    if LLM_PROVIDER != "openai":
+    if config.LLM_PROVIDER != "openai":
         return model_name
 
     mode = resolve_auth_mode()
@@ -138,9 +139,9 @@ async def complete_text(prompt: str, *, instructions: str) -> str:
     which often yields empty final text parts through the ADK Runner.
     """
     model_name = resolve_model_name()
-    if LLM_PROVIDER == "ollama":
+    if config.LLM_PROVIDER == "ollama":
         coro = _complete_ollama(prompt, instructions=instructions, model_name=model_name)
-    elif LLM_PROVIDER == "openai":
+    elif config.LLM_PROVIDER == "openai":
         mode = resolve_auth_mode()
         if mode == "chatgpt_oauth":
             coro = _complete_codex(prompt, instructions=instructions, model_name=model_name)
@@ -197,15 +198,18 @@ async def _complete_codex(prompt: str, *, instructions: str, model_name: str) ->
 
 async def _ollama_request(payload: dict[str, Any]) -> dict[str, Any]:
     """POST a chat payload to the local Ollama server."""
+    model = str(payload.get("model") or config.MODEL_NAME)
     try:
         async with httpx.AsyncClient(timeout=OLLAMA_CHAT_TIMEOUT) as client:
-            resp = await client.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload)
+            resp = await client.post(f"{config.OLLAMA_BASE_URL}/api/chat", json=payload)
             resp.raise_for_status()
             return resp.json()
     except httpx.ConnectError as exc:
         raise RuntimeError(
-            f"Cannot reach Ollama at {OLLAMA_BASE_URL} — is `ollama serve` running?"
+            f"Cannot reach Ollama at {config.OLLAMA_BASE_URL} — is `ollama serve` running?"
         ) from exc
+    except httpx.HTTPStatusError as exc:
+        raise RuntimeError(format_http_error(exc, model=model, kind="model")) from exc
 
 
 async def _complete_ollama(
@@ -287,12 +291,12 @@ async def complete_with_images(
         raise ValueError("images must not be empty")
 
     model_name = resolve_model_name()
-    if LLM_PROVIDER == "ollama":
+    if config.LLM_PROVIDER == "ollama":
         # Ollama multimodal models take base64 images on the chat message.
         coro = _complete_ollama(
             prompt, instructions=instructions, model_name=model_name, images=images
         )
-    elif LLM_PROVIDER == "openai":
+    elif config.LLM_PROVIDER == "openai":
         mode = resolve_auth_mode()
         if mode == "chatgpt_oauth":
             coro = _complete_codex_images(

@@ -8,17 +8,15 @@ from typing import Any
 import chromadb
 import httpx
 
+from paperless_agent import config
 from paperless_agent.config import (
     CHROMA_DIR,
     CHUNK_OVERLAP_CHARS,
     CHUNK_SIZE_CHARS,
-    EMBEDDING_MODEL,
-    GOOGLE_API_KEY,
-    LLM_PROVIDER,
-    OLLAMA_BASE_URL,
     RETRIEVE_TOP_K,
     ensure_data_dirs,
 )
+from paperless_agent.ollama_setup import format_http_error
 from paperless_agent.tools.metadata_db import get_document, mark_indexed
 
 
@@ -34,13 +32,13 @@ def _chroma_collection():
 def _embed_gemini(texts: list[str]) -> list[list[float]]:
     from google import genai
 
-    if not GOOGLE_API_KEY:
+    if not config.GOOGLE_API_KEY:
         raise RuntimeError("GOOGLE_API_KEY is not set")
-    client = genai.Client(api_key=GOOGLE_API_KEY)
+    client = genai.Client(api_key=config.GOOGLE_API_KEY)
     vectors: list[list[float]] = []
     for text in texts:
         response = client.models.embed_content(
-            model=EMBEDDING_MODEL,
+            model=config.EMBEDDING_MODEL,
             contents=text,
         )
         embeddings = getattr(response, "embeddings", None)
@@ -68,24 +66,27 @@ def _embed_openai(texts: list[str]) -> list[list[float]]:
 
     ensure_openai_env()
     client = OpenAI()
-    response = client.embeddings.create(model=EMBEDDING_MODEL, input=texts)
+    response = client.embeddings.create(model=config.EMBEDDING_MODEL, input=texts)
     ordered = sorted(response.data, key=lambda item: item.index)
     return [list(item.embedding) for item in ordered]
 
 
 def _embed_ollama(texts: list[str]) -> list[list[float]]:
     """Embeddings via a local Ollama server (/api/embed, batch input)."""
+    model = config.EMBEDDING_MODEL
     try:
         resp = httpx.post(
-            f"{OLLAMA_BASE_URL}/api/embed",
-            json={"model": EMBEDDING_MODEL, "input": texts},
+            f"{config.OLLAMA_BASE_URL}/api/embed",
+            json={"model": model, "input": texts},
             timeout=120,
         )
         resp.raise_for_status()
     except httpx.ConnectError as exc:
         raise RuntimeError(
-            f"Cannot reach Ollama at {OLLAMA_BASE_URL} — is `ollama serve` running?"
+            f"Cannot reach Ollama at {config.OLLAMA_BASE_URL} — is `ollama serve` running?"
         ) from exc
+    except httpx.HTTPStatusError as exc:
+        raise RuntimeError(format_http_error(exc, model=model, kind="embedding model")) from exc
     embeddings = resp.json().get("embeddings")
     if not embeddings or len(embeddings) != len(texts):
         raise RuntimeError("Unexpected embedding response shape from Ollama")
@@ -147,12 +148,11 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     """Embed texts with the configured provider (Gemini, OpenAI, or Ollama)."""
     if not texts:
         return []
-    if LLM_PROVIDER == "openai":
+    if config.LLM_PROVIDER == "openai":
         return _embed_openai(texts)
-    if LLM_PROVIDER == "ollama":
+    if config.LLM_PROVIDER == "ollama":
         return _embed_ollama(texts)
     return _embed_gemini(texts)
-
 
 def index_document(
     document_id: str,

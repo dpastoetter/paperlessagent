@@ -26,12 +26,21 @@ def test_update_status_check_reports_newer(client, monkeypatch):
             "published_at": "2026-01-01T00:00:00Z",
             "html_url": "https://github.com/x/y/releases/tag/v99.0.0",
             "tarball_url": "https://api.github.com/repos/x/y/tarball/v99.0.0",
+            "verifiable": True,
+            "verification_error": None,
+            "artifact": {
+                "filename": "paperlessagent-99.0.0.tar.gz",
+                "download_url": "https://example.invalid/paperlessagent-99.0.0.tar.gz",
+                "expected_sha256": "a" * 64,
+            },
         },
     )
     body = client.get("/api/update/status?check=true").json()
     assert body["update_available"] is True
     assert body["latest_version"] == "99.0.0"
     assert body["notes"] == "big release"
+    assert body["verifiable"] is True
+    assert body["expected_sha256"] == "a" * 64
 
 
 def test_update_status_check_handles_no_releases(client, monkeypatch):

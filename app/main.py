@@ -28,12 +28,22 @@ from paperless_agent.codex_oauth import (
     save_api_key,
     start_oauth_login,
 )
+from paperless_agent import config
 from paperless_agent.config import (
     ARCHIVE_DIR,
-    EMBEDDING_MODEL,
-    LLM_PROVIDER,
-    MODEL_NAME,
     ensure_data_dirs,
+)
+from paperless_agent.ollama_setup import (
+    apply_llm_provider,
+    enable_ollama,
+    ollama_status,
+    pull_model,
+)
+from paperless_agent.privacy import (
+    accept_cloud_disclaimer,
+    cloud_disclaimer_status,
+    require_cloud_disclaimer,
+    revoke_cloud_disclaimer,
 )
 from paperless_agent.inbox_worker import (
     inbox_poll_loop,
@@ -219,25 +229,74 @@ class ValidatePathRequest(BaseModel):
     path: str = Field(..., min_length=1)
 
 
+class LlmProviderRequest(BaseModel):
+    provider: str = Field(..., min_length=3)
+    model: str | None = None
+    embedding_model: str | None = None
+    base_url: str | None = None
+
+
+class OllamaEnableRequest(BaseModel):
+    base_url: str | None = None
+    chat_model: str | None = None
+    embedding_model: str | None = None
+    pull_missing: bool = False
+
+
+class OllamaPullRequest(BaseModel):
+    model: str = Field(..., min_length=1)
+
+
+class CloudDisclaimerRequest(BaseModel):
+    accepted: bool = True
+
+
+def _require_cloud_disclaimer_or_403() -> None:
+    try:
+        require_cloud_disclaimer()
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "status": "ok",
-        "llm_provider": LLM_PROVIDER,
+        "llm_provider": config.LLM_PROVIDER,
         "model": resolve_model_name(),
-        "configured_model": MODEL_NAME,
-        "embedding_model": EMBEDDING_MODEL,
+        "configured_model": config.MODEL_NAME,
+        "embedding_model": config.EMBEDDING_MODEL,
         "auth": codex_auth_status(),
+        "cloud_disclaimer": cloud_disclaimer_status(),
     }
+    if config.LLM_PROVIDER == "ollama":
+        payload["ollama"] = ollama_status()
+    return payload
 
 
 @app.get("/api/auth/status")
 def api_auth_status() -> dict[str, Any]:
-    return {"status": "success", **codex_auth_status()}
+    return {
+        "status": "success",
+        **codex_auth_status(),
+        "cloud_disclaimer": cloud_disclaimer_status(),
+    }
+
+
+@app.get("/api/privacy/cloud-disclaimer")
+def api_cloud_disclaimer_status() -> dict[str, Any]:
+    return {"status": "success", "cloud_disclaimer": cloud_disclaimer_status()}
+
+
+@app.post("/api/privacy/cloud-disclaimer")
+def api_cloud_disclaimer_set(body: CloudDisclaimerRequest) -> dict[str, Any]:
+    status = accept_cloud_disclaimer() if body.accepted else revoke_cloud_disclaimer()
+    return {"status": "success", "cloud_disclaimer": status}
 
 
 @app.post("/api/auth/openai/start")
 def api_auth_openai_start() -> dict[str, Any]:
+    _require_cloud_disclaimer_or_403()
     try:
         return start_oauth_login()
     except Exception as exc:  # noqa: BLE001
@@ -251,6 +310,7 @@ def api_auth_openai_poll(state: str = Query(..., min_length=8)) -> dict[str, Any
 
 @app.post("/api/auth/openai/complete")
 def api_auth_openai_complete(body: OAuthCompleteRequest) -> dict[str, Any]:
+    _require_cloud_disclaimer_or_403()
     try:
         return complete_oauth_login_manual(state=body.state, raw=body.callback)
     except Exception as exc:  # noqa: BLE001
@@ -259,6 +319,7 @@ def api_auth_openai_complete(body: OAuthCompleteRequest) -> dict[str, Any]:
 
 @app.post("/api/auth/api-key")
 def api_auth_api_key(body: ApiKeyRequest) -> dict[str, Any]:
+    _require_cloud_disclaimer_or_403()
     try:
         return save_api_key(body.api_key)
     except Exception as exc:  # noqa: BLE001
@@ -268,6 +329,66 @@ def api_auth_api_key(body: ApiKeyRequest) -> dict[str, Any]:
 @app.post("/api/auth/logout")
 def api_auth_logout() -> dict[str, Any]:
     return clear_auth()
+
+
+@app.get("/api/ollama/status")
+def api_ollama_status() -> dict[str, Any]:
+    return {"status": "success", "ollama": ollama_status()}
+
+
+@app.post("/api/ollama/enable")
+def api_ollama_enable(body: OllamaEnableRequest) -> dict[str, Any]:
+    try:
+        result = enable_ollama(
+            base_url=body.base_url,
+            chat_model=body.chat_model,
+            embedding_model=body.embedding_model,
+            persist=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    pulled: list[dict[str, Any]] = []
+    if body.pull_missing:
+        for name in list(result.get("ollama", {}).get("missing_models") or []):
+            try:
+                pulled.append(pull_model(name, base_url=body.base_url))
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+        result["ollama"] = ollama_status(base_url=body.base_url)
+        result["pulled"] = pulled
+    return result
+
+
+@app.post("/api/ollama/pull")
+def api_ollama_pull(body: OllamaPullRequest) -> dict[str, Any]:
+    try:
+        return pull_model(body.model)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/api/llm/provider")
+def api_llm_provider(body: LlmProviderRequest) -> dict[str, Any]:
+    provider = (body.provider or "").strip().lower()
+    if provider in {"openai", "codex", "gemini", "google"}:
+        _require_cloud_disclaimer_or_403()
+    try:
+        applied = apply_llm_provider(
+            body.provider,
+            model=body.model,
+            embedding_model=body.embedding_model,
+            base_url=body.base_url,
+            persist=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    payload: dict[str, Any] = {"status": "success", "applied": applied}
+    if applied["provider"] == "ollama":
+        payload["ollama"] = ollama_status(base_url=body.base_url)
+    return payload
 
 
 @app.get("/api/settings")

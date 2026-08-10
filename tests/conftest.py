@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import os
+
+# Avoid auto-selecting a developer-machine Ollama during provider resolution.
+os.environ.setdefault("PAPERLESS_SKIP_OLLAMA_PROBE", "1")
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import CSRF_HEADER_NAME, CSRF_HEADER_VALUE, app
 from paperless_agent.config import ensure_data_dirs
+from paperless_agent.privacy import clear_privacy_cache
 from paperless_agent.settings import clear_settings_cache, load_settings
 
 
@@ -24,10 +30,12 @@ def isolated_data(tmp_path, monkeypatch):
         "paperless_agent.tools.metadata_db.DB_PATH", data / "paperless.db"
     )
     clear_settings_cache()
+    clear_privacy_cache()
     ensure_data_dirs()
     load_settings()
     yield data
     clear_settings_cache()
+    clear_privacy_cache()
 
 
 @pytest.fixture()

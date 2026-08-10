@@ -82,9 +82,136 @@ function armedConfirm(btn, armedLabel) {
   return false;
 }
 
-/* ————— Auth status ————— */
+/* ————— Provider / auth status ————— */
+
+let lastProvider = "";
+let cloudDisclaimerAccepted = false;
+
+function setCloudAuthLocked(locked) {
+  const panel = document.getElementById("cloud-auth-panel");
+  const checkbox = document.getElementById("cloud-disclaimer-accept");
+  if (panel) panel.dataset.locked = locked ? "true" : "false";
+  if (checkbox) checkbox.checked = !locked;
+  for (const id of ["oauth-start", "auth-toggle"]) {
+    const el = document.getElementById(id);
+    if (el) el.disabled = locked;
+  }
+  const apiKey = document.getElementById("api-key");
+  const apiKeyForm = document.getElementById("api-key-form");
+  const saveBtn = apiKeyForm?.querySelector('button[type="submit"]');
+  if (apiKey) apiKey.disabled = locked;
+  if (saveBtn) saveBtn.disabled = locked;
+  if (locked) {
+    const details = document.getElementById("auth-details");
+    const toggle = document.getElementById("auth-toggle");
+    if (details) details.classList.add("hidden");
+    if (toggle) toggle.textContent = "More options";
+  }
+}
+
+function applyCloudDisclaimerStatus(status) {
+  cloudDisclaimerAccepted = Boolean(status?.accepted);
+  setCloudAuthLocked(!cloudDisclaimerAccepted);
+  return cloudDisclaimerAccepted;
+}
+
+async function refreshCloudDisclaimer() {
+  try {
+    const data = await api("/api/privacy/cloud-disclaimer");
+    return applyCloudDisclaimerStatus(data.cloud_disclaimer);
+  } catch {
+    setCloudAuthLocked(true);
+    return false;
+  }
+}
+
+function setProviderUi(provider) {
+  lastProvider = provider || "";
+  const section = document.getElementById("auth-section");
+  const ollamaPanel = document.getElementById("ollama-panel");
+  const cloudPanel = document.getElementById("cloud-auth-panel");
+  const cloudBtn = document.getElementById("provider-cloud");
+  const ollamaBtn = document.getElementById("provider-ollama");
+  const isOllama = provider === "ollama";
+
+  if (section) section.dataset.provider = provider || "";
+  if (ollamaPanel) ollamaPanel.classList.toggle("hidden", !isOllama);
+  if (cloudPanel) cloudPanel.classList.toggle("hidden", isOllama);
+  if (cloudBtn) cloudBtn.dataset.active = isOllama ? "false" : "true";
+  if (ollamaBtn) ollamaBtn.dataset.active = isOllama ? "true" : "false";
+}
+
+function renderOllamaStatus(ollama) {
+  const statusEl = document.getElementById("ollama-status");
+  const hintEl = document.getElementById("ollama-hint");
+  const section = document.getElementById("auth-section");
+  const pullBtn = document.getElementById("ollama-pull");
+  if (!ollama) {
+    if (statusEl) statusEl.textContent = "Ollama status unavailable";
+    return;
+  }
+
+  if (!ollama.reachable) {
+    if (statusEl) {
+      statusEl.textContent =
+        ollama.error || "Ollama is not running on this machine";
+      statusEl.dataset.tone = "warn";
+    }
+    if (hintEl) {
+      hintEl.textContent =
+        ollama.install_hint ||
+        "Install Ollama, start it, then click Use Ollama.";
+    }
+    if (section) section.dataset.ready = "false";
+    if (pullBtn) pullBtn.disabled = true;
+    setStatus("need-auth", "ollama offline");
+    return;
+  }
+
+  if (pullBtn) pullBtn.disabled = !(ollama.missing_models || []).length;
+
+  if (ollama.missing_models?.length) {
+    if (statusEl) {
+      statusEl.textContent = `Ollama is running — missing models: ${ollama.missing_models.join(", ")}`;
+      statusEl.dataset.tone = "warn";
+    }
+    if (hintEl) {
+      hintEl.textContent = ollama.pull_command
+        ? `Run: ${ollama.pull_command}`
+        : "Pull the required models, then refresh.";
+    }
+    if (section) section.dataset.ready = ollama.active ? "false" : section.dataset.ready;
+    setStatus("need-auth", "ollama · models needed");
+    return;
+  }
+
+  if (statusEl) {
+    statusEl.textContent = ollama.active
+      ? `Using local Ollama · ${ollama.chat_model} + ${ollama.embedding_model}`
+      : `Ollama ready · ${ollama.chat_model} + ${ollama.embedding_model}`;
+    statusEl.dataset.tone = "ok";
+  }
+  if (hintEl) {
+    hintEl.textContent = ollama.active
+      ? "Documents stay on this machine — no cloud sign-in needed."
+      : "Click Use Ollama to switch the app to local models.";
+  }
+  if (ollama.active) {
+    const authLine = document.getElementById("auth-status");
+    if (authLine) {
+      authLine.textContent = `Local Ollama · ${ollama.chat_model}`;
+      authLine.dataset.tone = "ok";
+    }
+    if (section) section.dataset.ready = "true";
+    setStatus("ready", `ollama · ${ollama.chat_model || "local"}`);
+  }
+}
 
 function renderAuthStatus(auth) {
+  if (lastProvider === "ollama") {
+    // Cloud auth panel is inactive while Ollama is selected.
+    return;
+  }
   const section = document.getElementById("auth-section");
   const el = document.getElementById("auth-status");
   if (!auth) {
@@ -95,26 +222,39 @@ function renderAuthStatus(auth) {
   }
   if (auth.auth_mode === "chatgpt_oauth") {
     const who = [auth.chatgpt_email, auth.chatgpt_plan].filter(Boolean).join(" · ");
-    if (el) el.textContent = who ? `Signed in as ${who}` : "Signed in with ChatGPT";
+    if (el) {
+      el.textContent = who ? `Signed in as ${who}` : "Signed in with ChatGPT";
+      el.dataset.tone = "ok";
+    }
     if (section) section.dataset.ready = "true";
     setStatus("ready", "chatgpt oauth");
     return;
   }
   if (auth.auth_mode === "api_key") {
-    if (el) el.textContent = "Using OpenAI API key";
+    if (el) {
+      el.textContent = "Using OpenAI API key";
+      el.dataset.tone = "ok";
+    }
     if (section) section.dataset.ready = "true";
     setStatus("ready", "api key");
     return;
   }
   if (el) {
-    el.textContent = "Not signed in — connect ChatGPT or an API key to process documents";
+    el.textContent = "Not signed in — connect ChatGPT or an API key, or switch to Local Ollama";
+    delete el.dataset.tone;
   }
   if (section) section.dataset.ready = "false";
   setStatus("need-auth", "auth needed");
 }
 
 async function refreshAuth() {
+  if (lastProvider === "ollama") {
+    return null;
+  }
   const data = await api("/api/auth/status");
+  if (data.cloud_disclaimer) {
+    applyCloudDisclaimerStatus(data.cloud_disclaimer);
+  }
   renderAuthStatus(data);
   setText("auth-out", {
     auth_mode: data.auth_mode,
@@ -126,22 +266,35 @@ async function refreshAuth() {
   return data;
 }
 
+async function refreshOllamaStatus() {
+  const data = await api("/api/ollama/status");
+  renderOllamaStatus(data.ollama);
+  return data.ollama;
+}
+
 async function refreshHealth() {
   try {
     const data = await api("/api/health");
+    setProviderUi(data.llm_provider || "");
+    if (data.cloud_disclaimer) {
+      applyCloudDisclaimerStatus(data.cloud_disclaimer);
+    }
     if (data.llm_provider === "ollama") {
-      // Local models — no cloud account needed, OpenAI auth panel is irrelevant.
-      setStatus("ready", `ollama · ${data.model || "local"}`);
-      const el = document.getElementById("auth-status");
-      if (el) el.textContent = "Using local Ollama — no cloud sign-in needed";
-      return;
+      if (data.ollama) {
+        renderOllamaStatus(data.ollama);
+      } else {
+        await refreshOllamaStatus();
+      }
+      return data;
     }
     if (data.auth) {
       renderAuthStatus(data.auth);
     } else {
       setStatus("ready", data.status === "ok" ? "online" : "degraded");
     }
+    return data;
   } catch {
     setStatus("offline", "offline");
+    return null;
   }
 }

@@ -16,27 +16,51 @@ ARCHIVE_DIR = DATA_DIR / "archive"
 DB_PATH = DATA_DIR / "paperless.db"
 CHROMA_DIR = DATA_DIR / "chroma"
 
-# gemini | openai | ollama  (openai can use OPENAI_API_KEY or Codex API-key login)
-_raw_provider = os.getenv("PAPERLESS_LLM_PROVIDER", "").strip().lower()
-if _raw_provider in {"gemini", "google"}:
-    LLM_PROVIDER = "gemini"
-elif _raw_provider in {"openai", "codex"}:
-    LLM_PROVIDER = "openai"
-elif _raw_provider in {"ollama", "local"}:
-    LLM_PROVIDER = "ollama"
-else:
-    # Auto: prefer OpenAI/Codex when a key is already available
+# Local Ollama server (used when LLM_PROVIDER == "ollama").
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+
+
+def _ollama_reachable_quick(url: str) -> bool:
+    """Short localhost probe used only during provider auto-detect."""
+    try:
+        import httpx
+
+        with httpx.Client(timeout=0.6) as client:
+            return client.get(f"{url.rstrip('/')}/api/tags").is_success
+    except Exception:  # noqa: BLE001 — auto-detect must never break startup
+        return False
+
+
+def _resolve_provider() -> str:
+    """Pick gemini | openai | ollama from env, credentials, or a live local Ollama."""
+    raw = os.getenv("PAPERLESS_LLM_PROVIDER", "").strip().lower()
+    if raw in {"gemini", "google"}:
+        return "gemini"
+    if raw in {"openai", "codex"}:
+        return "openai"
+    if raw in {"ollama", "local"}:
+        return "ollama"
+
     from paperless_agent.auth import resolve_openai_api_key
 
     if resolve_openai_api_key():
-        LLM_PROVIDER = "openai"
-    elif os.getenv("GOOGLE_API_KEY", "").strip():
-        LLM_PROVIDER = "gemini"
-    else:
-        LLM_PROVIDER = "gemini"
+        return "openai"
+    if os.getenv("GOOGLE_API_KEY", "").strip():
+        return "gemini"
 
-# Local Ollama server (only used when LLM_PROVIDER == "ollama").
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+    # No cloud credentials — prefer a running local Ollama when present.
+    skip_probe = os.getenv("PAPERLESS_SKIP_OLLAMA_PROBE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    if not skip_probe and _ollama_reachable_quick(OLLAMA_BASE_URL):
+        return "ollama"
+
+    return "gemini"
+
+# gemini | openai | ollama  (openai can use OPENAI_API_KEY or Codex API-key login)
+LLM_PROVIDER = _resolve_provider()
 
 # Default to a Codex-compatible model so ChatGPT OAuth works out of the box.
 # Override with PAPERLESS_MODEL (API) or PAPERLESS_CODEX_MODEL (ChatGPT OAuth).

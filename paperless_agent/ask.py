@@ -146,7 +146,10 @@ async def ask_archive(question: str) -> dict[str, Any]:
     if not reply:
         return {
             "status": "error",
-            "reply": "The model returned an empty answer. Try again, or add an OpenAI API key.",
+            "reply": (
+                "The model returned an empty answer. Try again, or check Settings → "
+                "AI provider (Ollama model pulled, or cloud sign-in / API key)."
+            ),
             "error": "empty model reply",
             "retrieval": retrieved,
             "metadata_count": len(documents),

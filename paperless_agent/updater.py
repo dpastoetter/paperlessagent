@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import io
 import logging
 import os
@@ -22,6 +24,11 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_UPDATE_REPO = "dpastoetter/paperlessagent"
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_SHA256_LINE_RE = re.compile(
+    r"^\s*([A-Fa-f0-9]{64})\s+\*?(.+?)\s*$"
+)
+_DIGEST_RE = re.compile(r"^sha256:([A-Fa-f0-9]{64})$", re.IGNORECASE)
+_SUMS_NAMES = frozenset({"SHA256SUMS", "SHA256SUMS.txt", "checksums.txt"})
 
 
 def _resolve_update_repo() -> str:
@@ -65,39 +72,177 @@ def is_newer(candidate: str, current: str) -> bool:
     return parse_version(candidate) > parse_version(current)
 
 
+def sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def parse_sha256sums(text: str) -> dict[str, str]:
+    """Parse GNU sha256sum output into `{filename: hex digest}`."""
+    mapping: dict[str, str] = {}
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = _SHA256_LINE_RE.match(line)
+        if not match:
+            continue
+        digest, filename = match.group(1).lower(), match.group(2).strip()
+        # Also index by basename so "dist/foo.tar.gz" matches "foo.tar.gz".
+        mapping[filename] = digest
+        mapping[Path(filename).name] = digest
+    return mapping
+
+
+def _asset_digest(asset: dict[str, Any]) -> str | None:
+    raw = (asset.get("digest") or "").strip()
+    if not raw:
+        return None
+    match = _DIGEST_RE.match(raw)
+    return match.group(1).lower() if match else None
+
+
+def _pick_archive_asset(assets: list[dict[str, Any]]) -> dict[str, Any] | None:
+    archives = [
+        asset
+        for asset in assets
+        if isinstance(asset.get("name"), str)
+        and asset["name"] not in _SUMS_NAMES
+        and asset["name"].lower().endswith((".tar.gz", ".tgz"))
+    ]
+    if not archives:
+        return None
+    preferred = [
+        asset
+        for asset in archives
+        if asset["name"].lower().startswith("paperlessagent-")
+    ]
+    return preferred[0] if preferred else archives[0]
+
+
+def _resolve_commit_sha(client: httpx.Client, tag: str) -> str | None:
+    if not tag:
+        return None
+    resp = client.get(f"{GITHUB_API}/repos/{UPDATE_REPO}/commits/{tag}")
+    if resp.status_code != 200:
+        return None
+    sha = (resp.json() or {}).get("sha")
+    return sha if isinstance(sha, str) and sha else None
+
+
+def _select_verified_artifact(
+    release: dict[str, Any],
+    *,
+    sums_text: str | None,
+) -> dict[str, Any] | None:
+    """
+    Choose a downloadable archive that has an expected SHA-256.
+
+    Prefers an uploaded `.tar.gz` release asset. Uses the asset's GitHub
+    `digest` when present, otherwise a `SHA256SUMS` asset entry.
+    """
+    assets = [
+        asset
+        for asset in (release.get("assets") or [])
+        if isinstance(asset, dict) and isinstance(asset.get("name"), str)
+    ]
+    sums = parse_sha256sums(sums_text or "")
+    archive = _pick_archive_asset(assets)
+    if archive is None:
+        return None
+
+    expected = _asset_digest(archive) or sums.get(archive["name"])
+    if not expected:
+        return None
+    url = archive.get("browser_download_url") or archive.get("url")
+    if not isinstance(url, str) or not url:
+        return None
+    return {
+        "filename": archive["name"],
+        "download_url": url,
+        "expected_sha256": expected,
+        "source": "release-asset",
+    }
+
+
 def _fetch_latest_release() -> dict[str, Any] | None:
-    """Latest GitHub release, falling back to the newest tag when none exist."""
+    """Latest GitHub release with verification metadata (no unverified tag fallback for install)."""
     headers = {"Accept": "application/vnd.github+json"}
     with httpx.Client(timeout=15, follow_redirects=True, headers=headers) as client:
         resp = client.get(f"{GITHUB_API}/repos/{UPDATE_REPO}/releases/latest")
-        if resp.status_code == 200:
-            data = resp.json()
-            return {
-                "tag": data.get("tag_name") or "",
-                "name": data.get("name") or data.get("tag_name") or "",
-                "notes": (data.get("body") or "")[:2000],
-                "published_at": data.get("published_at"),
-                "html_url": data.get("html_url"),
-                "tarball_url": data.get("tarball_url"),
-            }
-        if resp.status_code != 404:
+        if resp.status_code == 404:
+            # No releases published — surface tags for "what's newest" only.
+            resp = client.get(
+                f"{GITHUB_API}/repos/{UPDATE_REPO}/tags", params={"per_page": 1}
+            )
             resp.raise_for_status()
-
-        # No releases published — use the newest tag instead.
-        resp = client.get(f"{GITHUB_API}/repos/{UPDATE_REPO}/tags", params={"per_page": 1})
+            tags = resp.json()
+            if not tags:
+                return None
+            tag = tags[0].get("name") or ""
+            commit_sha = _resolve_commit_sha(client, tag)
+            return {
+                "tag": tag,
+                "name": tag,
+                "notes": "",
+                "published_at": None,
+                "html_url": f"https://github.com/{UPDATE_REPO}/releases",
+                "tarball_url": f"{GITHUB_API}/repos/{UPDATE_REPO}/tarball/{tag}",
+                "commit_sha": commit_sha,
+                "assets": [],
+                "verifiable": False,
+                "artifact": None,
+                "verification_error": (
+                    "No GitHub release with a SHA-256-verified archive asset. "
+                    "Tag-only installs are disabled."
+                ),
+            }
         resp.raise_for_status()
-        tags = resp.json()
-        if not tags:
-            return None
-        tag = tags[0].get("name") or ""
-        return {
+        data = resp.json()
+        tag = data.get("tag_name") or ""
+        assets = data.get("assets") or []
+        if not isinstance(assets, list):
+            assets = []
+
+        sums_text: str | None = None
+        for asset in assets:
+            if not isinstance(asset, dict):
+                continue
+            if asset.get("name") not in _SUMS_NAMES:
+                continue
+            sums_url = asset.get("browser_download_url") or asset.get("url")
+            if not isinstance(sums_url, str):
+                continue
+            sums_headers = dict(headers)
+            # Asset API URLs need the octet-stream accept to get bytes.
+            if sums_url.startswith(GITHUB_API):
+                sums_headers["Accept"] = "application/octet-stream"
+            sums_resp = client.get(sums_url, headers=sums_headers)
+            if sums_resp.is_success:
+                sums_text = sums_resp.text
+                break
+
+        release = {
             "tag": tag,
-            "name": tag,
-            "notes": "",
-            "published_at": None,
-            "html_url": f"https://github.com/{UPDATE_REPO}/releases",
-            "tarball_url": f"{GITHUB_API}/repos/{UPDATE_REPO}/tarball/{tag}",
+            "name": data.get("name") or tag,
+            "notes": (data.get("body") or "")[:2000],
+            "published_at": data.get("published_at"),
+            "html_url": data.get("html_url"),
+            "tarball_url": data.get("tarball_url"),
+            "commit_sha": _resolve_commit_sha(client, tag),
+            "assets": assets,
         }
+        artifact = _select_verified_artifact(release, sums_text=sums_text)
+        release["artifact"] = artifact
+        release["verifiable"] = artifact is not None
+        release["verification_error"] = (
+            None
+            if artifact is not None
+            else (
+                "Latest release is missing a .tar.gz asset with a SHA-256 digest "
+                "(GitHub asset digest or SHA256SUMS). Refusing unverified installs."
+            )
+        )
+        return release
 
 
 def check_for_update() -> dict[str, Any]:
@@ -108,6 +253,7 @@ def check_for_update() -> dict[str, Any]:
         "repo": UPDATE_REPO,
         "current_version": current,
         "update_available": False,
+        "verifiable": False,
     }
     try:
         latest = _fetch_latest_release()
@@ -121,6 +267,7 @@ def check_for_update() -> dict[str, Any]:
     if latest is None:
         return {**base, "message": "No releases or tags published on GitHub yet."}
 
+    artifact = latest.get("artifact") or {}
     return {
         **base,
         "latest_version": latest["tag"].lstrip("v"),
@@ -129,16 +276,35 @@ def check_for_update() -> dict[str, Any]:
         "notes": latest["notes"],
         "published_at": latest["published_at"],
         "html_url": latest["html_url"],
-        "tarball_url": latest["tarball_url"],
+        "tarball_url": latest.get("tarball_url"),
+        "commit_sha": latest.get("commit_sha"),
         "update_available": is_newer(latest["tag"], current),
+        "verifiable": bool(latest.get("verifiable")),
+        "verification_error": latest.get("verification_error"),
+        "artifact_name": artifact.get("filename"),
+        "expected_sha256": artifact.get("expected_sha256"),
+        "download_url": artifact.get("download_url"),
     }
 
 
-def _download_tarball(url: str) -> bytes:
-    with httpx.Client(timeout=120, follow_redirects=True) as client:
+def _download_bytes(url: str) -> bytes:
+    headers = {"Accept": "application/octet-stream"}
+    with httpx.Client(timeout=120, follow_redirects=True, headers=headers) as client:
         resp = client.get(url)
         resp.raise_for_status()
         return resp.content
+
+
+def verify_sha256(data: bytes, expected_hex: str) -> None:
+    """Raise ValueError when the payload does not match the expected digest."""
+    expected = (expected_hex or "").strip().lower()
+    if not re.fullmatch(r"[a-f0-9]{64}", expected):
+        raise ValueError("invalid expected SHA-256 digest")
+    actual = sha256_hex(data)
+    if not hmac.compare_digest(actual, expected):
+        raise ValueError(
+            f"SHA-256 mismatch (expected {expected[:12]}…, got {actual[:12]}…) — update aborted"
+        )
 
 
 def _is_protected(relative: Path) -> bool:
@@ -151,7 +317,21 @@ def _is_protected(relative: Path) -> bool:
     return relative.name.lower() == ".env"
 
 
-def apply_tarball(tar_bytes: bytes) -> dict[str, Any]:
+def _root_matches_commit(source_root: Path, commit_sha: str | None) -> bool:
+    """GitHub source archives unpack to `{owner}-{repo}-{fullsha}/`."""
+    if not commit_sha:
+        return True
+    name = source_root.name.lower()
+    sha = commit_sha.lower()
+    return name.endswith(sha) or name.endswith(sha[:12]) or name.endswith(sha[:7])
+
+
+def apply_tarball(
+    tar_bytes: bytes,
+    *,
+    commit_sha: str | None = None,
+    expect_commit_match: bool = False,
+) -> dict[str, Any]:
     """
     Extract a GitHub source tarball and copy it over the install directory.
 
@@ -171,6 +351,15 @@ def apply_tarball(tar_bytes: bytes) -> dict[str, Any]:
         if len(entries) != 1:
             return {"status": "error", "error": "unexpected tarball layout"}
         source_root = entries[0]
+
+        if expect_commit_match and not _root_matches_commit(source_root, commit_sha):
+            return {
+                "status": "error",
+                "error": (
+                    f"Archive root '{source_root.name}' does not match release "
+                    f"commit {commit_sha} — update aborted"
+                ),
+            }
 
         for path in sorted(source_root.rglob("*")):
             if not path.is_file():
@@ -200,24 +389,44 @@ def apply_tarball(tar_bytes: bytes) -> dict[str, Any]:
 
 
 def apply_update() -> dict[str, Any]:
-    """Download the latest release and install it over the current version."""
+    """Download the latest verified release and install it over the current version."""
     info = check_for_update()
     if info.get("status") != "success":
         return info
-    if not info.get("tarball_url"):
-        return {"status": "error", "error": info.get("message") or "no release to install"}
     if not info.get("update_available"):
         return {
             "status": "error",
             "error": f"Already up to date (v{info['current_version']}).",
         }
+    if not info.get("verifiable") or not info.get("expected_sha256") or not info.get(
+        "download_url"
+    ):
+        return {
+            "status": "error",
+            "error": info.get("verification_error")
+            or "Refusing to install an unverified release (missing SHA-256).",
+        }
 
     try:
-        tar_bytes = _download_tarball(info["tarball_url"])
+        tar_bytes = _download_bytes(info["download_url"])
     except httpx.HTTPError as exc:
         return {"status": "error", "error": f"Download failed: {exc}"}
 
-    result = apply_tarball(tar_bytes)
+    try:
+        verify_sha256(tar_bytes, info["expected_sha256"])
+    except ValueError as exc:
+        return {"status": "error", "error": str(exc)}
+
+    # Prefer commit-folder matching for GitHub-style archives; skip when the
+    # publisher shipped a custom-prefixed root that still has a checksum.
+    expect_commit = bool(info.get("commit_sha")) and "github.com" in (
+        info.get("download_url") or ""
+    )
+    result = apply_tarball(
+        tar_bytes,
+        commit_sha=info.get("commit_sha"),
+        expect_commit_match=expect_commit,
+    )
     if result.get("status") != "success":
         return result
 
@@ -225,6 +434,8 @@ def apply_update() -> dict[str, Any]:
         **result,
         "installed_version": info.get("latest_version"),
         "previous_version": info["current_version"],
+        "verified_sha256": info["expected_sha256"],
+        "artifact_name": info.get("artifact_name"),
         "restart_required": True,
     }
 

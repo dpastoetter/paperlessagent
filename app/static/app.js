@@ -975,7 +975,7 @@ function connectWorkflowEvents() {
   };
 }
 
-/* ————— Settings: auth ————— */
+/* ————— Settings: AI provider / auth ————— */
 
 let oauthState = null;
 let oauthPollTimer = null;
@@ -995,12 +995,145 @@ function showAuthDetails(show) {
   toggle.textContent = show ? "Hide options" : "More options";
 }
 
+async function selectCloudProvider() {
+  setProviderUi("openai");
+  await refreshCloudDisclaimer();
+  if (!cloudDisclaimerAccepted) {
+    document.getElementById("cloud-disclaimer-accept")?.focus();
+    toast("Approve the cloud processing disclaimer to use ChatGPT or an API key", "warn");
+    return;
+  }
+  try {
+    await api("/api/llm/provider", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "openai" }),
+    });
+    toast("Switched to ChatGPT / OpenAI", "ok");
+    await refreshHealth();
+    await refreshAuth();
+  } catch (err) {
+    toast(String(err.message || err), "error");
+  }
+}
+
+async function selectOllamaProvider({ enable = true, pullMissing = false } = {}) {
+  setProviderUi("ollama");
+  try {
+    if (enable) {
+      const data = await api("/api/ollama/enable", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pull_missing: pullMissing }),
+      });
+      renderOllamaStatus(data.ollama);
+      if (data.ollama?.ready) {
+        toast("Using local Ollama", "ok");
+      } else if (data.ollama?.reachable && data.ollama?.missing_models?.length) {
+        toast("Ollama enabled — pull the required models next", "warn");
+      } else if (!data.ollama?.reachable) {
+        toast(data.ollama?.error || "Ollama is not reachable", "warn");
+      } else {
+        toast("Ollama enabled", "ok");
+      }
+    } else {
+      await refreshOllamaStatus();
+    }
+    await refreshHealth();
+  } catch (err) {
+    toast(String(err.message || err), "error");
+  }
+}
+
+document.getElementById("cloud-disclaimer-accept")?.addEventListener("change", async (event) => {
+  const checked = Boolean(event.target?.checked);
+  try {
+    const data = await api("/api/privacy/cloud-disclaimer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accepted: checked }),
+    });
+    applyCloudDisclaimerStatus(data.cloud_disclaimer);
+    if (checked) {
+      toast("Cloud processing approved — you can sign in or save an API key", "ok");
+      // Persist cloud provider only after explicit approval.
+      if (lastProvider !== "ollama") {
+        await api("/api/llm/provider", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider: "openai" }),
+        }).catch(() => {});
+        await refreshHealth();
+        await refreshAuth();
+      }
+    } else {
+      toast("Cloud sign-in and API keys are locked until you approve again", "warn");
+      showAuthDetails(false);
+    }
+  } catch (err) {
+    event.target.checked = !checked;
+    toast(String(err.message || err), "error");
+  }
+});
+
+document.getElementById("provider-cloud")?.addEventListener("click", () => {
+  selectCloudProvider();
+});
+
+document.getElementById("provider-ollama")?.addEventListener("click", () => {
+  selectOllamaProvider({ enable: true, pullMissing: false });
+});
+
+document.getElementById("ollama-enable")?.addEventListener("click", () => {
+  selectOllamaProvider({ enable: true, pullMissing: false });
+});
+
+document.getElementById("ollama-pull")?.addEventListener("click", async () => {
+  const pullBtn = document.getElementById("ollama-pull");
+  const statusEl = document.getElementById("ollama-status");
+  try {
+    if (pullBtn) pullBtn.disabled = true;
+    if (statusEl) {
+      statusEl.textContent = "Pulling models via Ollama — this can take a few minutes…";
+      statusEl.dataset.tone = "warn";
+    }
+    // Ensure provider is ollama first, then pull whatever is still missing.
+    const enabled = await api("/api/ollama/enable", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pull_missing: true }),
+    });
+    renderOllamaStatus(enabled.ollama);
+    if (enabled.ollama?.ready) {
+      toast("Required Ollama models are ready", "ok");
+    } else if (enabled.ollama?.missing_models?.length) {
+      toast(`Still missing: ${enabled.ollama.missing_models.join(", ")}`, "warn");
+    } else {
+      toast("Model pull finished", "ok");
+    }
+    await refreshHealth();
+  } catch (err) {
+    toast(String(err.message || err), "error");
+    refreshOllamaStatus().catch(() => {});
+  } finally {
+    if (pullBtn) pullBtn.disabled = false;
+  }
+});
+
+document.getElementById("ollama-refresh")?.addEventListener("click", () => {
+  refreshOllamaStatus().catch((err) => toast(String(err.message || err), "error"));
+});
+
 document.getElementById("auth-toggle").addEventListener("click", () => {
   const details = document.getElementById("auth-details");
   showAuthDetails(details.classList.contains("hidden"));
 });
 
 document.getElementById("oauth-start").addEventListener("click", async () => {
+  if (!cloudDisclaimerAccepted) {
+    toast("Approve the cloud processing disclaimer first", "warn");
+    return;
+  }
   stopOauthPoll();
   showAuthDetails(true);
   setText("auth-out", "Starting ChatGPT OAuth…");
@@ -1095,6 +1228,10 @@ document.getElementById("auth-logout").addEventListener("click", async () => {
 
 document.getElementById("api-key-form").addEventListener("submit", async (e) => {
   e.preventDefault();
+  if (!cloudDisclaimerAccepted) {
+    toast("Approve the cloud processing disclaimer first", "warn");
+    return;
+  }
   const api_key = document.getElementById("api-key").value.trim();
   if (!api_key) return;
   try {
@@ -1339,11 +1476,20 @@ document.getElementById("update-check").addEventListener("click", async () => {
       return;
     }
     if (data.update_available) {
-      setUpdateStatus(
-        `Update available: v${data.current_version} → v${data.latest_version}`,
-        "warn",
-      );
-      showUpdateButtons({ apply: true });
+      if (data.verifiable) {
+        setUpdateStatus(
+          `Update available: v${data.current_version} → v${data.latest_version} (SHA-256 verified)`,
+          "warn",
+        );
+        showUpdateButtons({ apply: true });
+      } else {
+        setUpdateStatus(
+          data.verification_error ||
+            `v${data.latest_version} is available but has no SHA-256 release assets — install refused`,
+          "err",
+        );
+        showUpdateButtons({});
+      }
       if (data.notes) {
         const notes = document.getElementById("update-notes");
         notes.textContent = data.notes;
@@ -1369,7 +1515,7 @@ document.getElementById("update-apply").addEventListener("click", async () => {
   try {
     const data = await api("/api/update/apply", { method: "POST" });
     setUpdateStatus(
-      `Installed v${data.installed_version} (${data.updated_count} files) — restart to finish`,
+      `Installed v${data.installed_version} (${data.updated_count} files, checksum ok) — restart to finish`,
       "ok",
     );
     toast(`Updated to v${data.installed_version}`, "ok");
@@ -1448,8 +1594,12 @@ if (window.PA_MOCK?.enabled) {
   connectWorkflowEvents();
 }
 
-refreshHealth();
-refreshAuth().catch(() => {});
+refreshHealth()
+  .then((health) => {
+    if (health?.llm_provider === "ollama") return null;
+    return refreshAuth();
+  })
+  .catch(() => {});
 refreshInbox().catch(() => {});
 refreshDocs().catch(() => {});
 refreshReviews().catch(() => {});

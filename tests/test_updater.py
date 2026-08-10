@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import tarfile
 
@@ -12,7 +13,10 @@ from paperless_agent.updater import (
     apply_update,
     get_current_version,
     is_newer,
+    parse_sha256sums,
     parse_version,
+    sha256_hex,
+    verify_sha256,
 )
 
 
@@ -30,6 +34,27 @@ def test_parse_and_compare_versions():
 def test_get_current_version_reads_pyproject():
     version = get_current_version()
     assert parse_version(version) > (0,) or version == "0.1.0"
+
+
+def test_parse_sha256sums_indexes_basename():
+    text = (
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  "
+        "dist/paperlessagent-1.0.0.tar.gz\n"
+        "# comment\n"
+    )
+    mapping = parse_sha256sums(text)
+    assert (
+        mapping["paperlessagent-1.0.0.tar.gz"]
+        == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    )
+
+
+def test_verify_sha256_accepts_match_and_rejects_mismatch():
+    payload = b"hello-update"
+    digest = sha256_hex(payload)
+    verify_sha256(payload, digest)
+    with pytest.raises(ValueError, match="mismatch"):
+        verify_sha256(payload, "0" * 64)
 
 
 def _make_tarball(files: dict[str, bytes], root: str = "owner-repo-abc123") -> bytes:
@@ -87,6 +112,17 @@ def test_apply_tarball_rejects_unexpected_layout(isolated_root):
     assert result["status"] == "error"
 
 
+def test_apply_tarball_rejects_commit_mismatch(isolated_root):
+    tarball = _make_tarball({"pyproject.toml": b"version=1\n"}, root="owner-repo-deadbeef")
+    result = apply_tarball(
+        tarball,
+        commit_sha="c" * 40,
+        expect_commit_match=True,
+    )
+    assert result["status"] == "error"
+    assert "does not match release commit" in result["error"]
+
+
 def test_apply_update_refuses_when_up_to_date(monkeypatch):
     monkeypatch.setattr(
         "paperless_agent.updater.check_for_update",
@@ -94,7 +130,9 @@ def test_apply_update_refuses_when_up_to_date(monkeypatch):
             "status": "success",
             "current_version": "0.1.0",
             "latest_version": "0.1.0",
-            "tarball_url": "https://example.invalid/tarball",
+            "download_url": "https://example.invalid/tarball",
+            "expected_sha256": "a" * 64,
+            "verifiable": True,
             "update_available": False,
         },
     )
@@ -103,7 +141,24 @@ def test_apply_update_refuses_when_up_to_date(monkeypatch):
     assert "up to date" in result["error"]
 
 
-def test_apply_update_installs_newer_release(isolated_root, monkeypatch):
+def test_apply_update_refuses_unverified_release(monkeypatch):
+    monkeypatch.setattr(
+        "paperless_agent.updater.check_for_update",
+        lambda: {
+            "status": "success",
+            "current_version": "0.1.0",
+            "latest_version": "9.9.9",
+            "update_available": True,
+            "verifiable": False,
+            "verification_error": "missing SHA-256",
+        },
+    )
+    result = apply_update()
+    assert result["status"] == "error"
+    assert "missing SHA-256" in result["error"]
+
+
+def test_apply_update_refuses_checksum_mismatch(isolated_root, monkeypatch):
     tarball = _make_tarball({"pyproject.toml": b'[project]\nversion = "9.9.9"\n'})
     monkeypatch.setattr(
         "paperless_agent.updater.check_for_update",
@@ -111,15 +166,45 @@ def test_apply_update_installs_newer_release(isolated_root, monkeypatch):
             "status": "success",
             "current_version": "0.1.0",
             "latest_version": "9.9.9",
-            "tarball_url": "https://example.invalid/tarball",
             "update_available": True,
+            "verifiable": True,
+            "download_url": "https://example.invalid/paperlessagent-9.9.9.tar.gz",
+            "expected_sha256": "0" * 64,
+            "artifact_name": "paperlessagent-9.9.9.tar.gz",
         },
     )
     monkeypatch.setattr(
-        "paperless_agent.updater._download_tarball", lambda _url: tarball
+        "paperless_agent.updater._download_bytes", lambda _url: tarball
+    )
+    result = apply_update()
+    assert result["status"] == "error"
+    assert "mismatch" in result["error"].lower()
+    assert not (isolated_root / "pyproject.toml").exists()
+
+
+def test_apply_update_installs_verified_release(isolated_root, monkeypatch):
+    tarball = _make_tarball({"pyproject.toml": b'[project]\nversion = "9.9.9"\n'})
+    digest = hashlib.sha256(tarball).hexdigest()
+    monkeypatch.setattr(
+        "paperless_agent.updater.check_for_update",
+        lambda: {
+            "status": "success",
+            "current_version": "0.1.0",
+            "latest_version": "9.9.9",
+            "update_available": True,
+            "verifiable": True,
+            "download_url": "https://example.invalid/paperlessagent-9.9.9.tar.gz",
+            "expected_sha256": digest,
+            "artifact_name": "paperlessagent-9.9.9.tar.gz",
+            "commit_sha": None,
+        },
+    )
+    monkeypatch.setattr(
+        "paperless_agent.updater._download_bytes", lambda _url: tarball
     )
     result = apply_update()
     assert result["status"] == "success"
     assert result["restart_required"] is True
     assert result["installed_version"] == "9.9.9"
+    assert result["verified_sha256"] == digest
     assert (isolated_root / "pyproject.toml").exists()

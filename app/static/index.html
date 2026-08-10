@@ -267,47 +267,85 @@
         <header class="view-head">
           <div>
             <h1>Settings</h1>
-            <p>Authentication, filing rules, and data management.</p>
+            <p>AI provider, filing rules, and data management.</p>
           </div>
         </header>
 
-        <section class="card auth" id="auth-section" data-ready="false">
+        <section class="card auth" id="auth-section" data-ready="false" data-provider="">
           <div class="auth-bar">
             <div>
-              <p class="section-kicker">Auth</p>
-              <h2>Authentication</h2>
-              <p id="auth-status" class="auth-line">Checking credentials…</p>
+              <p class="section-kicker">AI</p>
+              <h2>AI provider</h2>
+              <p id="auth-status" class="auth-line">Checking provider…</p>
             </div>
-            <div class="actions">
-              <button id="oauth-start" type="button" class="btn primary">Sign in with ChatGPT</button>
-              <button id="auth-toggle" type="button" class="btn ghost">More options</button>
-              <button id="auth-logout" type="button" class="btn ghost">Log out</button>
+            <div class="actions provider-switch" role="group" aria-label="AI provider">
+              <button id="provider-cloud" type="button" class="btn secondary" data-active="false">Cloud (ChatGPT)</button>
+              <button id="provider-ollama" type="button" class="btn secondary" data-active="false">Local Ollama</button>
             </div>
           </div>
 
-          <div id="auth-details" class="auth-details hidden">
-            <div id="oauth-panel" class="oauth hidden">
-              <p id="oauth-hint" class="fine"></p>
-              <a id="oauth-link" class="text-link" href="#" target="_blank" rel="noopener">Open ChatGPT login</a>
-              <label class="field">
-                <span>Paste callback URL if redirect fails</span>
-                <textarea id="oauth-paste" rows="2" placeholder="http://localhost:1455/auth/callback?code=…"></textarea>
+          <div id="ollama-panel" class="auth-details ollama-panel hidden">
+            <p id="ollama-status" class="auth-line">Checking local Ollama…</p>
+            <p id="ollama-hint" class="fine"></p>
+            <div class="actions ollama-actions">
+              <button id="ollama-enable" type="button" class="btn primary">Use Ollama</button>
+              <button id="ollama-pull" type="button" class="btn secondary">Pull required models</button>
+              <button id="ollama-refresh" type="button" class="btn ghost">Refresh</button>
+            </div>
+            <p class="fine">
+              Needs a multimodal chat model (default <code>gemma3</code>) plus
+              <code>nomic-embed-text</code> for search.
+              <a class="text-link" href="https://ollama.com/download" target="_blank" rel="noopener">Download Ollama</a>
+            </p>
+          </div>
+
+          <div id="cloud-auth-panel" class="cloud-auth-panel" data-locked="true">
+            <div id="cloud-disclaimer" class="cloud-disclaimer">
+              <p class="disclaimer-title">Cloud processing disclaimer</p>
+              <p class="fine">
+                ChatGPT, OpenAI API keys, and Gemini send document <strong>page images and text</strong>
+                to that cloud provider for OCR, extraction, naming, and Ask.
+                Files can still be stored on this machine, but AI processing is
+                <strong>not local</strong>. Choose <strong>Local Ollama</strong> if you want models to run only on this device.
+              </p>
+              <label class="disclaimer-check">
+                <input type="checkbox" id="cloud-disclaimer-accept" />
+                <span>I understand and approve sending my documents to a cloud AI provider</span>
               </label>
-              <button id="oauth-complete" type="button" class="btn primary">Complete sign-in</button>
             </div>
 
-            <form id="api-key-form" class="key-row">
-              <label class="field grow">
-                <span>OpenAI API key</span>
-                <input type="password" id="api-key" placeholder="sk-…" autocomplete="off" />
-              </label>
-              <button type="submit" class="btn secondary">Save key</button>
-              <button id="auth-refresh" type="button" class="btn ghost">Refresh</button>
-            </form>
-            <details class="debug">
-              <summary>Auth details</summary>
-              <pre id="auth-out" class="out"></pre>
-            </details>
+            <div class="auth-bar cloud-auth-bar">
+              <div class="actions">
+                <button id="oauth-start" type="button" class="btn primary" disabled>Sign in with ChatGPT</button>
+                <button id="auth-toggle" type="button" class="btn ghost" disabled>More options</button>
+                <button id="auth-logout" type="button" class="btn ghost">Log out</button>
+              </div>
+            </div>
+
+            <div id="auth-details" class="auth-details hidden">
+              <div id="oauth-panel" class="oauth hidden">
+                <p id="oauth-hint" class="fine"></p>
+                <a id="oauth-link" class="text-link" href="#" target="_blank" rel="noopener">Open ChatGPT login</a>
+                <label class="field">
+                  <span>Paste callback URL if redirect fails</span>
+                  <textarea id="oauth-paste" rows="2" placeholder="http://localhost:1455/auth/callback?code=…"></textarea>
+                </label>
+                <button id="oauth-complete" type="button" class="btn primary">Complete sign-in</button>
+              </div>
+
+              <form id="api-key-form" class="key-row">
+                <label class="field grow">
+                  <span>OpenAI API key</span>
+                  <input type="password" id="api-key" placeholder="sk-…" autocomplete="off" disabled />
+                </label>
+                <button type="submit" class="btn secondary" disabled>Save key</button>
+                <button id="auth-refresh" type="button" class="btn ghost">Refresh</button>
+              </form>
+              <details class="debug">
+                <summary>Auth details</summary>
+                <pre id="auth-out" class="out"></pre>
+              </details>
+            </div>
           </div>
         </section>
 

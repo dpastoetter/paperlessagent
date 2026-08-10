@@ -138,9 +138,51 @@
     chatgpt_plan: "plus",
   };
 
+  const OLLAMA = {
+    active: false,
+    ready: false,
+    reachable: true,
+    base_url: "http://localhost:11434",
+    version: "0.6.0",
+    installed_models: ["gemma3:latest", "nomic-embed-text:latest"],
+    chat_model: "gemma3",
+    embedding_model: "nomic-embed-text",
+    missing_models: [],
+    pull_command: "",
+    error: null,
+    install_hint: null,
+  };
+
   const ROUTES = [
     [/^\/api\/health/, () => ({ status: "ok", llm_provider: "openai", model: "gpt-5", auth: AUTH })],
-    [/^\/api\/auth\/status/, () => AUTH],
+    [/^\/api\/auth\/status/, () => ({ ...AUTH, cloud_disclaimer: { version: "1", accepted: true, accepted_at: "2026-01-01T00:00:00+00:00" } })],
+    [
+      /^\/api\/privacy\/cloud-disclaimer/,
+      () => ({
+        status: "success",
+        cloud_disclaimer: { version: "1", accepted: true, accepted_at: "2026-01-01T00:00:00+00:00" },
+      }),
+    ],
+    [/^\/api\/ollama\/status/, () => ({ status: "success", ollama: OLLAMA })],
+    [
+      /^\/api\/ollama\/enable/,
+      () => ({
+        status: "success",
+        applied: { provider: "ollama", model: "gemma3", embedding_model: "nomic-embed-text" },
+        ollama: { ...OLLAMA, active: true, ready: true },
+      }),
+    ],
+    [
+      /^\/api\/ollama\/pull/,
+      () => ({ status: "success", model: "gemma3", ollama: { ...OLLAMA, active: true, ready: true } }),
+    ],
+    [
+      /^\/api\/llm\/provider/,
+      () => ({
+        status: "success",
+        applied: { provider: "openai", model: "gpt-5.6-luna", embedding_model: "text-embedding-3-small" },
+      }),
+    ],
     [
       /^\/api\/inbox/,
       () => ({

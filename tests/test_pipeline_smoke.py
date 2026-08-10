@@ -52,6 +52,6 @@ def test_codex_oauth_falls_back_from_gpt41(monkeypatch, tmp_path):
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr("paperless_agent.llm.LLM_PROVIDER", "openai")
-    monkeypatch.setattr("paperless_agent.llm.MODEL_NAME", "gpt-4.1")
+    monkeypatch.setattr("paperless_agent.config.LLM_PROVIDER", "openai")
+    monkeypatch.setattr("paperless_agent.config.MODEL_NAME", "gpt-4.1")
     assert resolve_model_name() == "gpt-5.6-luna"

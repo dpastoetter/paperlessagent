@@ -116,6 +116,12 @@ fi
 mkdir -p data/inbox data/archive data/chroma
 ok "data directories ready"
 
+if command -v ollama >/dev/null; then
+  ok "ollama CLI found — use Settings → Local Ollama for fully local models"
+else
+  warn "ollama not found — optional for fully local AI (https://ollama.com/download)"
+fi
+
 # --- done --------------------------------------------------------------------
 echo
 bold "Install complete"
@@ -132,8 +138,8 @@ cat <<EOF
   If activate fails or you see ModuleNotFoundError: fastapi, re-run this installer.
 
   First-run tips:
-    • Settings → Authentication — sign in with ChatGPT, or paste an API key
-      (or set PAPERLESS_LLM_PROVIDER=ollama in .env for fully local models)
+    • Settings → AI provider — Sign in with ChatGPT, or click Local Ollama
+      (Ollama: install from https://ollama.com/download, then Pull required models)
     • Settings → Filing & scanning — point the inbox at your scan folder
     • Drop a PDF in Inbox and click Process inbox
 
