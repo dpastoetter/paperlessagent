@@ -137,6 +137,7 @@ REQUIRED_PATHS=(
   "paperless_agent/system_service.py"
   "paperless_agent/updater.py"
   "scripts/install.sh"
+  "scripts/install.ps1"
   "scripts/make-release-assets.sh"
 )
 for path in "${REQUIRED_PATHS[@]}"; do
@@ -148,20 +149,23 @@ done
 
 tar -czf "$DIST/$ARCHIVE_NAME" -C "$STAGE" "$PREFIX"
 
-# Standalone bootstrap script for:
+# Standalone bootstrap scripts for:
 #   curl -fsSL …/releases/latest/download/install.sh | bash
+#   irm …/releases/latest/download/install.ps1 | iex
 # (avoids stale raw.githubusercontent.com/main CDN caches)
 cp "$STAGE/$PREFIX/scripts/install.sh" "$DIST/install.sh"
 chmod +x "$DIST/install.sh"
+cp "$STAGE/$PREFIX/scripts/install.ps1" "$DIST/install.ps1"
 
 (
   cd "$DIST"
-  sha256sum "$ARCHIVE_NAME" install.sh > SHA256SUMS
+  sha256sum "$ARCHIVE_NAME" install.sh install.ps1 > SHA256SUMS
 )
 
 echo "Release assets ready in $DIST:"
 echo "  $ARCHIVE_NAME"
 echo "  install.sh"
+echo "  install.ps1"
 echo "  SHA256SUMS"
 echo "  commit ${COMMIT_SHORT} (${COMMIT})"
 echo "  tracked files packed: ${EXPECTED_COUNT} (+ .release-commit + .release-files)"

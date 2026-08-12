@@ -35,24 +35,24 @@ All screenshots use the built-in mockup mode (Settings → Look & feel), which f
 
 ## Install
 
-Cloning the repo alone is not enough — Python dependencies must be installed into a local virtualenv (`.venv`). Without that step you will see `No such file or directory: .venv/bin/activate` and/or `ModuleNotFoundError: No module named 'fastapi'` when starting the app (often because a system-wide `uvicorn` is used instead of the venv one).
+Cloning the repo alone is not enough — Python dependencies must be installed into a local virtualenv (`.venv`). Without that step you will see missing activate scripts and/or `ModuleNotFoundError: No module named 'fastapi'` when starting the app (often because a system-wide `uvicorn` is used instead of the venv one).
 
-### One-line install (recommended)
+The recommended installers download the **latest verified GitHub Release** tarball (same artifact as the in-app updater), sync into the install directory (preserving `.env`, `.venv`, `data/`, and `.git`), create `.venv`, install dependencies, and write a starter `.env`.
 
-Creates `~/paperlessagent` (or updates it), installs the **latest verified GitHub Release** tarball (same artifact as the in-app updater), builds `.venv`, installs dependencies, and writes a starter `.env`:
+### Linux
+
+Prerequisites: **Python 3.10+** (with `venv`), **curl**, **tar**, and **Poppler** (`pdftoppm`) for PDF OCR:
+
+```bash
+# Fedora / RHEL
+sudo dnf install poppler-utils
+# Debian / Ubuntu
+sudo apt install python3-venv poppler-utils
+```
 
 ```bash
 curl -fsSL https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.sh | bash
 ```
-
-To track `main` instead of the release (developers):
-
-```bash
-PAPERLESS_INSTALL_SOURCE=git curl -fsSL \
-  https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.sh | bash
-```
-
-Then start it:
 
 ```bash
 cd ~/paperlessagent
@@ -60,19 +60,79 @@ source .venv/bin/activate
 uvicorn app.main:app --port 8080
 ```
 
-Confirm the prompt shows `(.venv)` (or that `which uvicorn` points at `…/paperlessagent/.venv/bin/uvicorn`) before starting. Open [http://localhost:8080](http://localhost:8080). Sign in under **Settings → AI provider**, point the inbox at your scan folder, and process a document.
-
-Optional:
+Optional install location / developer git mode:
 
 ```bash
-# Install somewhere else
 PAPERLESS_DIR=~/apps/paperlessagent curl -fsSL \
   https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.sh | bash
 
-# Re-run anytime to pull the latest code and refresh dependencies
-# (safe to run again if you already cloned but never created .venv)
+PAPERLESS_INSTALL_SOURCE=git curl -fsSL \
+  https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.sh | bash
+```
+
+**Uninstall** (app code, `.venv`, local `data/`, `.env`):
+
+```bash
+rm -rf "${PAPERLESS_DIR:-$HOME/paperlessagent}"
+```
+
+This does not delete ChatGPT/OpenAI credentials in `~/.codex/auth.json` or archive/inbox folders outside the install directory. If you enabled Settings → Autostart, disable it first or run `systemctl --user disable paperlessagent.service` (systemd autostart is Linux-only).
+
+### macOS
+
+Prerequisites via Homebrew:
+
+```bash
+brew install python poppler
+```
+
+Same installer as Linux:
+
+```bash
 curl -fsSL https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.sh | bash
 ```
+
+```bash
+cd ~/paperlessagent
+source .venv/bin/activate
+uvicorn app.main:app --port 8080
+```
+
+**Uninstall:**
+
+```bash
+rm -rf "${PAPERLESS_DIR:-$HOME/paperlessagent}"
+```
+
+Does not remove `~/.codex/auth.json` or external archive folders. Boot autostart (systemd) is **not available** on macOS — use Settings → Autostart only on Linux.
+
+### Windows
+
+Prerequisites: **Python 3.10+** from [python.org](https://www.python.org/downloads/) (or `winget install Python.Python.3.12`) and **Poppler** so `pdftoppm` is on `PATH` (for example a [poppler-windows](https://github.com/oschwartz10612/poppler-windows/releases) build, or search with `winget search poppler`).
+
+In PowerShell:
+
+```powershell
+irm https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.ps1 | iex
+```
+
+```powershell
+cd $env:USERPROFILE\paperlessagent
+.\.venv\Scripts\Activate.ps1
+uvicorn app.main:app --host 127.0.0.1 --port 8080
+```
+
+If `Activate.ps1` is blocked, run once: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
+Optional: `$env:PAPERLESS_DIR = "$env:USERPROFILE\apps\paperlessagent"` before the installer. WSL can use the Linux `install.sh` flow instead.
+
+**Uninstall:**
+
+```powershell
+Remove-Item -Recurse -Force "$env:USERPROFILE\paperlessagent"
+```
+
+Does not remove `%USERPROFILE%\.codex\auth.json` or archive folders outside the install directory. Boot autostart is **not supported** on Windows.
 
 ### Desktop window (optional)
 
@@ -84,30 +144,9 @@ python -m paperless_agent.desktop
 
 The desktop wrapper respects `PAPERLESS_HOST`, `PAPERLESS_PORT`, and `PAPERLESS_LOG_LEVEL`.
 
-### Uninstall
-
-Removes the install directory (app code, `.venv`, local `data/`, and `.env`):
-
-```bash
-rm -rf "${PAPERLESS_DIR:-$HOME/paperlessagent}"
-```
-
-This does not delete ChatGPT/OpenAI credentials in `~/.codex/auth.json`, archive/inbox folders you pointed outside the install directory, or a systemd user unit if you enabled autostart — disable autostart in Settings first, or run `systemctl --user disable paperlessagent.service`.
-
-Needs **Python 3.10+** (with the `venv` module), **git**, and **Poppler** (`pdftoppm`) for PDF OCR:
-
-```bash
-# Fedora / RHEL
-sudo dnf install poppler-utils
-# Debian / Ubuntu — python3-venv is required for .venv creation
-sudo apt install python3-venv poppler-utils
-# macOS
-brew install poppler
-```
-
 ### Manual setup
 
-Use this if you cloned with `git` and skipped the installer:
+Use this if you cloned with `git` and skipped the installer (Unix shell shown; on Windows use `py -3 -m venv .venv` and `.\.venv\Scripts\Activate.ps1`):
 
 ```bash
 git clone https://github.com/dpastoetter/paperlessagent.git
@@ -119,7 +158,7 @@ pip install -r requirements.txt
 cp .env.example .env   # skip if .env already exists
 ```
 
-If you already have a clone but no `.venv`, run the `python3 -m venv` / `pip install` steps above (or re-run the one-line installer) before starting the server.
+If you already have a clone but no `.venv`, run the `venv` / `pip install` steps above (or re-run the OS installer) before starting the server.
 
 ## AI providers
 
@@ -316,7 +355,7 @@ git checkout v0.2.0
 ./scripts/make-release-assets.sh v0.2.0
 # or before the tag exists:
 ./scripts/make-release-assets.sh v0.2.0 HEAD
-# dist/ contains paperlessagent-0.2.0.tar.gz and SHA256SUMS
+# dist/ contains paperlessagent-0.2.0.tar.gz, install.sh, install.ps1, SHA256SUMS
 ```
 
 ## Mockup mode
@@ -371,7 +410,7 @@ paperless_agent/       # ingest pipeline, review queue, dedup, updater, auth/llm
   updater.py           #   self-update from GitHub releases
 query_agent/           # RAG Q&A agent
 app/                   # FastAPI backend + single-page web UI (app/static/)
-scripts/               # install.sh, make-release-assets.sh, watch_inbox.py, precommit.sh
+scripts/               # install.sh, install.ps1, make-release-assets.sh, watch_inbox.py, precommit.sh
 tests/                 # offline test suite
 docs/screenshots/      # README screenshots (generated with mockup mode)
 data/                  # created at runtime (gitignored)

@@ -337,10 +337,18 @@ cat <<EOF
       (Ollama: install from https://ollama.com/download, then Pull required models)
     • Settings → Filing & scanning — point the inbox at your scan folder
     • Drop a PDF in Inbox and click Process inbox
+    • Boot autostart (systemd) is Linux-only — unavailable on macOS
 
   Re-run this installer anytime to install the latest verified release:
-    curl -fsSL https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.sh | bash
+    curl -fsSL https://github.com/${REPO}/releases/latest/download/install.sh | bash
+
+  On Windows, use install.ps1 instead:
+    irm https://github.com/${REPO}/releases/latest/download/install.ps1 | iex
 
   Tip: set PAPERLESS_INSTALL_SOURCE=git to track the main branch instead of the release.
+
+  Uninstall:
+    rm -rf "$INSTALL_DIR"
+  That does not delete ~/.codex/auth.json or archive folders outside the install dir.
 
 EOF
