@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "paperlessagent"
-version = "0.2.2"
+version = "0.2.3"
 description = "Local ADK agent for ingesting, filing, and querying scanned documents with RAG"
 readme = "README.md"
 license = {text = "Apache-2.0"}

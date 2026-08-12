@@ -71,17 +71,18 @@ jobs:
 
           ### Assets
           - \`paperlessagent-${VERSION}.tar.gz\` — full source archive for the in-app updater (SHA-256 verified)
+          - \`install.sh\` — one-line installer bootstrap (prefer this over raw.githubusercontent.com/main)
           - \`SHA256SUMS\` — checksums
 
           ### Install
           \`\`\`bash
-          curl -fsSL https://raw.githubusercontent.com/dpastoetter/paperlessagent/main/scripts/install.sh | bash
+          curl -fsSL https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.sh | bash
           \`\`\`
           EOF
           # Strip the common leading indent from the heredoc body.
           sed -i 's/^          //' /tmp/release-notes.md
 
-          ASSETS=(dist/paperlessagent-"${VERSION}".tar.gz dist/SHA256SUMS)
+          ASSETS=(dist/paperlessagent-"${VERSION}".tar.gz dist/install.sh dist/SHA256SUMS)
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "${ASSETS[@]}" --clobber

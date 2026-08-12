@@ -148,13 +148,20 @@ done
 
 tar -czf "$DIST/$ARCHIVE_NAME" -C "$STAGE" "$PREFIX"
 
+# Standalone bootstrap script for:
+#   curl -fsSL …/releases/latest/download/install.sh | bash
+# (avoids stale raw.githubusercontent.com/main CDN caches)
+cp "$STAGE/$PREFIX/scripts/install.sh" "$DIST/install.sh"
+chmod +x "$DIST/install.sh"
+
 (
   cd "$DIST"
-  sha256sum "$ARCHIVE_NAME" > SHA256SUMS
+  sha256sum "$ARCHIVE_NAME" install.sh > SHA256SUMS
 )
 
 echo "Release assets ready in $DIST:"
 echo "  $ARCHIVE_NAME"
+echo "  install.sh"
 echo "  SHA256SUMS"
 echo "  commit ${COMMIT_SHORT} (${COMMIT})"
 echo "  tracked files packed: ${EXPECTED_COUNT} (+ .release-commit + .release-files)"

@@ -42,14 +42,14 @@ Cloning the repo alone is not enough — Python dependencies must be installed i
 Creates `~/paperlessagent` (or updates it), installs the **latest verified GitHub Release** tarball (same artifact as the in-app updater), builds `.venv`, installs dependencies, and writes a starter `.env`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dpastoetter/paperlessagent/main/scripts/install.sh | bash
+curl -fsSL https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.sh | bash
 ```
 
 To track `main` instead of the release (developers):
 
 ```bash
 PAPERLESS_INSTALL_SOURCE=git curl -fsSL \
-  https://raw.githubusercontent.com/dpastoetter/paperlessagent/main/scripts/install.sh | bash
+  https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.sh | bash
 ```
 
 Then start it:
@@ -67,11 +67,11 @@ Optional:
 ```bash
 # Install somewhere else
 PAPERLESS_DIR=~/apps/paperlessagent curl -fsSL \
-  https://raw.githubusercontent.com/dpastoetter/paperlessagent/main/scripts/install.sh | bash
+  https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.sh | bash
 
 # Re-run anytime to pull the latest code and refresh dependencies
 # (safe to run again if you already cloned but never created .venv)
-curl -fsSL https://raw.githubusercontent.com/dpastoetter/paperlessagent/main/scripts/install.sh | bash
+curl -fsSL https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.sh | bash
 ```
 
 ### Desktop window (optional)

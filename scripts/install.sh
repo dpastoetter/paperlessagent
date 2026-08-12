@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # PaperlessAgent one-shot installer.
 #
-#   curl -fsSL https://raw.githubusercontent.com/dpastoetter/paperlessagent/main/scripts/install.sh | bash
+#   curl -fsSL https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.sh | bash
 #
 # By default this installs the latest *GitHub Release* tarball (same verified
 # artifact the in-app updater uses) — not a floating git checkout — so another
@@ -339,7 +339,7 @@ cat <<EOF
     • Drop a PDF in Inbox and click Process inbox
 
   Re-run this installer anytime to install the latest verified release:
-    curl -fsSL https://raw.githubusercontent.com/dpastoetter/paperlessagent/main/scripts/install.sh | bash
+    curl -fsSL https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.sh | bash
 
   Tip: set PAPERLESS_INSTALL_SOURCE=git to track the main branch instead of the release.
 
