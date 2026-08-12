@@ -142,7 +142,7 @@ PAPERLESS_EMBEDDING_MODEL=text-embedding-004
 
 Run everything on your own hardware — no cloud account, no API key. The agent, AI vision OCR, and RAG embeddings all go through your local Ollama server.
 
-1. Install [Ollama](https://ollama.com/download) and make sure it is running (`ollama serve`).
+1. Install [Ollama](https://ollama.com/download) and make sure it is running (`ollama serve`), or use **Start Ollama** in Settings when the CLI is installed but the daemon is down.
 2. Open the app → **Settings → AI provider → Local Ollama**.
 3. Click **Pull required models** (defaults: multimodal `gemma3` + `nomic-embed-text`).
 
@@ -161,6 +161,8 @@ PAPERLESS_EMBEDDING_MODEL=nomic-embed-text
 ```
 
 If `PAPERLESS_LLM_PROVIDER` is unset, the app auto-selects OpenAI when a key/Codex login is available, else Gemini when `GOOGLE_API_KEY` is set, else a **running local Ollama** when one responds on `OLLAMA_BASE_URL`.
+
+While Ollama is the active provider, PaperlessAgent checks that the daemon is reachable and listening (and that required models are present) before chat, OCR, or embedding work. Health reports `degraded` when the local instance is offline or models are missing. If the `ollama` CLI is on PATH, Settings shows **Start Ollama** to launch the daemon (systemd unit when available, otherwise `ollama serve`).
 
 ## Run the web app
 

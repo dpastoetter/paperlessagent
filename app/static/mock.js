@@ -142,6 +142,9 @@
     active: false,
     ready: false,
     reachable: true,
+    listening: true,
+    can_start: false,
+    binary: "/usr/local/bin/ollama",
     base_url: "http://localhost:11434",
     version: "0.6.0",
     installed_models: ["gemma3:latest", "nomic-embed-text:latest"],
@@ -170,6 +173,16 @@
         status: "success",
         applied: { provider: "ollama", model: "gemma3", embedding_model: "nomic-embed-text" },
         ollama: { ...OLLAMA, active: true, ready: true },
+      }),
+    ],
+    [
+      /^\/api\/ollama\/start/,
+      () => ({
+        status: "success",
+        started: true,
+        already_running: false,
+        method: "ollama serve",
+        ollama: { ...OLLAMA, active: true, ready: true, can_start: false },
       }),
     ],
     [

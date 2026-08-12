@@ -16,7 +16,11 @@ from paperless_agent.config import (
     RETRIEVE_TOP_K,
     ensure_data_dirs,
 )
-from paperless_agent.ollama_setup import format_http_error, resolve_runtime_model
+from paperless_agent.ollama_setup import (
+    ensure_ollama_ready,
+    format_http_error,
+    resolve_runtime_model,
+)
 from paperless_agent.tools.metadata_db import get_document, mark_indexed
 
 
@@ -73,6 +77,7 @@ def _embed_openai(texts: list[str]) -> list[list[float]]:
 
 def _embed_ollama(texts: list[str]) -> list[list[float]]:
     """Embeddings via a local Ollama server (/api/embed, batch input)."""
+    ensure_ollama_ready()
     model = resolve_runtime_model(config.EMBEDDING_MODEL)
     try:
         resp = httpx.post(

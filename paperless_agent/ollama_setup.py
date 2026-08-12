@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -15,12 +17,18 @@ from paperless_agent import config
 DEFAULT_CHAT_MODEL = "gemma3"
 DEFAULT_EMBED_MODEL = "nomic-embed-text"
 PROBE_TIMEOUT = 0.6
+READY_TIMEOUT = 2.0
+READY_CACHE_TTL = 5.0
 PULL_TIMEOUT = 600.0
+START_WAIT_TIMEOUT = 25.0
+START_POLL_INTERVAL = 0.4
 _TAGS_CACHE_TTL = 30.0
 
 _ENV_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 # (expires_at, base_url, models)
 _tags_cache: tuple[float, str, list[str]] | None = None
+# (expires_at, base_url, error_message_or_None, status_snapshot)
+_ready_cache: tuple[float, str, str | None, dict[str, Any]] | None = None
 
 
 def env_path() -> Path:
@@ -73,8 +81,9 @@ def resolve_installed_model(wanted: str, installed: list[str]) -> str | None:
 
 
 def clear_ollama_tags_cache() -> None:
-    global _tags_cache
+    global _tags_cache, _ready_cache
     _tags_cache = None
+    _ready_cache = None
 
 
 def list_installed_models(base_url: str | None = None) -> list[str]:
@@ -107,6 +116,7 @@ def probe_ollama(base_url: str | None = None, *, timeout: float = PROBE_TIMEOUT)
     url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
     result: dict[str, Any] = {
         "reachable": False,
+        "listening": False,
         "base_url": url,
         "models": [],
         "version": None,
@@ -124,6 +134,8 @@ def probe_ollama(base_url: str | None = None, *, timeout: float = PROBE_TIMEOUT)
             ]
             result["models"] = models
             result["reachable"] = True
+            # /api/tags succeeding means the daemon accepted an HTTP request.
+            result["listening"] = True
             try:
                 ver_resp = client.get(f"{url}/api/version")
                 if ver_resp.is_success:
@@ -141,6 +153,104 @@ def probe_ollama(base_url: str | None = None, *, timeout: float = PROBE_TIMEOUT)
 
 def ollama_reachable(base_url: str | None = None, *, timeout: float = PROBE_TIMEOUT) -> bool:
     return bool(probe_ollama(base_url, timeout=timeout).get("reachable"))
+
+
+def verify_model_accepts_requests(
+    model: str,
+    *,
+    base_url: str | None = None,
+    timeout: float = READY_TIMEOUT,
+) -> str | None:
+    """
+    Confirm Ollama will accept work for ``model`` via ``/api/show``.
+
+    Returns an error string on failure, or None when the model is available.
+    Does not load weights into VRAM (unlike a generate/chat round-trip).
+    """
+    name = (model or "").strip()
+    if not name:
+        return "No Ollama model configured"
+    url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.post(f"{url}/api/show", json={"name": name})
+            if resp.status_code == 404:
+                return (
+                    f"Ollama model '{name}' is not available locally. "
+                    f"Run: ollama pull {name}"
+                )
+            resp.raise_for_status()
+    except httpx.ConnectError:
+        return f"Cannot reach Ollama at {url} — is `ollama serve` running?"
+    except httpx.HTTPError as exc:
+        return format_http_error(exc, model=name, kind="model")
+    except ValueError as exc:
+        return f"Unexpected Ollama response for model '{name}': {exc}"
+    return None
+
+
+def ensure_ollama_ready(
+    *,
+    base_url: str | None = None,
+    require_models: bool = True,
+    verify_chat: bool = True,
+    force: bool = False,
+) -> dict[str, Any]:
+    """
+    Fail fast when the active provider is Ollama but the local daemon is not usable.
+
+    Checks that Ollama is reachable/listening, required models are installed, and
+    (by default) that the chat model is accepted by ``/api/show``. Results are
+    cached briefly so ingest/RAG bursts do not re-probe on every call.
+
+    Raises RuntimeError with an actionable message when not ready.
+    """
+    global _ready_cache
+    if config.LLM_PROVIDER != "ollama":
+        return {"skipped": True, "provider": config.LLM_PROVIDER}
+
+    url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
+    now = time.monotonic()
+    if not force and _ready_cache is not None:
+        expires_at, cached_url, cached_error, snapshot = _ready_cache
+        if cached_url == url and now < expires_at:
+            if cached_error:
+                raise RuntimeError(cached_error)
+            return dict(snapshot)
+
+    status = ollama_status(base_url=url)
+    error: str | None = None
+    if not status.get("reachable") or not status.get("listening"):
+        error = (
+            status.get("error")
+            or f"Cannot reach Ollama at {url} — is `ollama serve` running?"
+        )
+    elif require_models and status.get("missing_models"):
+        missing = status["missing_models"]
+        hint = status.get("pull_command") or pull_hint(missing)
+        error = (
+            "Ollama is running but required models are missing: "
+            f"{', '.join(missing)}. {hint}"
+        ).strip()
+    elif verify_chat:
+        chat = status.get("resolved_chat_model") or status.get("chat_model") or ""
+        error = verify_model_accepts_requests(str(chat), base_url=url)
+
+    snapshot = {
+        "ready": error is None,
+        "reachable": bool(status.get("reachable")),
+        "listening": bool(status.get("listening")),
+        "base_url": url,
+        "chat_model": status.get("resolved_chat_model") or status.get("chat_model"),
+        "embedding_model": status.get("resolved_embedding_model")
+        or status.get("embedding_model"),
+        "version": status.get("version"),
+        "error": error,
+    }
+    _ready_cache = (now + READY_CACHE_TTL, url, error, snapshot)
+    if error:
+        raise RuntimeError(error)
+    return snapshot
 
 
 def required_models(
@@ -314,11 +424,17 @@ def ollama_status(*, base_url: str | None = None) -> dict[str, Any]:
     resolved_chat = resolve_installed_model(chat, installed)
     resolved_embed = resolve_installed_model(embed, installed)
     active = config.LLM_PROVIDER == "ollama"
-    ready = bool(probe["reachable"] and not missing and active)
+    listening = bool(probe.get("listening") or probe.get("reachable"))
+    ready = bool(listening and not missing and active)
+    binary = find_ollama_binary()
+    can_start = binary is not None and not listening
     return {
         "active": active,
         "ready": ready,
         "reachable": probe["reachable"],
+        "listening": listening,
+        "can_start": can_start,
+        "binary": binary,
         "base_url": url,
         "version": probe.get("version"),
         "installed_models": installed,
@@ -330,11 +446,115 @@ def ollama_status(*, base_url: str | None = None) -> dict[str, Any]:
         "pull_command": pull_hint(missing),
         "error": probe.get("error"),
         "install_hint": (
-            "Install Ollama from https://ollama.com/download then run `ollama serve`."
+            (
+                "Ollama is installed — click Start Ollama, or run `ollama serve` in a terminal."
+                if binary
+                else "Install Ollama from https://ollama.com/download then run `ollama serve`."
+            )
             if not probe["reachable"]
             else None
         ),
     }
+
+
+def find_ollama_binary() -> str | None:
+    """Return the absolute path to the `ollama` CLI if it is on PATH."""
+    return shutil.which("ollama")
+
+
+def _try_systemctl_start() -> str | None:
+    """Start ollama.service via systemd when available. Returns the method label."""
+    candidates = (
+        ["systemctl", "--user", "start", "ollama.service"],
+        ["systemctl", "start", "ollama.service"],
+    )
+    for args in candidates:
+        try:
+            completed = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            continue
+        if completed.returncode == 0:
+            return " ".join(args)
+    return None
+
+
+def _spawn_ollama_serve(binary: str) -> None:
+    """Detach `ollama serve` so it keeps running after the HTTP request ends."""
+    kwargs: dict[str, Any] = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "start_new_session": True,
+    }
+    if os.name == "nt":
+        # CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS
+        kwargs["creationflags"] = 0x00000200 | 0x00000008
+    subprocess.Popen([binary, "serve"], **kwargs)  # noqa: S603
+
+
+def start_ollama(
+    *,
+    base_url: str | None = None,
+    wait_timeout: float = START_WAIT_TIMEOUT,
+) -> dict[str, Any]:
+    """
+    Start the local Ollama daemon from the GUI when it is not reachable.
+
+    Prefers systemd (`ollama.service`), then falls back to a detached
+    `ollama serve`. Only invokes the known `ollama` binary / unit — no
+    caller-supplied commands.
+    """
+    url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
+    clear_ollama_tags_cache()
+    status = ollama_status(base_url=url)
+    if status.get("reachable"):
+        return {
+            "status": "success",
+            "started": False,
+            "already_running": True,
+            "method": None,
+            "ollama": status,
+        }
+
+    binary = find_ollama_binary()
+    if not binary:
+        raise RuntimeError(
+            "Ollama is not installed (or not on PATH). "
+            "Install from https://ollama.com/download then try again."
+        )
+
+    method = _try_systemctl_start()
+    if not method:
+        try:
+            _spawn_ollama_serve(binary)
+        except OSError as exc:
+            raise RuntimeError(f"Failed to start `{binary} serve`: {exc}") from exc
+        method = f"{binary} serve"
+
+    deadline = time.monotonic() + max(1.0, float(wait_timeout))
+    while time.monotonic() < deadline:
+        clear_ollama_tags_cache()
+        if probe_ollama(url).get("reachable"):
+            return {
+                "status": "success",
+                "started": True,
+                "already_running": False,
+                "method": method,
+                "ollama": ollama_status(base_url=url),
+            }
+        time.sleep(START_POLL_INTERVAL)
+
+    raise RuntimeError(
+        f"Started Ollama via `{method}` but it did not become reachable at {url} "
+        f"within {wait_timeout:.0f}s. Check the Ollama service logs or run "
+        "`ollama serve` in a terminal."
+    )
 
 
 def enable_ollama(

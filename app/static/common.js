@@ -148,12 +148,20 @@ function renderOllamaStatus(ollama) {
   const hintEl = document.getElementById("ollama-hint");
   const section = document.getElementById("auth-section");
   const pullBtn = document.getElementById("ollama-pull");
+  const startBtn = document.getElementById("ollama-start");
   if (!ollama) {
     if (statusEl) statusEl.textContent = "Ollama status unavailable";
+    if (startBtn) startBtn.disabled = true;
     return;
   }
 
-  if (!ollama.reachable) {
+  const offline = !ollama.reachable || ollama.listening === false;
+  if (startBtn) {
+    startBtn.disabled = !(offline && ollama.can_start);
+    startBtn.classList.toggle("hidden", !offline);
+  }
+
+  if (offline) {
     if (statusEl) {
       statusEl.textContent =
         ollama.error || "Ollama is not running on this machine";
@@ -162,7 +170,9 @@ function renderOllamaStatus(ollama) {
     if (hintEl) {
       hintEl.textContent =
         ollama.install_hint ||
-        "Install Ollama, start it, then click Use Ollama.";
+        (ollama.can_start
+          ? "Click Start Ollama to launch the local daemon."
+          : "Install Ollama, start it (`ollama serve`), then click Use Ollama.");
     }
     if (section) section.dataset.ready = "false";
     if (pullBtn) pullBtn.disabled = true;

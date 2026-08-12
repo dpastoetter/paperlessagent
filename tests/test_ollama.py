@@ -14,12 +14,14 @@ from paperless_agent.ollama_setup import (
     apply_llm_provider,
     clear_ollama_tags_cache,
     enable_ollama,
+    ensure_ollama_ready,
     format_http_error,
     missing_models,
     model_name_matches,
     ollama_status,
     resolve_installed_model,
     resolve_runtime_model,
+    start_ollama,
     upsert_env_values,
 )
 from paperless_agent.tools import rag_index
@@ -30,6 +32,16 @@ from paperless_agent.tools.rag_index import embed_texts
 def ollama_provider(monkeypatch):
     """Force the ollama provider and capture chat payloads instead of HTTP."""
     monkeypatch.setattr(config, "LLM_PROVIDER", "ollama")
+    monkeypatch.setattr(
+        llm,
+        "ensure_ollama_ready",
+        lambda **_k: {
+            "ready": True,
+            "reachable": True,
+            "listening": True,
+            "base_url": "http://localhost:11434",
+        },
+    )
     captured: list[dict] = []
 
     async def fake_request(payload):
@@ -76,6 +88,11 @@ def test_complete_with_images_sends_base64_pages(ollama_provider):
 def test_embed_texts_routes_to_ollama(monkeypatch):
     monkeypatch.setattr(config, "LLM_PROVIDER", "ollama")
     monkeypatch.setattr(config, "EMBEDDING_MODEL", "nomic-embed-text")
+    monkeypatch.setattr(
+        rag_index,
+        "ensure_ollama_ready",
+        lambda **_k: {"ready": True, "reachable": True, "listening": True},
+    )
     posted: dict = {}
 
     class FakeResponse:
@@ -100,6 +117,11 @@ def test_embed_texts_routes_to_ollama(monkeypatch):
 
 def test_embed_texts_rejects_bad_response_shape(monkeypatch):
     monkeypatch.setattr(config, "LLM_PROVIDER", "ollama")
+    monkeypatch.setattr(
+        rag_index,
+        "ensure_ollama_ready",
+        lambda **_k: {"ready": True, "reachable": True, "listening": True},
+    )
 
     class FakeResponse:
         def raise_for_status(self):
@@ -114,6 +136,75 @@ def test_embed_texts_rejects_bad_response_shape(monkeypatch):
 
     with pytest.raises(RuntimeError, match="Unexpected embedding response"):
         embed_texts(["a", "b"])
+
+
+def test_ensure_ollama_ready_skips_non_ollama(monkeypatch):
+    monkeypatch.setattr(config, "LLM_PROVIDER", "openai")
+    assert ensure_ollama_ready()["skipped"] is True
+
+
+def test_ensure_ollama_ready_raises_when_offline(monkeypatch):
+    clear_ollama_tags_cache()
+    monkeypatch.setattr(config, "LLM_PROVIDER", "ollama")
+    monkeypatch.setattr(
+        "paperless_agent.ollama_setup.probe_ollama",
+        lambda *_a, **_k: {
+            "reachable": False,
+            "listening": False,
+            "base_url": "http://localhost:11434",
+            "models": [],
+            "version": None,
+            "error": "Cannot reach Ollama at http://localhost:11434 — is `ollama serve` running?",
+        },
+    )
+    with pytest.raises(RuntimeError, match="ollama serve"):
+        ensure_ollama_ready(force=True)
+
+
+def test_ensure_ollama_ready_raises_when_models_missing(monkeypatch):
+    clear_ollama_tags_cache()
+    monkeypatch.setattr(config, "LLM_PROVIDER", "ollama")
+    monkeypatch.setattr(config, "MODEL_NAME", "gemma3")
+    monkeypatch.setattr(config, "EMBEDDING_MODEL", "nomic-embed-text")
+    monkeypatch.setattr(
+        "paperless_agent.ollama_setup.probe_ollama",
+        lambda *_a, **_k: {
+            "reachable": True,
+            "listening": True,
+            "base_url": "http://localhost:11434",
+            "models": ["gemma3:4b"],
+            "version": "0.6.0",
+            "error": None,
+        },
+    )
+    with pytest.raises(RuntimeError, match="nomic-embed-text"):
+        ensure_ollama_ready(force=True, verify_chat=False)
+
+
+def test_ensure_ollama_ready_verifies_chat_model(monkeypatch):
+    clear_ollama_tags_cache()
+    monkeypatch.setattr(config, "LLM_PROVIDER", "ollama")
+    monkeypatch.setattr(config, "MODEL_NAME", "gemma3")
+    monkeypatch.setattr(config, "EMBEDDING_MODEL", "nomic-embed-text")
+    monkeypatch.setattr(
+        "paperless_agent.ollama_setup.probe_ollama",
+        lambda *_a, **_k: {
+            "reachable": True,
+            "listening": True,
+            "base_url": "http://localhost:11434",
+            "models": ["gemma3:4b", "nomic-embed-text:latest"],
+            "version": "0.6.0",
+            "error": None,
+        },
+    )
+    monkeypatch.setattr(
+        "paperless_agent.ollama_setup.verify_model_accepts_requests",
+        lambda model, **_k: None if model == "gemma3:4b" else f"bad:{model}",
+    )
+    ready = ensure_ollama_ready(force=True)
+    assert ready["ready"] is True
+    assert ready["listening"] is True
+    assert ready["chat_model"] == "gemma3:4b"
 
 
 def test_model_name_matching():
@@ -273,3 +364,122 @@ def test_llm_provider_api_switches_back(client, monkeypatch, tmp_path):
     assert resp.status_code == 200
     assert resp.json()["applied"]["provider"] == "openai"
     assert config.LLM_PROVIDER == "openai"
+
+
+def test_start_ollama_already_running(monkeypatch):
+    clear_ollama_tags_cache()
+    monkeypatch.setattr(
+        "paperless_agent.ollama_setup.probe_ollama",
+        lambda *_a, **_k: {
+            "reachable": True,
+            "listening": True,
+            "base_url": "http://localhost:11434",
+            "models": ["gemma3:4b", "nomic-embed-text:latest"],
+            "version": "0.6.0",
+            "error": None,
+        },
+    )
+    monkeypatch.setattr(
+        "paperless_agent.ollama_setup.find_ollama_binary",
+        lambda: "/usr/bin/ollama",
+    )
+    result = start_ollama()
+    assert result["already_running"] is True
+    assert result["started"] is False
+    assert result["ollama"]["reachable"] is True
+
+
+def test_start_ollama_spawns_serve_when_offline(monkeypatch):
+    clear_ollama_tags_cache()
+    probes = iter(
+        [
+            {
+                "reachable": False,
+                "listening": False,
+                "base_url": "http://localhost:11434",
+                "models": [],
+                "version": None,
+                "error": "Cannot reach Ollama",
+            },
+            {
+                "reachable": True,
+                "listening": True,
+                "base_url": "http://localhost:11434",
+                "models": ["gemma3:4b", "nomic-embed-text:latest"],
+                "version": "0.6.0",
+                "error": None,
+            },
+            {
+                "reachable": True,
+                "listening": True,
+                "base_url": "http://localhost:11434",
+                "models": ["gemma3:4b", "nomic-embed-text:latest"],
+                "version": "0.6.0",
+                "error": None,
+            },
+        ]
+    )
+    monkeypatch.setattr(
+        "paperless_agent.ollama_setup.probe_ollama",
+        lambda *_a, **_k: next(probes),
+    )
+    monkeypatch.setattr(
+        "paperless_agent.ollama_setup.find_ollama_binary",
+        lambda: "/usr/bin/ollama",
+    )
+    monkeypatch.setattr(
+        "paperless_agent.ollama_setup._try_systemctl_start",
+        lambda: None,
+    )
+    spawned: list[str] = []
+    monkeypatch.setattr(
+        "paperless_agent.ollama_setup._spawn_ollama_serve",
+        lambda binary: spawned.append(binary),
+    )
+    result = start_ollama(wait_timeout=2.0)
+    assert spawned == ["/usr/bin/ollama"]
+    assert result["started"] is True
+    assert result["method"] == "/usr/bin/ollama serve"
+    assert result["ollama"]["reachable"] is True
+
+
+def test_start_ollama_requires_binary(monkeypatch):
+    clear_ollama_tags_cache()
+    monkeypatch.setattr(
+        "paperless_agent.ollama_setup.probe_ollama",
+        lambda *_a, **_k: {
+            "reachable": False,
+            "listening": False,
+            "base_url": "http://localhost:11434",
+            "models": [],
+            "version": None,
+            "error": "Cannot reach Ollama",
+        },
+    )
+    monkeypatch.setattr(
+        "paperless_agent.ollama_setup.find_ollama_binary",
+        lambda: None,
+    )
+    with pytest.raises(RuntimeError, match="not installed"):
+        start_ollama(wait_timeout=1.0)
+
+
+def test_ollama_start_api(client, monkeypatch):
+    monkeypatch.setattr(
+        "app.main.start_ollama",
+        lambda **_k: {
+            "status": "success",
+            "started": True,
+            "already_running": False,
+            "method": "systemctl --user start ollama.service",
+            "ollama": {
+                "reachable": True,
+                "listening": True,
+                "can_start": False,
+                "ready": False,
+            },
+        },
+    )
+    resp = client.post("/api/ollama/start")
+    assert resp.status_code == 200
+    assert resp.json()["started"] is True

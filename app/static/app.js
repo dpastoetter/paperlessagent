@@ -1088,6 +1088,34 @@ document.getElementById("ollama-enable")?.addEventListener("click", () => {
   selectOllamaProvider({ enable: true, pullMissing: false });
 });
 
+document.getElementById("ollama-start")?.addEventListener("click", async () => {
+  const startBtn = document.getElementById("ollama-start");
+  const statusEl = document.getElementById("ollama-status");
+  try {
+    if (startBtn) startBtn.disabled = true;
+    if (statusEl) {
+      statusEl.textContent = "Starting Ollama…";
+      statusEl.dataset.tone = "warn";
+    }
+    const data = await api("/api/ollama/start", { method: "POST" });
+    renderOllamaStatus(data.ollama);
+    if (data.already_running) {
+      toast("Ollama was already running", "ok");
+    } else if (data.ollama?.reachable) {
+      toast("Ollama started", "ok");
+      if (data.ollama?.missing_models?.length) {
+        toast("Pull the required models next", "warn");
+      }
+    } else {
+      toast("Start finished, but Ollama is still unreachable", "warn");
+    }
+    await refreshHealth();
+  } catch (err) {
+    toast(String(err.message || err), "error");
+    refreshOllamaStatus().catch(() => {});
+  }
+});
+
 document.getElementById("ollama-pull")?.addEventListener("click", async () => {
   const pullBtn = document.getElementById("ollama-pull");
   const statusEl = document.getElementById("ollama-status");

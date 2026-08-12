@@ -38,6 +38,7 @@ from paperless_agent.ollama_setup import (
     enable_ollama,
     ollama_status,
     pull_model,
+    start_ollama,
 )
 from paperless_agent.privacy import (
     accept_cloud_disclaimer,
@@ -270,7 +271,18 @@ def health() -> dict[str, Any]:
         "cloud_disclaimer": cloud_disclaimer_status(),
     }
     if config.LLM_PROVIDER == "ollama":
-        payload["ollama"] = ollama_status()
+        ollama = ollama_status()
+        payload["ollama"] = ollama
+        if not ollama.get("ready"):
+            payload["status"] = "degraded"
+            payload["llm_error"] = (
+                ollama.get("error")
+                or (
+                    f"Missing Ollama models: {', '.join(ollama.get('missing_models') or [])}"
+                    if ollama.get("missing_models")
+                    else "Local Ollama is not ready"
+                )
+            )
     return payload
 
 
@@ -358,6 +370,14 @@ def api_ollama_enable(body: OllamaEnableRequest) -> dict[str, Any]:
         result["ollama"] = ollama_status(base_url=body.base_url)
         result["pulled"] = pulled
     return result
+
+
+@app.post("/api/ollama/start")
+def api_ollama_start() -> dict[str, Any]:
+    try:
+        return start_ollama()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.post("/api/ollama/pull")
