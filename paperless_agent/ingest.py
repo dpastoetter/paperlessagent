@@ -43,8 +43,10 @@ _FIELD_INSTRUCTIONS = (
     "- subject: short topic or title (what the document is about).\n"
     "- parties: sender, recipient, issuer, doctor, employer, insurer, etc.\n"
     "- reference_ids: policy numbers, case refs, invoice numbers when present.\n"
-    "- amount and currency: ONLY for invoices, receipts, bills, bank/tax/utility "
+    "- amount and currency: ONLY for invoices, receipts, bills, bank/tax/utility/insurance "
     "documents when a monetary value is stated; otherwise null.\n"
+    "- For photos, diagrams, or non-paper items (e.g. a chess board), use doc_type 'other', "
+    "describe the subject, leave amount/currency null, and omit reference_ids unless present.\n"
     "- Pick doc_type from the allowed list; use 'other' when unsure."
 )
 
@@ -123,6 +125,12 @@ def normalize_extracted_fields(raw: dict[str, Any]) -> dict[str, Any]:
     normalized["reference_ids"] = reference_ids
     normalized["amount"] = amount
     normalized["currency"] = currency if amount is not None else None
+
+    doc_type = str(raw.get("doc_type") or "other").lower()
+    if not config.is_financial_doc_type(doc_type):
+        normalized["amount"] = None
+        normalized["currency"] = None
+
     return normalized
 
 
@@ -242,8 +250,12 @@ async def ingest_document(source_path: str) -> dict[str, Any]:
     doc_date = extracted.get("doc_date")
     counterparties = extracted.get("counterparties") or ""
     subject = extracted.get("subject")
+    reference_ids = extracted.get("reference_ids") or []
     amount = extracted.get("amount")
     currency = extracted.get("currency")
+    if not config.is_financial_doc_type(doc_type):
+        amount = None
+        currency = None
     summary = extracted.get("summary") or ""
     full_text = extracted.get("full_text") or extracted["_source"].get("text") or summary
 
@@ -319,6 +331,7 @@ async def ingest_document(source_path: str) -> dict[str, Any]:
             "doc_date": doc_date if isinstance(doc_date, str) else None,
             "subject": subject if isinstance(subject, str) else None,
             "counterparties": counterparties if isinstance(counterparties, str) else None,
+            "reference_ids": reference_ids if isinstance(reference_ids, list) else [],
             "amount": float(amount) if isinstance(amount, (int, float)) else None,
             "currency": currency if isinstance(currency, str) else None,
             "summary": summary if isinstance(summary, str) else None,

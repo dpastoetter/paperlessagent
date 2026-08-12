@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from paperless_agent import config
 from paperless_agent.pipeline.agents import file_and_persist
 from paperless_agent.settings import get_source_dir
 from paperless_agent.tools.metadata_db import _connect, init_db
@@ -20,6 +21,7 @@ EDITABLE_FIELDS = (
     "doc_date",
     "subject",
     "counterparties",
+    "reference_ids",
     "amount",
     "currency",
     "summary",
@@ -237,6 +239,9 @@ def approve_review(review_id: str, overrides: dict[str, Any] | None = None) -> d
 
     filename = str(proposal.get("filename") or review["original_name"])
     doc_type = str(proposal.get("doc_type") or "other")
+    if not config.is_financial_doc_type(doc_type):
+        proposal["amount"] = None
+        proposal["currency"] = None
     amount = proposal.get("amount")
     extracted_for_db = {k: v for k, v in proposal.items() if k != "filename"}
 

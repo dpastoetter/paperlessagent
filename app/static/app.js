@@ -102,6 +102,35 @@ function categoryOptionsHtml(selected) {
     .join("");
 }
 
+function reviewFinancialFieldsHtml(p) {
+  const show = isFinancialDocType(p.doc_type);
+  return `<div class="review-fields-financial"${show ? "" : ' data-hidden="true"'}>
+      <label class="field narrow">
+        <span>Amount</span>
+        <input type="number" step="0.01" class="rv-amount" value="${escapeHtml(p.amount ?? "")}" placeholder="0.00" />
+      </label>
+      <label class="field narrow">
+        <span>Currency</span>
+        <input type="text" class="rv-currency" value="${escapeHtml(p.currency || "")}" placeholder="EUR" maxlength="8" />
+      </label>
+    </div>`;
+}
+
+function syncReviewFinancialFields(card) {
+  if (!card) return;
+  const docType = card.querySelector(".rv-doc-type")?.value;
+  const block = card.querySelector(".review-fields-financial");
+  if (!block) return;
+  const show = isFinancialDocType(docType);
+  block.dataset.hidden = show ? "false" : "true";
+  if (!show) {
+    const amount = card.querySelector(".rv-amount");
+    const currency = card.querySelector(".rv-currency");
+    if (amount) amount.value = "";
+    if (currency) currency.value = "";
+  }
+}
+
 function reviewCardHtml(item, index) {
   const p = item.proposal || {};
   const id = escapeHtml(item.id);
@@ -138,14 +167,11 @@ function reviewCardHtml(item, index) {
         <span>People / organizations</span>
         <input type="text" class="rv-counterparties" value="${escapeHtml(p.counterparties || "")}" placeholder="Sender, doctor, insurer, employer…" />
       </label>
-      <label class="field narrow">
-        <span>Amount</span>
-        <input type="number" step="0.01" class="rv-amount" value="${escapeHtml(p.amount ?? "")}" placeholder="Bills only" />
+      <label class="field grow">
+        <span>Reference numbers</span>
+        <input type="text" class="rv-reference-ids" value="${escapeHtml(referenceIdsToString(p.reference_ids))}" placeholder="Invoice #, policy #, case ref…" />
       </label>
-      <label class="field narrow">
-        <span>Currency</span>
-        <input type="text" class="rv-currency" value="${escapeHtml(p.currency || "")}" placeholder="EUR" />
-      </label>
+      ${reviewFinancialFieldsHtml(p)}
       <label class="field full">
         <span>Summary</span>
         <textarea class="rv-summary" rows="2">${escapeHtml(p.summary || "")}</textarea>
@@ -183,21 +209,37 @@ async function refreshReviews() {
 }
 
 function collectReviewOverrides(card) {
-  const amountRaw = card.querySelector(".rv-amount")?.value.trim();
+  const docType = card.querySelector(".rv-doc-type")?.value || null;
+  const refRaw = card.querySelector(".rv-reference-ids")?.value.trim() || "";
   const overrides = {
     filename: card.querySelector(".rv-filename")?.value.trim() || null,
-    doc_type: card.querySelector(".rv-doc-type")?.value || null,
+    doc_type: docType,
     doc_date: card.querySelector(".rv-doc-date")?.value.trim() || null,
     subject: card.querySelector(".rv-subject")?.value.trim() || null,
     counterparties: card.querySelector(".rv-counterparties")?.value.trim() || null,
-    currency: card.querySelector(".rv-currency")?.value.trim() || null,
+    reference_ids: refRaw
+      ? refRaw.split(/[,;]+/).map((part) => part.trim()).filter(Boolean)
+      : [],
     summary: card.querySelector(".rv-summary")?.value.trim() || null,
   };
-  if (amountRaw && !Number.isNaN(Number(amountRaw))) {
-    overrides.amount = Number(amountRaw);
+  if (isFinancialDocType(docType)) {
+    const amountRaw = card.querySelector(".rv-amount")?.value.trim();
+    overrides.currency = card.querySelector(".rv-currency")?.value.trim() || null;
+    if (amountRaw && !Number.isNaN(Number(amountRaw))) {
+      overrides.amount = Number(amountRaw);
+    }
+  } else {
+    overrides.amount = null;
+    overrides.currency = null;
   }
   return overrides;
 }
+
+document.getElementById("reviews").addEventListener("change", (e) => {
+  if (e.target.matches(".rv-doc-type")) {
+    syncReviewFinancialFields(e.target.closest(".review-card"));
+  }
+});
 
 document.getElementById("reviews").addEventListener("click", async (e) => {
   const card = e.target.closest(".review-card");
@@ -866,6 +908,15 @@ function queueStatusLabel(item) {
   return "Queued";
 }
 
+function isQueueItemCancellable(item) {
+  if (!item) return false;
+  if (item.status === "running") return true;
+  if (item.file_id !== workflowState.activeFileId) return false;
+  return workflowState.steps.some(
+    (step) => workflowState.stepStatus[step.id] === "running",
+  );
+}
+
 function updateQueueRowActions(li, item) {
   let actions = li.querySelector(".queue-actions");
   if (!actions) {
@@ -874,7 +925,7 @@ function updateQueueRowActions(li, item) {
     li.appendChild(actions);
   }
   actions.replaceChildren();
-  if (item.status === "running") {
+  if (isQueueItemCancellable(item)) {
     const cancelBtn = document.createElement("button");
     cancelBtn.type = "button";
     cancelBtn.className = "btn ghost compact queue-cancel";
@@ -1214,6 +1265,8 @@ function handleWorkflowEvent(event) {
       });
     }
     setActiveFileSteps(event.filename);
+    patchQueueRow(event.file_id);
+    renderWorkflowNow();
     return;
   }
 

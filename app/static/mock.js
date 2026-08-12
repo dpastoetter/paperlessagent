@@ -95,6 +95,7 @@
         doc_date: "2024-06-14",
         subject: "On-site support June 12",
         counterparties: "Acme Corp",
+        reference_ids: ["2024-131"],
         amount: 380.0,
         currency: "EUR",
         summary:
@@ -108,6 +109,26 @@
           score: 0.86,
         },
       ],
+    },
+    {
+      id: "demo-review-2",
+      source_path: "/home/demo/Paperless/inbox/chess_board.jpg",
+      original_name: "chess_board.jpg",
+      status: "pending",
+      created_at: "2024-06-15T18:20:00Z",
+      proposal: {
+        filename: "2024-06-15_other_ChessBoardMidGame.jpg",
+        doc_type: "other",
+        doc_date: "2024-06-15",
+        subject: "Chess board mid-game position",
+        counterparties: null,
+        reference_ids: [],
+        amount: null,
+        currency: null,
+        summary:
+          "Photo of a chess board showing a mid-game position with white to move.",
+      },
+      duplicates: [],
     },
   ];
 

@@ -101,6 +101,16 @@ DOC_TYPES = (
     "other",
 )
 
+# Categories where amount/currency metadata is meaningful.
+FINANCIAL_DOC_TYPES = frozenset(
+    {"invoice", "receipt", "bank", "tax", "utility", "insurance"}
+)
+
+
+def is_financial_doc_type(doc_type: str | None) -> bool:
+    """True when monetary fields are relevant for this document category."""
+    return (doc_type or "other").strip().lower() in FINANCIAL_DOC_TYPES
+
 
 def _env_int(name: str, default: int) -> int:
     raw = os.getenv(name, "").strip()

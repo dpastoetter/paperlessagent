@@ -56,6 +56,30 @@ def test_normalize_clears_currency_when_no_amount():
     assert out["currency"] is None
 
 
+def test_normalize_clears_amount_for_non_financial_doc_type():
+    raw = {
+        "doc_type": "other",
+        "subject": "Chess board mid-game position",
+        "amount": 99.99,
+        "currency": "EUR",
+    }
+    out = normalize_extracted_fields(raw)
+    assert out["amount"] is None
+    assert out["currency"] is None
+
+
+def test_normalize_keeps_amount_for_invoice():
+    raw = {
+        "doc_type": "invoice",
+        "parties": "Acme Corp",
+        "amount": "380.0",
+        "currency": "eur",
+    }
+    out = normalize_extracted_fields(raw)
+    assert out["amount"] == 380.0
+    assert out["currency"] == "EUR"
+
+
 def test_text_for_extract_prompt_uses_head_and_tail():
     from paperless_agent.ingest import _text_for_extract_prompt
 

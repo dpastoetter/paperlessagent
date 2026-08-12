@@ -221,6 +221,7 @@ class ReviewApproveRequest(BaseModel):
     doc_date: str | None = None
     subject: str | None = None
     counterparties: str | None = None
+    reference_ids: list[str] | None = None
     amount: float | None = None
     currency: str | None = None
     summary: str | None = None

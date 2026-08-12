@@ -1525,6 +1525,14 @@ code {
   gap: 0.75rem;
 }
 
+.review-fields-financial {
+  display: contents;
+}
+
+.review-fields-financial[data-hidden="true"] {
+  display: none;
+}
+
 .review-fields .field.full {
   flex: 1 1 100%;
 }

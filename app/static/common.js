@@ -30,6 +30,27 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+const FINANCIAL_DOC_TYPES = new Set([
+  "invoice",
+  "receipt",
+  "bank",
+  "tax",
+  "utility",
+  "insurance",
+]);
+
+function isFinancialDocType(docType) {
+  return FINANCIAL_DOC_TYPES.has(String(docType || "other").toLowerCase());
+}
+
+function referenceIdsToString(ids) {
+  if (Array.isArray(ids)) {
+    return ids.map((item) => String(item).trim()).filter(Boolean).join(", ");
+  }
+  if (typeof ids === "string") return ids.trim();
+  return "";
+}
+
 function setStatus(state, label) {
   const chip = document.getElementById("status-chip");
   const health = document.getElementById("health");

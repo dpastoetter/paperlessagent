@@ -47,12 +47,34 @@ async def process_single_file(path: str) -> dict[str, Any]:
                 "message": "file is already awaiting review",
             }
         file_id = new_file_id()
+        job_id = new_job_id()
+        filename = Path(path).name
+        job_token = current_job_id.set(job_id)
         file_token = current_file_id.set(file_id)
         bind_file_cancel(file_id, path)
+        await publish(
+            {
+                "type": "job_started",
+                "job_id": job_id,
+                "total": 1,
+                "files": [{"file_id": file_id, "filename": filename, "path": path}],
+            }
+        )
+        await publish(
+            {
+                "type": "file_started",
+                "job_id": job_id,
+                "file_id": file_id,
+                "filename": filename,
+                "path": path,
+                "index": 0,
+                "total": 1,
+            }
+        )
         try:
-            return await run_pipeline_on_path(path)
+            result = await run_pipeline_on_path(path)
         except FileCancelledError as exc:
-            return {
+            result = {
                 "status": "cancelled",
                 "message": str(exc),
                 "path": path,
@@ -61,6 +83,46 @@ async def process_single_file(path: str) -> dict[str, Any]:
         finally:
             clear_file_cancel()
             current_file_id.reset(file_token)
+            current_job_id.reset(job_token)
+
+        if result.get("status") == "cancelled":
+            file_status = "cancelled"
+        elif result.get("status") == "pending_review":
+            file_status = "review"
+        elif result.get("status") not in {"success", "partial"}:
+            file_status = "error"
+        else:
+            file_status = "done"
+        await publish(
+            {
+                "type": "file_finished",
+                "job_id": job_id,
+                "file_id": file_id,
+                "filename": filename,
+                "path": path,
+                "status": file_status,
+                "detail": result.get("reply") or result.get("message") or result.get("error"),
+                "index": 0,
+                "total": 1,
+            }
+        )
+        await publish(
+            {
+                "type": "job_finished",
+                "job_id": job_id,
+                "status": "success" if file_status in {"done", "review"} else "partial",
+                "processed": 1,
+                "total": 1,
+            }
+        )
+        if result.get("status") == "cancelled":
+            return {
+                "status": "cancelled",
+                "message": result.get("message", "File processing was cancelled"),
+                "path": path,
+                "file_id": file_id,
+            }
+        return result
 
 
 async def cancel_active_file(file_id: str) -> dict[str, Any]:
