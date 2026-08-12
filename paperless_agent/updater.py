@@ -13,6 +13,7 @@ import sys
 import tarfile
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,18 @@ def _resolve_update_repo() -> str:
 
 UPDATE_REPO = _resolve_update_repo()
 GITHUB_API = "https://api.github.com"
+GITHUB_CONNECT_TIMEOUT = 12.0
+GITHUB_READ_TIMEOUT = 45.0
+GITHUB_DOWNLOAD_READ_TIMEOUT = 180.0
+GITHUB_MAX_ATTEMPTS = 4
+_RETRYABLE_HTTP_STATUS = frozenset({429, 502, 503, 504})
+_RETRYABLE_EXCEPTIONS = (
+    httpx.ConnectError,
+    httpx.ReadTimeout,
+    httpx.WriteTimeout,
+    httpx.PoolTimeout,
+    httpx.RemoteProtocolError,
+)
 
 # Never overwritten by an update: user data, credentials, environments.
 # Matched case-insensitively so a tarball cannot sneak past with Data/ or .ENV.
@@ -74,6 +87,68 @@ def is_newer(candidate: str, current: str) -> bool:
 
 def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _github_headers(*, accept: str = "application/vnd.github+json") -> dict[str, str]:
+    return {
+        "Accept": accept,
+        "User-Agent": f"PaperlessAgent/{get_current_version()}",
+    }
+
+
+def _github_timeout(*, read: float | None = None) -> httpx.Timeout:
+    return httpx.Timeout(
+        connect=GITHUB_CONNECT_TIMEOUT,
+        read=read if read is not None else GITHUB_READ_TIMEOUT,
+        write=30.0,
+        pool=10.0,
+    )
+
+
+def _github_get(
+    client: httpx.Client,
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    params: dict[str, Any] | None = None,
+) -> httpx.Response:
+    """GET with retries for flaky GitHub / CDN connections."""
+    merged = {**_github_headers(), **(headers or {})}
+    last_exc: Exception | None = None
+    for attempt in range(GITHUB_MAX_ATTEMPTS):
+        try:
+            resp = client.get(url, headers=merged, params=params)
+            if resp.status_code in _RETRYABLE_HTTP_STATUS and attempt < GITHUB_MAX_ATTEMPTS - 1:
+                retry_after = resp.headers.get("Retry-After")
+                delay = float(retry_after) if retry_after and retry_after.isdigit() else 2**attempt
+                logger.warning(
+                    "GitHub GET %s returned %s; retrying in %.1fs (attempt %s/%s)",
+                    url,
+                    resp.status_code,
+                    delay,
+                    attempt + 1,
+                    GITHUB_MAX_ATTEMPTS,
+                )
+                time.sleep(delay)
+                continue
+            return resp
+        except _RETRYABLE_EXCEPTIONS as exc:
+            last_exc = exc
+            if attempt >= GITHUB_MAX_ATTEMPTS - 1:
+                raise
+            delay = 2**attempt
+            logger.warning(
+                "GitHub GET %s failed (%s); retrying in %.1fs (attempt %s/%s)",
+                url,
+                exc,
+                delay,
+                attempt + 1,
+                GITHUB_MAX_ATTEMPTS,
+            )
+            time.sleep(delay)
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("GitHub GET failed without a response")
 
 
 def parse_sha256sums(text: str) -> dict[str, str]:
@@ -122,7 +197,7 @@ def _pick_archive_asset(assets: list[dict[str, Any]]) -> dict[str, Any] | None:
 def _resolve_commit_sha(client: httpx.Client, tag: str) -> str | None:
     if not tag:
         return None
-    resp = client.get(f"{GITHUB_API}/repos/{UPDATE_REPO}/commits/{tag}")
+    resp = _github_get(client, f"{GITHUB_API}/repos/{UPDATE_REPO}/commits/{tag}")
     if resp.status_code != 200:
         return None
     sha = (resp.json() or {}).get("sha")
@@ -166,13 +241,17 @@ def _select_verified_artifact(
 
 def _fetch_latest_release() -> dict[str, Any] | None:
     """Latest GitHub release with verification metadata (no unverified tag fallback for install)."""
-    headers = {"Accept": "application/vnd.github+json"}
-    with httpx.Client(timeout=15, follow_redirects=True, headers=headers) as client:
-        resp = client.get(f"{GITHUB_API}/repos/{UPDATE_REPO}/releases/latest")
+    with httpx.Client(
+        timeout=_github_timeout(),
+        follow_redirects=True,
+    ) as client:
+        resp = _github_get(client, f"{GITHUB_API}/repos/{UPDATE_REPO}/releases/latest")
         if resp.status_code == 404:
             # No releases published — surface tags for "what's newest" only.
-            resp = client.get(
-                f"{GITHUB_API}/repos/{UPDATE_REPO}/tags", params={"per_page": 1}
+            resp = _github_get(
+                client,
+                f"{GITHUB_API}/repos/{UPDATE_REPO}/tags",
+                params={"per_page": 1},
             )
             resp.raise_for_status()
             tags = resp.json()
@@ -212,11 +291,8 @@ def _fetch_latest_release() -> dict[str, Any] | None:
             sums_url = asset.get("browser_download_url") or asset.get("url")
             if not isinstance(sums_url, str):
                 continue
-            sums_headers = dict(headers)
-            # Asset API URLs need the octet-stream accept to get bytes.
-            if sums_url.startswith(GITHUB_API):
-                sums_headers["Accept"] = "application/octet-stream"
-            sums_resp = client.get(sums_url, headers=sums_headers)
+            sums_headers = _github_headers(accept="application/octet-stream")
+            sums_resp = _github_get(client, sums_url, headers=sums_headers)
             if sums_resp.is_success:
                 sums_text = sums_resp.text
                 break
@@ -288,9 +364,15 @@ def check_for_update() -> dict[str, Any]:
 
 
 def _download_bytes(url: str) -> bytes:
-    headers = {"Accept": "application/octet-stream"}
-    with httpx.Client(timeout=120, follow_redirects=True, headers=headers) as client:
-        resp = client.get(url)
+    with httpx.Client(
+        timeout=_github_timeout(read=GITHUB_DOWNLOAD_READ_TIMEOUT),
+        follow_redirects=True,
+    ) as client:
+        resp = _github_get(
+            client,
+            url,
+            headers=_github_headers(accept="application/octet-stream"),
+        )
         resp.raise_for_status()
         return resp.content
 

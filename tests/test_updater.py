@@ -6,6 +6,7 @@ import hashlib
 import io
 import tarfile
 
+import httpx
 import pytest
 
 from paperless_agent.updater import (
@@ -17,6 +18,7 @@ from paperless_agent.updater import (
     parse_version,
     sha256_hex,
     verify_sha256,
+    _github_get,
 )
 
 
@@ -55,6 +57,56 @@ def test_verify_sha256_accepts_match_and_rejects_mismatch():
     verify_sha256(payload, digest)
     with pytest.raises(ValueError, match="mismatch"):
         verify_sha256(payload, "0" * 64)
+
+
+def test_github_get_retries_remote_protocol_error(monkeypatch):
+    calls = {"n": 0}
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"ok": True}
+
+    def fake_get(_self, _url, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+        return FakeResponse()
+
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+    with httpx.Client() as client:
+        monkeypatch.setattr(client, "get", fake_get.__get__(client, httpx.Client))
+        resp = _github_get(client, "https://api.github.com/example")
+    assert resp.status_code == 200
+    assert calls["n"] == 2
+
+
+def test_github_get_retries_http_503(monkeypatch):
+    calls = {"n": 0}
+
+    class FakeResponse:
+        def __init__(self, status_code: int):
+            self.status_code = status_code
+            self.headers = {}
+
+        @staticmethod
+        def json():
+            return {}
+
+    def fake_get(_self, _url, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return FakeResponse(503)
+        return FakeResponse(200)
+
+    monkeypatch.setattr(__import__("time"), "sleep", lambda _s: None)
+    with httpx.Client() as client:
+        monkeypatch.setattr(client, "get", fake_get.__get__(client, httpx.Client))
+        resp = _github_get(client, "https://api.github.com/example")
+    assert resp.status_code == 200
+    assert calls["n"] == 2
 
 
 def _make_tarball(files: dict[str, bytes], root: str = "owner-repo-abc123") -> bytes:
