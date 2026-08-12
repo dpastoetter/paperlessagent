@@ -303,23 +303,23 @@
       autostart: { supported: true, enabled: true, active: true, url: "http://127.0.0.1:8080" },
     })],
     [/^\/api\/settings$/, () => ({ status: "success", settings: SETTINGS })],
-    [
-      /^\/api\/update\/status/,
-      (path) =>
-        path.includes("check=true")
-          ? {
-              status: "success",
-              repo: "dpastoetter/paperlessagent",
-              current_version: "0.4.2",
-              latest_version: "0.4.2",
-              update_available: false,
-            }
-          : { status: "success", repo: "dpastoetter/paperlessagent", current_version: "0.4.2" },
-    ],
+    // Intentionally do NOT mock /api/update/status — Software update must show
+    // the real installed version vs GitHub, even in mockup mode.
     [/^\/api\/ask$/, () => ASK],
   ];
 
   async function respond(path, options = {}) {
+    // Software update / version must always reflect the real install + GitHub.
+    if (/^\/api\/update(\/|\?|$)/.test(path)) {
+      const headers = new Headers(options.headers || {});
+      headers.set("X-Requested-With", "PaperlessAgent");
+      const res = await fetch(path, { ...options, headers });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error((data && data.detail) || res.statusText || "Request failed");
+      }
+      return data;
+    }
     for (const [pattern, handler] of ROUTES) {
       if (pattern.test(path)) {
         // Small delay so spinners/status lines render naturally.
