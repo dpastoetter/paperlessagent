@@ -156,6 +156,96 @@ def ollama_reachable(base_url: str | None = None, *, timeout: float = PROBE_TIME
     return bool(probe_ollama(base_url, timeout=timeout).get("reachable"))
 
 
+def infer_model_processor(entry: dict[str, Any]) -> str:
+    """Return ``gpu`` or ``cpu`` for one ``/api/ps`` model entry."""
+    vram = entry.get("size_vram")
+    try:
+        if vram is not None and int(vram) > 0:
+            return "gpu"
+    except (TypeError, ValueError):
+        pass
+    return "cpu"
+
+
+def summarize_compute(running: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize CPU/GPU use from Ollama ``/api/ps`` model entries."""
+    if not running:
+        return {
+            "compute": "idle",
+            "compute_label": "idle",
+            "size_vram": 0,
+            "running": [],
+        }
+
+    processors = [infer_model_processor(model) for model in running]
+    total_vram = 0
+    for model in running:
+        try:
+            total_vram += int(model.get("size_vram") or 0)
+        except (TypeError, ValueError):
+            continue
+
+    if all(processor == "gpu" for processor in processors):
+        compute = "gpu"
+        label = "GPU"
+    elif all(processor == "cpu" for processor in processors):
+        compute = "cpu"
+        label = "CPU"
+    else:
+        compute = "mixed"
+        label = "CPU + GPU"
+
+    return {
+        "compute": compute,
+        "compute_label": label,
+        "size_vram": total_vram,
+        "running": [
+            {
+                "name": model.get("name"),
+                "processor": infer_model_processor(model),
+                "size_vram": int(model.get("size_vram") or 0),
+            }
+            for model in running
+        ],
+    }
+
+
+def _fetch_ps_models(
+    base_url: str | None = None,
+    *,
+    timeout: float = READY_TIMEOUT,
+) -> list[dict[str, Any]]:
+    """Return raw model entries from Ollama ``GET /api/ps``."""
+    url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
+    with httpx.Client(timeout=timeout) as client:
+        resp = client.get(f"{url}/api/ps")
+        resp.raise_for_status()
+        payload = resp.json() if resp.content else {}
+    models = payload.get("models") if isinstance(payload, dict) else []
+    return [model for model in models if isinstance(model, dict)]
+
+
+def fetch_running_ps_models(
+    base_url: str | None = None,
+    *,
+    timeout: float = READY_TIMEOUT,
+) -> list[dict[str, Any]]:
+    """Return ``/api/ps`` models, or an empty list when Ollama is unreachable."""
+    try:
+        return _fetch_ps_models(base_url, timeout=timeout)
+    except httpx.HTTPError:
+        return []
+
+
+def current_compute_label(*, base_url: str | None = None) -> str | None:
+    """Human label for the active Ollama processor (``CPU``/``GPU``), or ``None`` when idle."""
+    summary = summarize_compute(fetch_running_ps_models(base_url))
+    label = summary.get("compute_label")
+    if label in {None, "", "idle"}:
+        return None
+    return str(label)
+
+
 def verify_model_accepts_requests(
     model: str,
     *,
@@ -429,6 +519,11 @@ def ollama_status(*, base_url: str | None = None) -> dict[str, Any]:
     ready = bool(listening and not missing and active)
     binary = find_ollama_binary()
     can_start = binary is not None and not listening
+    compute = (
+        summarize_compute(fetch_running_ps_models(url))
+        if probe["reachable"]
+        else summarize_compute([])
+    )
     return {
         "active": active,
         "ready": ready,
@@ -445,6 +540,10 @@ def ollama_status(*, base_url: str | None = None) -> dict[str, Any]:
         "resolved_embedding_model": resolved_embed,
         "missing_models": missing,
         "pull_command": pull_hint(missing),
+        "compute": compute["compute"],
+        "compute_label": compute["compute_label"],
+        "size_vram": compute["size_vram"],
+        "running_models": compute["running"],
         "error": probe.get("error"),
         "install_hint": (
             (
@@ -612,21 +711,21 @@ def list_running_models(base_url: str | None = None) -> dict[str, Any]:
     """Return models currently loaded in Ollama (GET /api/ps)."""
     url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
     try:
-        with httpx.Client(timeout=READY_TIMEOUT) as client:
-            resp = client.get(f"{url}/api/ps")
-            resp.raise_for_status()
-            payload = resp.json() if resp.content else {}
+        models = _fetch_ps_models(url)
     except httpx.ConnectError as exc:
         raise RuntimeError(
             f"Cannot reach Ollama at {url} — is `ollama serve` running?"
         ) from exc
     except httpx.HTTPError as exc:
         raise RuntimeError(format_http_error(exc, kind="ps")) from exc
-    models = payload.get("models") if isinstance(payload, dict) else []
+    compute = summarize_compute(models)
     return {
         "status": "success",
-        "models": models if isinstance(models, list) else [],
-        "raw": payload if isinstance(payload, dict) else {},
+        "models": models,
+        "compute": compute["compute"],
+        "compute_label": compute["compute_label"],
+        "size_vram": compute["size_vram"],
+        "raw": {"models": models},
     }
 
 

@@ -151,15 +151,5 @@ def step_label(step_id: str) -> str:
 
 def llm_busy_detail(action: str, *, model: str | None = None) -> str:
     """Explain a long-running LLM call so the UI does not look stuck."""
-    from paperless_agent import config
-
-    provider = (config.LLM_PROVIDER or "llm").strip().lower()
-    model_name = (model or config.MODEL_NAME or "").strip()
-    model_bit = f" · {model_name}" if model_name else ""
-    if provider == "ollama":
-        return f"{action} via local Ollama{model_bit} — can take a while"
-    if provider == "openai":
-        return f"{action} via ChatGPT / OpenAI{model_bit}"
-    if provider == "gemini":
-        return f"{action} via Gemini{model_bit}"
-    return f"{action} via {provider}{model_bit}"
+    _ = model
+    return f"{action} — can take a while"

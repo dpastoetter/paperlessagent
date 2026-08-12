@@ -58,7 +58,7 @@ def test_complete_ollama_records_usage(monkeypatch):
     )
     monkeypatch.setattr(llm, "resolve_runtime_model", lambda wanted, **_k: "gemma3:4b")
 
-    async def fake_request(payload):
+    async def fake_request(payload, *, cancel_event=None):
         return {
             "message": {"role": "assistant", "content": "ok"},
             "prompt_eval_count": 12,

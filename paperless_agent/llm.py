@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import os
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -16,6 +17,7 @@ from openai import AsyncOpenAI
 
 from paperless_agent import config
 from paperless_agent.auth import resolve_auth_mode, resolve_openai_api_key
+from paperless_agent.job_control import FileCancelledError
 from paperless_agent.codex_oauth import (
     CODEX_RESPONSES_BASE_URL,
     ORIGINATOR,
@@ -44,6 +46,22 @@ LLM_VISION_TIMEOUT = float(os.getenv("PAPERLESS_LLM_VISION_TIMEOUT", "300"))
 OLLAMA_CHAT_TIMEOUT = float(os.getenv("PAPERLESS_OLLAMA_TIMEOUT", "300"))
 
 
+OLLAMA_CHAT_TIMEOUT = float(os.getenv("PAPERLESS_OLLAMA_TIMEOUT", "300"))
+# httpx/Ollama may keep a blocking read open after asyncio cancel; don't hang the UI.
+CANCEL_JOIN_TIMEOUT = float(os.getenv("PAPERLESS_CANCEL_JOIN_TIMEOUT", "3"))
+
+
+async def _join_cancelled(task: asyncio.Task[Any]) -> None:
+    """Best-effort wait for a cancelled task; never block the event loop for long."""
+    if task.done():
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            task.result()
+        return
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError, Exception):
+        await asyncio.wait_for(task, timeout=CANCEL_JOIN_TIMEOUT)
+
+
 async def run_cancellable(
     coro,
     *,
@@ -66,26 +84,20 @@ async def run_cancellable(
             timeout=timeout,
         )
         if not done:
-            task.cancel()
+            await _join_cancelled(task)
             cancel_wait.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await cancel_wait
             raise TimeoutError(f"LLM call timed out after {timeout:.0f}s")
         if cancel_wait in done:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            from paperless_agent.job_control import FileCancelledError
-
+            await _join_cancelled(task)
             raise FileCancelledError("File processing was cancelled")
         cancel_wait.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await cancel_wait
-        except asyncio.CancelledError:
-            pass
-        return await task
+        return task.result()
     except asyncio.CancelledError:
-        task.cancel()
+        await _join_cancelled(task)
         cancel_wait.cancel()
         raise
 
@@ -240,7 +252,12 @@ async def complete_text(
     """
     model_name = resolve_model_name()
     if config.LLM_PROVIDER == "ollama":
-        coro = _complete_ollama(prompt, instructions=instructions, model_name=model_name)
+        coro = _complete_ollama(
+            prompt,
+            instructions=instructions,
+            model_name=model_name,
+            cancel_event=cancel_event,
+        )
         timeout = max(LLM_TEXT_TIMEOUT, OLLAMA_CHAT_TIMEOUT)
     elif config.LLM_PROVIDER == "openai":
         mode = resolve_auth_mode()
@@ -304,20 +321,42 @@ async def _complete_codex(prompt: str, *, instructions: str, model_name: str) ->
     return "".join(chunks).strip()
 
 
-async def _ollama_request(payload: dict[str, Any]) -> dict[str, Any]:
+async def _ollama_request(
+    payload: dict[str, Any],
+    *,
+    cancel_event: asyncio.Event | None = None,
+) -> dict[str, Any]:
     """POST a chat payload to the local Ollama server."""
     model = str(payload.get("model") or config.MODEL_NAME)
+    url = f"{config.OLLAMA_BASE_URL}/api/chat"
+    client = httpx.AsyncClient(timeout=OLLAMA_CHAT_TIMEOUT)
     try:
-        async with httpx.AsyncClient(timeout=OLLAMA_CHAT_TIMEOUT) as client:
-            resp = await client.post(f"{config.OLLAMA_BASE_URL}/api/chat", json=payload)
-            resp.raise_for_status()
-            return resp.json()
+        post_task = asyncio.create_task(client.post(url, json=payload))
+        if cancel_event is not None:
+            cancel_wait = asyncio.create_task(cancel_event.wait())
+            done, _pending = await asyncio.wait(
+                {post_task, cancel_wait},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if cancel_wait in done:
+                await _join_cancelled(post_task)
+                await client.aclose()
+                raise FileCancelledError("File processing was cancelled")
+            cancel_wait.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await cancel_wait
+        resp = await post_task
+        resp.raise_for_status()
+        return resp.json()
     except httpx.ConnectError as exc:
         raise RuntimeError(
             f"Cannot reach Ollama at {config.OLLAMA_BASE_URL} — is `ollama serve` running?"
         ) from exc
     except httpx.HTTPStatusError as exc:
         raise RuntimeError(format_http_error(exc, model=model, kind="model")) from exc
+    finally:
+        with contextlib.suppress(Exception):
+            await client.aclose()
 
 
 async def _complete_ollama(
@@ -327,6 +366,7 @@ async def _complete_ollama(
     model_name: str,
     images: list[bytes] | None = None,
     options: dict[str, Any] | None = None,
+    cancel_event: asyncio.Event | None = None,
 ) -> str:
     """Text or multimodal completion via a local Ollama server."""
     ensure_ollama_ready()
@@ -349,7 +389,8 @@ async def _complete_ollama(
             ],
             "stream": False,
             "options": ollama_opts,
-        }
+        },
+        cancel_event=cancel_event,
     )
     prompt_tok, completion_tok, total = normalize_ollama_usage(data)
     record_usage(
@@ -428,6 +469,7 @@ async def complete_with_images(
             model_name=model_name,
             images=images,
             options=ollama_options,
+            cancel_event=cancel_event,
         )
         effective_timeout = (
             timeout if timeout is not None else max(LLM_VISION_TIMEOUT, OLLAMA_CHAT_TIMEOUT)

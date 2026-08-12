@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -146,3 +147,27 @@ def test_resolve_ocr_page_limit_respects_explicit_cap(tmp_path: Path, monkeypatc
     monkeypatch.setattr(config, "OCR_SAFETY_MAX_PAGES", 128)
 
     assert resolve_ocr_page_limit(pdf_path) == 4
+
+
+def test_resolve_ocr_page_timeout_longer_for_ollama(monkeypatch):
+    monkeypatch.setattr(config, "LLM_PROVIDER", "openai")
+    monkeypatch.setattr(config, "OCR_PAGE_TIMEOUT", 180.0)
+    monkeypatch.setattr(config, "OLLAMA_OCR_PAGE_TIMEOUT", 600.0)
+    from paperless_agent.ocr import resolve_ocr_page_timeout
+
+    assert resolve_ocr_page_timeout() == 180.0
+    monkeypatch.setattr(config, "LLM_PROVIDER", "ollama")
+    assert resolve_ocr_page_timeout() == 600.0
+
+
+def test_prepare_page_image_for_vision_downscales_and_jpeg_for_ollama(monkeypatch):
+    from paperless_agent.ocr import prepare_page_image_for_vision
+
+    monkeypatch.setattr(config, "OCR_MAX_IMAGE_PX", 800)
+    monkeypatch.setattr(config, "LLM_PROVIDER", "ollama")
+    image = Image.new("RGB", (1600, 2400), "white")
+    data, mime = prepare_page_image_for_vision(image)
+    assert mime == "image/jpeg"
+    assert len(data) > 0
+    with Image.open(io.BytesIO(data)) as resized:
+        assert max(resized.size) <= 800

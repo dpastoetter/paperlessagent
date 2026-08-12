@@ -261,7 +261,7 @@
           <button type="submit" class="btn primary">Ask</button>
         </form>
 
-        <div id="ask-out" class="answer" aria-live="polite">
+        <div id="ask-out" class="answer card" aria-live="polite">
           <div class="ask-reply idle">Answers appear here.</div>
         </div>
       </section>
@@ -407,6 +407,23 @@
               <p class="fine">When off, documents are filed automatically. Suspected duplicates always stop for review.</p>
             </div>
           </div>
+        </section>
+
+        <section class="card auth hidden" id="autostart-section">
+          <div class="auth-bar">
+            <div>
+              <p class="section-kicker">System</p>
+              <h2>Autostart</h2>
+              <p id="autostart-status" class="auth-line">Checking autostart…</p>
+            </div>
+          </div>
+          <label class="check-field">
+            <input type="checkbox" id="autostart-toggle" />
+            <span>Start PaperlessAgent when the system boots</span>
+          </label>
+          <p id="autostart-hint" class="fine">
+            Installs a systemd user service, enables it across reboots, and keeps the web UI available at boot.
+          </p>
         </section>
 
         <section class="card auth" id="appearance-section">

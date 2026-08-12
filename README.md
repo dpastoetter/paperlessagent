@@ -8,12 +8,16 @@ Built with [Google ADK](https://adk.dev/) (Python) + FastAPI. Works with **OpenA
 
 ## Features
 
-- **Ingest pipeline**: Read → AI OCR → Extract → Name → Review → File → Index, with a live workflow visualization while it runs
-- **Human-in-the-loop review**: every proposed filing waits in a review queue where you can correct filename, category, date, amount, and summary before approving — nothing touches your filesystem until you say so (optional; can be switched to fully automatic)
+- **Ingest pipeline**: Read → AI OCR → Extract → Name → Review → File → Index, with a live workflow strip (Server-Sent Events) while processing runs
+- **Per-file cancel & retry**: stop a stuck or slow file mid-pipeline; retry failed or cancelled items from the inbox queue
+- **Human-in-the-loop review**: every proposed filing waits in a review queue where you can correct filename, category, date, parties, reference IDs, amount (financial docs only), and summary before approving — nothing touches your filesystem until you say so (optional; can be switched to fully automatic)
+- **Smart metadata extraction**: category-aware fields — `subject`, `parties`, and `reference_ids` for all document types; amount/currency only for invoices, receipts, bank/tax/utility/insurance documents
 - **Duplicate detection**: SHA-256 file checksums, normalized content hashes, and text-similarity matching flag re-scans and near-duplicates before they are filed
 - **Ask your archive**: RAG-backed natural-language questions with source citations
 - **Local storage**: configurable inbox and per-category archive folders, `data/paperless.db` (SQLite), `data/chroma/` (vectors)
 - **Inbox polling**: automatic processing of new scans on a configurable interval
+- **Local Ollama tooling**: start the daemon, pull models, show CPU/GPU usage for loaded models, unload or restart Ollama from Settings
+- **Boot autostart (Linux)**: optional systemd user service so the web UI comes up after login or reboot
 - **Web app**: single-page UI with four theme presets (dark/light), toast notifications, and a mockup mode for clean screenshots
 - **Self-update**: check and install new releases from GitHub directly from Settings
 
@@ -49,7 +53,7 @@ source .venv/bin/activate
 uvicorn app.main:app --port 8080
 ```
 
-Confirm the prompt shows `(.venv)` (or that `which uvicorn` points at `…/paperlessagent/.venv/bin/uvicorn`) before starting. Open [http://localhost:8080](http://localhost:8080). Sign in under **Settings → Authentication**, point the inbox at your scan folder, and process a document.
+Confirm the prompt shows `(.venv)` (or that `which uvicorn` points at `…/paperlessagent/.venv/bin/uvicorn`) before starting. Open [http://localhost:8080](http://localhost:8080). Sign in under **Settings → AI provider**, point the inbox at your scan folder, and process a document.
 
 Optional:
 
@@ -71,6 +75,8 @@ From a venv install, after `pip install -r requirements-desktop.txt` (needs WebK
 python -m paperless_agent.desktop
 ```
 
+The desktop wrapper respects `PAPERLESS_HOST`, `PAPERLESS_PORT`, and `PAPERLESS_LOG_LEVEL`.
+
 ### Uninstall
 
 Removes the install directory (app code, `.venv`, local `data/`, and `.env`):
@@ -79,7 +85,7 @@ Removes the install directory (app code, `.venv`, local `data/`, and `.env`):
 rm -rf "${PAPERLESS_DIR:-$HOME/paperlessagent}"
 ```
 
-This does not delete ChatGPT/OpenAI credentials in `~/.codex/auth.json`, or archive/inbox folders you pointed outside the install directory.
+This does not delete ChatGPT/OpenAI credentials in `~/.codex/auth.json`, archive/inbox folders you pointed outside the install directory, or a systemd user unit if you enabled autostart — disable autostart in Settings first, or run `systemctl --user disable paperlessagent.service`.
 
 Needs **Python 3.10+** (with the `venv` module), **git**, and **Poppler** (`pdftoppm`) for PDF OCR:
 
@@ -108,11 +114,13 @@ cp .env.example .env   # skip if .env already exists
 
 If you already have a clone but no `.venv`, run the `python3 -m venv` / `pip install` steps above (or re-run the one-line installer) before starting the server.
 
-### OpenAI / Codex auth
+## AI providers
 
 Cloud providers are locked until you approve the **cloud processing disclaimer** in **Settings → AI provider** (document page images and text leave this machine). Local Ollama does not require that acknowledgement.
 
-In the web UI, open **Settings → AI provider** and choose one:
+### OpenAI / ChatGPT
+
+In the web UI, open **Settings → AI provider → Cloud (ChatGPT)** and choose one:
 
 1. **Sign in with ChatGPT** — Codex-compatible OAuth (PKCE). Tokens are stored in `~/.codex/auth.json` and model calls use the Codex Responses backend against your ChatGPT subscription.
 2. **Save API key** — stores a Platform `sk-…` key in the same auth file (usage-based billing).
@@ -129,7 +137,7 @@ PAPERLESS_EMBEDDING_MODEL=text-embedding-3-small
 
 ChatGPT OAuth only supports Codex models (e.g. `gpt-5.6-luna` / `terra` / `sol`). Platform IDs like `gpt-4.1` are rejected — the app auto-falls back to `gpt-5.6-luna` in that case. ChatGPT OAuth uses a local embedding fallback for RAG; for higher-quality embeddings, save an API key.
 
-### Gemini auth (alternative)
+### Gemini (alternative)
 
 ```bash
 PAPERLESS_LLM_PROVIDER=gemini
@@ -138,7 +146,7 @@ PAPERLESS_MODEL=gemini-flash-latest
 PAPERLESS_EMBEDDING_MODEL=text-embedding-004
 ```
 
-### Ollama (alternative, fully local)
+### Ollama (fully local)
 
 Run everything on your own hardware — no cloud account, no API key. The agent, AI vision OCR, and RAG embeddings all go through your local Ollama server.
 
@@ -160,9 +168,16 @@ PAPERLESS_EMBEDDING_MODEL=nomic-embed-text
 # OLLAMA_BASE_URL=http://localhost:11434   (default)
 ```
 
-If `PAPERLESS_LLM_PROVIDER` is unset, the app auto-selects OpenAI when a key/Codex login is available, else Gemini when `GOOGLE_API_KEY` is set, else a **running local Ollama** when one responds on `OLLAMA_BASE_URL`.
+**User-local install (no sudo):** on Linux you can install the Ollama binary under `~/.local/bin` and libraries under `~/.local/lib/ollama`. If you use a user-local build, ensure `LD_LIBRARY_PATH` includes `~/.local/lib/ollama` when starting `ollama serve` (PaperlessAgent’s systemd autostart unit sets this automatically when that directory exists).
 
-While Ollama is the active provider, PaperlessAgent checks that the daemon is reachable and listening (and that required models are present) before chat, OCR, or embedding work. Health reports `degraded` when the local instance is offline or models are missing. If the `ollama` CLI is on PATH, Settings shows **Start Ollama** to launch the daemon (systemd unit when available, otherwise `ollama serve`).
+While Ollama is the active provider, PaperlessAgent checks that the daemon is reachable and listening (and that required models are present) before chat, OCR, or embedding work. Health reports `degraded` when the local instance is offline or models are missing. Settings shows:
+
+- **CPU / GPU / CPU + GPU** — inferred from Ollama’s `/api/ps` (`size_vram` on loaded models)
+- **Start Ollama** — launch the daemon (systemd unit when available, otherwise `ollama serve`)
+- **Unload model** — free RAM/VRAM after a long OCR run
+- **Restart Ollama** — recover from a stuck daemon (blocked while a file is processing unless you cancel first)
+
+If `PAPERLESS_LLM_PROVIDER` is unset, the app auto-selects OpenAI when a key/Codex login is available, else Gemini when `GOOGLE_API_KEY` is set, else a **running local Ollama** when one responds on `OLLAMA_BASE_URL`. Set `PAPERLESS_SKIP_OLLAMA_PROBE=1` to skip the localhost probe during auto-detect (useful in tests or air-gapped installs).
 
 ## Run the web app
 
@@ -171,32 +186,113 @@ Always activate the project venv first so you use its `uvicorn` and packages, no
 ```bash
 cd ~/paperlessagent   # or your install directory
 source .venv/bin/activate
-uvicorn app.main:app --port 8080
+uvicorn app.main:app --host 127.0.0.1 --port 8080
 ```
 
 | Symptom | Fix |
 | --- | --- |
 | `.venv/bin/activate: No such file or directory` | Re-run the installer. On Debian/Ubuntu also install `python3-venv`, then remove a broken leftover with `rm -rf ~/paperlessagent/.venv` and install again |
 | `ModuleNotFoundError: No module named 'fastapi'` | Same — dependencies were never installed into `.venv`, or the venv was not activated |
+| Port already in use | Stop the other instance: `pkill -f "uvicorn app.main:app"`, or pick another port with `--port 8081` and `PAPERLESS_PORT=8081` |
+| Ollama OCR times out on CPU | Raise `PAPERLESS_OLLAMA_OCR_PAGE_TIMEOUT` (default 600s); see [OCR tuning](#ocr-and-long-documents) |
 
 Uvicorn binds to `127.0.0.1` by default — keep it that way. The API has no login; mutating routes are protected against cross-site form posts by a custom header the UI always sends, but binding with `--host 0.0.0.0` would still expose your documents and settings to anyone on the network.
 
 Open [http://localhost:8080](http://localhost:8080).
 
+### Autostart at boot (Linux + systemd)
+
+**Settings → Autostart → Start PaperlessAgent when the system boots** installs a user systemd unit at `~/.config/systemd/user/paperlessagent.service`, runs `loginctl enable-linger` so the service can start without an interactive login, and starts the unit if port 8080 is free.
+
+The unit reads your install’s `.env`, sets `DATA_DIR`, and uses the venv `uvicorn` from the project root. Customize bind address/port with `PAPERLESS_HOST` and `PAPERLESS_PORT` in `.env` before enabling autostart.
+
+Manual control:
+
+```bash
+systemctl --user status paperlessagent.service
+systemctl --user restart paperlessagent.service
+journalctl --user -u paperlessagent.service -f
+```
+
+Autostart requires Linux with `systemctl --user`. It is hidden on other platforms.
+
 ## Typical flow
 
 1. Upload a scan in **Inbox** (or copy files into your source folder)
 2. Click **Process inbox** — or let the poller pick it up automatically
-3. Check **Review**: correct the proposal if needed, then **Approve & file** (duplicates are flagged with a match score)
-4. Find the filed document in **Archive**, or ask questions in **Ask**
+3. Watch the live workflow strip; use **Cancel** on the active file if needed, then **Retry** after it stops
+4. Check **Review**: correct the proposal if needed, then **Approve & file** (duplicates are flagged with a match score)
+5. Find the filed document in **Archive**, or ask questions in **Ask**
 
 Filing rules (source folder, category → folder mapping, poll interval, review requirement) live in **Settings → Filing & scanning** and are stored in `data/settings.json`.
+
+### Processing controls
+
+| Action | Where | Behavior |
+| --- | --- | --- |
+| **Cancel** | Inbox queue (active file) | Cooperative cancel — in-flight LLM/Ollama HTTP calls are aborted; button shows “Cancelling…” until the job ends |
+| **Retry** | Inbox queue (error/cancelled) | Re-queues one file; if that file is still active, cancel is requested first |
+| **Unload model** | Settings → Local Ollama | Drops loaded Ollama weights to free memory |
+| **Restart Ollama** | Settings → Local Ollama | Restarts the daemon; blocked while processing unless the active file is cancelled |
+
+Progress updates stream over `GET /api/process/events` (SSE). The workflow UI mounts once and patches in place to avoid flicker during rapid updates.
+
+### Metadata & review fields
+
+During **Extract**, the LLM returns JSON with:
+
+| Field | Description |
+| --- | --- |
+| `doc_type` | One of your configured categories (built-in types include invoice, receipt, bank, tax, utility, insurance, letter, contract, certificate, employment, medical, id, education, travel, other) |
+| `doc_date` | Document date when present |
+| `subject` | Short topic or title |
+| `parties` | Sender, recipient, issuer, etc. |
+| `reference_ids` | Policy numbers, invoice numbers, case refs (list) |
+| `amount` / `currency` | Only kept for financial categories |
+| `summary` | Short plain-language summary |
+
+The review form shows amount/currency only when the selected category is financial. Reference IDs are editable as a comma-separated list.
+
+## OCR and long documents
+
+Text recovery on ingest always uses **AI vision OCR** on rendered page images; a PDF text layer, when present, serves as a hint and fallback.
+
+By default, **all PDF pages** are transcribed (one vision call per page, up to 128 pages). Per-page OCR is slower but avoids truncated output on multi-page scans. Page images are downscaled (default max edge 1536px) and sent as JPEG to reduce payload size for local Ollama.
+
+Tune via `.env` (see `.env.example` for the full list):
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PAPERLESS_OCR_MAX_PAGES` | `0` (all) | Cap pages per document; `0` = all up to safety max |
+| `PAPERLESS_OCR_SAFETY_MAX_PAGES` | `128` | Hard ceiling on page count |
+| `PAPERLESS_OCR_DPI` | `200` | PDF render resolution |
+| `PAPERLESS_OCR_PAGE_TIMEOUT` | `180` | Seconds per page (cloud providers) |
+| `PAPERLESS_OLLAMA_OCR_PAGE_TIMEOUT` | `600` | Seconds per page (local Ollama — CPU can be slow) |
+| `PAPERLESS_OCR_MAX_IMAGE_PX` | `1536` | Max width/height before vision OCR |
+| `PAPERLESS_OLLAMA_OCR_NUM_CTX` | `4096` | Ollama context for OCR calls |
+| `PAPERLESS_OLLAMA_OCR_NUM_PREDICT` | `2048` | Max tokens per OCR page (Ollama) |
+| `PAPERLESS_OLLAMA_VISION_NUM_CTX` | `8192` | Ollama context for other vision calls |
+| `PAPERLESS_OLLAMA_VISION_NUM_PREDICT` | `8192` | Max tokens for other vision calls |
+| `PAPERLESS_EXTRACT_MAX_CHARS` | `48000` | OCR text sampled for metadata extraction (head + tail when longer) |
+
+LLM timeouts (chat, vision, Ollama) and cancel join behavior:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PAPERLESS_LLM_TIMEOUT` | `120` | Text completion timeout (seconds) |
+| `PAPERLESS_LLM_VISION_TIMEOUT` | `300` | Cloud vision timeout |
+| `PAPERLESS_OLLAMA_TIMEOUT` | `300` | Ollama chat/vision timeout |
+| `PAPERLESS_CANCEL_JOIN_TIMEOUT` | `3` | Max wait when joining a cancelled async LLM call |
+
+If you switch embedding providers (Gemini / OpenAI / Ollama), re-index documents — vector spaces are not compatible.
 
 ## Updates
 
 **Settings → Software update** checks the GitHub releases of this repository and can download and install the latest version in place. Your documents, database, settings, and credentials (`data/`, `.env`) are never touched by an update.
 
-Installs are **fail-closed on integrity checks**: the updater only applies a release that includes a `.tar.gz` asset with a SHA-256 digest (GitHub asset `digest` and/or a `SHA256SUMS` file). Tag-only or checksum-less releases are shown but refused at install time.
+Installs are **fail-closed on integrity checks**: the updater only applies a release that includes a `.tar.gz` asset with a SHA-256 digest (GitHub asset `digest` and/or a `SHA256SUMS` file). Tag-only or checksum-less releases are shown but refused at install time. Update checks retry on transient network failures.
+
+Override the release source with `PAPERLESS_UPDATE_REPO=owner/repo` if you fork the project.
 
 Pushing a version tag (`v*`) runs GitHub Actions, which builds the tarball and `SHA256SUMS`, then publishes/updates the GitHub Release. Local dry-run:
 
@@ -247,8 +343,13 @@ python scripts/watch_inbox.py --process-existing
 ```
 paperless_agent/       # ingest pipeline, review queue, dedup, updater, auth/llm helpers
   ingest.py            #   OCR → extract → name → review gate → file + index
+  ocr.py               #   per-page vision OCR, PDF render, image prep
+  llm.py               #   OpenAI / Gemini / Ollama completions + cooperative cancel
+  job_control.py       #   per-file cancel events for ingest
   review.py            #   human-in-the-loop queue (approve / reject)
   dedup.py             #   checksum + content-hash + similarity duplicate detection
+  ollama_setup.py      #   Ollama probe, model pull, CPU/GPU summary, provider switch
+  system_service.py    #   systemd user unit for boot autostart
   updater.py           #   self-update from GitHub releases
 query_agent/           # RAG Q&A agent
 app/                   # FastAPI backend + single-page web UI (app/static/)
@@ -258,15 +359,21 @@ docs/screenshots/      # README screenshots (generated with mockup mode)
 data/                  # created at runtime (gitignored)
 ```
 
-## Notes
+## Configuration reference
 
-- Text recovery on ingest always uses AI vision OCR on rendered page images; a PDF text layer, when present, serves as a hint and fallback.
-- **Long documents / OCR tuning**: By default, all PDF pages are transcribed (one vision call per page, up to 128 pages). Per-page OCR is slower but avoids truncated output on multi-page scans. Tune via env vars in `.env.example`:
-  - `PAPERLESS_OCR_MAX_PAGES=0` — all pages (default); set to e.g. `8` on slow hardware
-  - `PAPERLESS_OCR_PAGE_TIMEOUT` — seconds per page (default 180)
-  - `PAPERLESS_OLLAMA_VISION_NUM_PREDICT` — max tokens per page for local Ollama
-  - `PAPERLESS_EXTRACT_MAX_CHARS` — how much OCR text is sent to the metadata LLM (default 48000)
-- If you switch embedding providers (Gemini / OpenAI / Ollama), re-index documents — vector spaces are not compatible.
+All optional variables are documented in `.env.example`. Common entries:
+
+```bash
+DATA_DIR=./data
+PAPERLESS_HOST=127.0.0.1
+PAPERLESS_PORT=8080
+PAPERLESS_LLM_PROVIDER=ollama   # gemini | openai | ollama
+PAPERLESS_MODEL=gemma3
+PAPERLESS_EMBEDDING_MODEL=nomic-embed-text
+OLLAMA_BASE_URL=http://localhost:11434
+```
+
+Runtime settings (inbox path, categories, poll interval, review requirement) are edited in the web UI and stored in `data/settings.json`, not in `.env`.
 
 ## License
 

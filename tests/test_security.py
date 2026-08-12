@@ -23,6 +23,7 @@ def test_mutating_routes_require_csrf_header(isolated_data):
         "/api/auth/logout",
         "/api/ollama/enable",
         "/api/ollama/start",
+        "/api/autostart",
         "/api/llm/provider",
         "/api/privacy/cloud-disclaimer",
     ):

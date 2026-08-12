@@ -207,6 +207,12 @@ function setProviderUi(provider) {
   if (ollamaBtn) ollamaBtn.dataset.active = isOllama ? "true" : "false";
 }
 
+function formatOllamaCompute(ollama) {
+  const label = ollama?.compute_label;
+  if (!label || label === "idle") return "";
+  return ` · ${label}`;
+}
+
 function renderOllamaStatus(ollama) {
   const statusEl = document.getElementById("ollama-status");
   const hintEl = document.getElementById("ollama-hint");
@@ -263,25 +269,30 @@ function renderOllamaStatus(ollama) {
 
   const chatLabel = ollama.resolved_chat_model || ollama.chat_model;
   const embedLabel = ollama.resolved_embedding_model || ollama.embedding_model;
+  const computeLabel = formatOllamaCompute(ollama);
   if (statusEl) {
     statusEl.textContent = ollama.active
-      ? `Using local Ollama · ${chatLabel} + ${embedLabel}`
-      : `Ollama ready · ${chatLabel} + ${embedLabel}`;
+      ? `Using local Ollama · ${chatLabel} + ${embedLabel}${computeLabel}`
+      : `Ollama ready · ${chatLabel} + ${embedLabel}${computeLabel}`;
     statusEl.dataset.tone = "ok";
   }
   if (hintEl) {
+    const idleCompute =
+      ollama.compute === "idle"
+        ? " Processor shows CPU/GPU once a model is loaded."
+        : "";
     hintEl.textContent = ollama.active
-      ? "Documents stay on this machine — no cloud sign-in needed."
-      : "Click Use Ollama to switch the app to local models.";
+      ? `Documents stay on this machine — no cloud sign-in needed.${idleCompute}`
+      : `Click Use Ollama to switch the app to local models.${idleCompute}`;
   }
   if (ollama.active) {
     const authLine = document.getElementById("auth-status");
     if (authLine) {
-      authLine.textContent = `Local Ollama · ${chatLabel}`;
+      authLine.textContent = `Local Ollama · ${chatLabel}${computeLabel}`;
       authLine.dataset.tone = "ok";
     }
     if (section) section.dataset.ready = "true";
-    setStatus("ready", `ollama · ${ollama.chat_model || "local"}`);
+    setStatus("ready", `ollama · ${ollama.chat_model || "local"}${computeLabel}`);
   }
 }
 

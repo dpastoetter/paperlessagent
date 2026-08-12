@@ -958,31 +958,26 @@ input:focus, textarea:focus {
 
 .answer {
   min-height: 8rem;
-  padding: 1.15rem 1.25rem;
-  border-radius: var(--radius);
-  background: var(--console);
-  border: 1px solid var(--console-line);
-  color: var(--console-ink);
-  word-break: break-word;
   animation: rise 0.3s var(--ease) both;
 }
 
 .ask-reply {
   white-space: pre-wrap;
-  font-family: var(--mono);
-  font-size: var(--type-sm);
-  line-height: 1.6;
+  word-break: break-word;
+  font-size: var(--type-md);
+  line-height: 1.55;
+  color: var(--ink);
 }
 
-.ask-reply.idle { color: var(--console-muted); }
+.ask-reply.idle { color: var(--soft); }
 
 .ask-reply.thinking {
-  color: var(--console-muted);
+  color: var(--soft);
   background: linear-gradient(
     100deg,
-    var(--console-muted) 40%,
+    var(--soft) 40%,
     var(--accent) 50%,
-    var(--console-muted) 60%
+    var(--soft) 60%
   );
   background-size: 200% 100%;
   -webkit-background-clip: text;
@@ -999,7 +994,7 @@ input:focus, textarea:focus {
 .ask-sources {
   margin: 0.9rem 0 0;
   padding: 0.75rem 0 0;
-  border-top: 1px solid var(--console-line);
+  border-top: 1px solid var(--line);
   display: grid;
   gap: 0.4rem;
 }
@@ -1010,7 +1005,7 @@ input:focus, textarea:focus {
   font-family: var(--mono);
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--console-muted);
+  color: var(--soft);
 }
 
 .ask-sources ul {
@@ -1032,7 +1027,7 @@ input:focus, textarea:focus {
 .ask-sources .source-meta {
   min-width: 0;
   flex: 1;
-  color: var(--console-ink);
+  color: var(--ink);
   font-size: var(--type-sm);
   font-family: var(--mono);
 }
@@ -1054,18 +1049,19 @@ input:focus, textarea:focus {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   border-radius: var(--radius-sm);
-  color: var(--console-muted);
-  border: 1px solid var(--console-line);
-  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  background: var(--inset);
   text-decoration: none;
   cursor: pointer;
+  transition: border-color 0.15s var(--ease), color 0.15s var(--ease), background 0.15s var(--ease);
 }
 
 .ask-sources .source-link:hover,
 .ask-sources .source-reveal:hover {
-  color: var(--console-ink);
-  border-color: color-mix(in srgb, var(--console-ink) 35%, transparent);
-  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink);
+  border-color: var(--line-strong);
+  background: var(--hover);
 }
 
 /* ————— Auth / settings ————— */

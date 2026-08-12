@@ -13,17 +13,21 @@ from paperless_agent.llm import complete_text, complete_with_images
 from paperless_agent.ollama_setup import (
     apply_llm_provider,
     clear_ollama_tags_cache,
+    current_compute_label,
     enable_ollama,
     ensure_ollama_ready,
     format_http_error,
+    infer_model_processor,
     missing_models,
     model_name_matches,
     ollama_status,
     resolve_installed_model,
     resolve_runtime_model,
     start_ollama,
+    summarize_compute,
     upsert_env_values,
 )
+from paperless_agent.progress import llm_busy_detail
 from paperless_agent.tools import rag_index
 from paperless_agent.tools.rag_index import embed_texts
 
@@ -44,7 +48,7 @@ def ollama_provider(monkeypatch):
     )
     captured: list[dict] = []
 
-    async def fake_request(payload):
+    async def fake_request(payload, *, cancel_event=None):
         captured.append(payload)
         return {"message": {"role": "assistant", "content": "  transcribed text  "}}
 
@@ -483,3 +487,69 @@ def test_ollama_start_api(client, monkeypatch):
     resp = client.post("/api/ollama/start")
     assert resp.status_code == 200
     assert resp.json()["started"] is True
+
+
+def test_infer_model_processor_uses_vram():
+    assert infer_model_processor({"size_vram": 0}) == "cpu"
+    assert infer_model_processor({"size_vram": 1024}) == "gpu"
+
+
+def test_summarize_compute_idle_and_gpu():
+    idle = summarize_compute([])
+    assert idle["compute"] == "idle"
+    assert idle["compute_label"] == "idle"
+
+    gpu = summarize_compute([{"name": "gemma3:latest", "size_vram": 2_000_000_000}])
+    assert gpu["compute"] == "gpu"
+    assert gpu["compute_label"] == "GPU"
+    assert gpu["running"][0]["processor"] == "gpu"
+
+    mixed = summarize_compute(
+        [
+            {"name": "gemma3:latest", "size_vram": 0},
+            {"name": "llama3.2:latest", "size_vram": 512},
+        ]
+    )
+    assert mixed["compute"] == "mixed"
+    assert mixed["compute_label"] == "CPU + GPU"
+
+
+def test_ollama_status_includes_compute(monkeypatch):
+    clear_ollama_tags_cache()
+    monkeypatch.setattr(config, "LLM_PROVIDER", "ollama")
+    monkeypatch.setattr(
+        "paperless_agent.ollama_setup.probe_ollama",
+        lambda *_a, **_k: {
+            "reachable": True,
+            "listening": True,
+            "base_url": "http://localhost:11434",
+            "models": ["gemma3:latest"],
+            "version": "0.32.9",
+            "error": None,
+        },
+    )
+    monkeypatch.setattr(
+        "paperless_agent.ollama_setup.fetch_running_ps_models",
+        lambda *_a, **_k: [{"name": "gemma3:latest", "size_vram": 0}],
+    )
+    status = ollama_status()
+    assert status["compute"] == "cpu"
+    assert status["compute_label"] == "CPU"
+    assert status["running_models"][0]["name"] == "gemma3:latest"
+
+
+def test_llm_busy_detail_is_action_only():
+    detail = llm_busy_detail("Extracting metadata")
+    assert detail == "Extracting metadata — can take a while"
+    assert "Ollama" not in detail
+    assert "CPU" not in detail
+    assert "gemma3" not in detail
+
+
+def test_current_compute_label_idle(monkeypatch):
+    monkeypatch.setattr(
+        "paperless_agent.ollama_setup.fetch_running_ps_models",
+        lambda *_a, **_k: [],
+    )
+    assert current_compute_label() is None
+

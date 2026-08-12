@@ -179,6 +179,10 @@
     embedding_model: "nomic-embed-text",
     missing_models: [],
     pull_command: "",
+    compute: "cpu",
+    compute_label: "CPU",
+    size_vram: 0,
+    running_models: [],
     error: null,
     install_hint: null,
   };
@@ -282,6 +286,22 @@
     ],
     [/^\/api\/documents\?|^\/api\/documents$/, () => ({ status: "success", count: DOCS.length, documents: DOCS })],
     [/^\/api\/reviews$/, () => ({ status: "success", count: REVIEWS.length, reviews: REVIEWS })],
+    [/^\/api\/autostart\/status/, () => ({
+      status: "success",
+      autostart: {
+        supported: true,
+        enabled: false,
+        active: false,
+        url: "http://127.0.0.1:8080",
+        unit_path: "/home/demo/.config/systemd/user/paperlessagent.service",
+        linger: false,
+        error: null,
+      },
+    })],
+    [/^\/api\/autostart$/, () => ({
+      status: "success",
+      autostart: { supported: true, enabled: true, active: true, url: "http://127.0.0.1:8080" },
+    })],
     [/^\/api\/settings$/, () => ({ status: "success", settings: SETTINGS })],
     [
       /^\/api\/update\/status/,
@@ -340,7 +360,7 @@
       stepDetail: {
         read: "2 pages · 1840 chars in text layer",
         ai_ocr: "2 pages · 3120 chars",
-        extract: "Extracting type, date, subject, parties via local Ollama · gemma3 — can take a while",
+        extract: "Extracting type, date, subject, parties — can take a while",
       },
       queue: [
         { file_id: "demo-f1", filename: "invoice_mai.pdf", status: "done", stepLabel: "Done" },

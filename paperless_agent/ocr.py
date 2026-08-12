@@ -166,6 +166,45 @@ def _image_to_png_bytes(image: Image.Image) -> bytes:
     return buf.getvalue()
 
 
+def resolve_ocr_page_timeout() -> float:
+    """Per-page vision OCR timeout; Ollama on CPU needs a longer budget."""
+    if config.LLM_PROVIDER == "ollama":
+        return max(config.OCR_PAGE_TIMEOUT, config.OLLAMA_OCR_PAGE_TIMEOUT)
+    return config.OCR_PAGE_TIMEOUT
+
+
+def _ollama_vision_options() -> dict[str, int]:
+    return {
+        "num_ctx": config.OLLAMA_OCR_NUM_CTX,
+        "num_predict": config.OLLAMA_OCR_NUM_PREDICT,
+    }
+
+
+def prepare_page_image_for_vision(image: Image.Image) -> tuple[bytes, str]:
+    """
+    Normalize a rendered page for multimodal OCR.
+
+    Downscales large scans and uses JPEG for Ollama to keep CPU inference tractable.
+    """
+    img = image.convert("RGB")
+    max_px = max(256, int(config.OCR_MAX_IMAGE_PX))
+    width, height = img.size
+    long_edge = max(width, height)
+    if long_edge > max_px:
+        scale = max_px / long_edge
+        img = img.resize(
+            (max(1, int(width * scale)), max(1, int(height * scale))),
+            Image.Resampling.LANCZOS,
+        )
+
+    buf = io.BytesIO()
+    if config.LLM_PROVIDER == "ollama":
+        img.save(buf, format="JPEG", quality=85, optimize=True)
+        return buf.getvalue(), "image/jpeg"
+    img.save(buf, format="PNG")
+    return buf.getvalue(), "image/png"
+
+
 async def _ai_vision_transcribe_pages(
     path: Path,
     *,
@@ -182,10 +221,7 @@ async def _ai_vision_transcribe_pages(
         "line breaks, amounts, dates, and IDs. Return plain text only — no markdown, "
         "no commentary."
     )
-    ollama_options = {
-        "num_ctx": config.OLLAMA_VISION_NUM_CTX,
-        "num_predict": config.OLLAMA_VISION_NUM_PREDICT,
-    }
+    ollama_options = _ollama_vision_options()
     parts: list[str] = []
     for page_index in range(1, page_count + 1):
         raise_if_cancelled()
@@ -197,7 +233,7 @@ async def _ai_vision_transcribe_pages(
             filename=filename,
         )
         img = render_document_page(path, page_index)
-        png_bytes = _image_to_png_bytes(img)
+        image_bytes, mime_type = prepare_page_image_for_vision(img)
         hint = ""
         if page_index == 1 and text_layer_hint.strip():
             hint = (
@@ -210,12 +246,12 @@ async def _ai_vision_transcribe_pages(
         )
         page_text = await complete_with_images(
             prompt,
-            images=[png_bytes],
+            images=[image_bytes],
             instructions=instructions,
-            mime_type="image/png",
+            mime_type=mime_type,
             cancel_event=get_file_cancel_event(),
-            timeout=config.OCR_PAGE_TIMEOUT,
-            ollama_options=ollama_options,
+            timeout=resolve_ocr_page_timeout(),
+            ollama_options=ollama_options if config.LLM_PROVIDER == "ollama" else None,
         )
         parts.append(f"[Page {page_index}]\n{page_text.strip()}")
     return "\n\n".join(parts)

@@ -441,13 +441,23 @@ document.getElementById("job-queue")?.addEventListener("click", async (ev) => {
   if (cancelBtn) {
     const fileId = cancelBtn.dataset.fileId;
     if (!fileId) return;
+    cancelBtn.disabled = true;
+    const prevLabel = cancelBtn.textContent;
+    cancelBtn.textContent = "Cancelling…";
     try {
       await api("/api/process/cancel", {
         method: "POST",
         body: JSON.stringify({ file_id: fileId }),
       });
       toast("Cancellation requested", "ok");
+      const row = workflowState.queue.find((q) => q.file_id === fileId);
+      if (row) {
+        row.stepLabel = "Cancelling…";
+        patchQueueRow(fileId);
+      }
     } catch (err) {
+      cancelBtn.disabled = false;
+      cancelBtn.textContent = prevLabel;
       toast(String(err.message || err), "error");
     }
     return;
@@ -2065,6 +2075,80 @@ document.getElementById("clear-all-data").addEventListener("click", async (e) =>
   }
 });
 
+/* ————— Autostart ————— */
+
+function renderAutostartStatus(autostart) {
+  const section = document.getElementById("autostart-section");
+  const statusEl = document.getElementById("autostart-status");
+  const hintEl = document.getElementById("autostart-hint");
+  const toggle = document.getElementById("autostart-toggle");
+  if (!section || !statusEl || !toggle) return;
+
+  if (!autostart?.supported) {
+    section.classList.add("hidden");
+    return;
+  }
+  section.classList.remove("hidden");
+
+  toggle.disabled = Boolean(autostart.error);
+  toggle.checked = Boolean(autostart.enabled);
+
+  if (autostart.error) {
+    statusEl.textContent = autostart.error;
+    statusEl.dataset.tone = "warn";
+    if (hintEl) {
+      hintEl.textContent =
+        autostart.install_hint ||
+        "Fix the install path or virtualenv, then try again.";
+    }
+    return;
+  }
+
+  delete statusEl.dataset.tone;
+  const runState = autostart.active ? "running" : "stopped";
+  const bootState = autostart.enabled ? "enabled at boot" : "not enabled at boot";
+  statusEl.textContent = `Service ${runState} · ${bootState} · ${autostart.url || ""}`;
+
+  if (hintEl) {
+    const lingerBit = autostart.linger
+      ? "User lingering is enabled so the service can start before login."
+      : "Enabling autostart also turns on user lingering for boot-time startup.";
+    hintEl.textContent = `${lingerBit} Unit file: ${autostart.unit_path || "—"}`;
+  }
+}
+
+async function refreshAutostart() {
+  const data = await api("/api/autostart/status");
+  renderAutostartStatus(data.autostart);
+  return data.autostart;
+}
+
+document.getElementById("autostart-toggle")?.addEventListener("change", async (e) => {
+  const toggle = e.target;
+  const enabled = toggle.checked;
+  toggle.disabled = true;
+  try {
+    const data = await api("/api/autostart", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    renderAutostartStatus(data.autostart);
+    toast(
+      enabled
+        ? "PaperlessAgent will start automatically at boot."
+        : "Boot autostart disabled.",
+      "success",
+    );
+  } catch (err) {
+    toggle.checked = !enabled;
+    toast(String(err.message || err), "error");
+    await refreshAutostart().catch(() => {});
+  } finally {
+    toggle.disabled = false;
+  }
+});
+
 /* ————— Init ————— */
 
 renderRoute();
@@ -2097,3 +2181,4 @@ refreshSetup()
     // Re-render once categories are known so review cards get full select options.
     refreshReviews().catch(() => {});
   });
+refreshAutostart().catch(() => {});

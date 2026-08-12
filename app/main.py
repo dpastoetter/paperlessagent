@@ -90,6 +90,7 @@ from paperless_agent.updater import (
     get_current_version,
     schedule_restart,
 )
+from paperless_agent.system_service import autostart_status, set_autostart
 from paperless_agent.usage import usage_snapshot
 
 
@@ -236,6 +237,10 @@ class ReviewRejectRequest(BaseModel):
 
 class ValidatePathRequest(BaseModel):
     path: str = Field(..., min_length=1)
+
+
+class AutostartRequest(BaseModel):
+    enabled: bool
 
 
 class LlmProviderRequest(BaseModel):
@@ -449,6 +454,19 @@ def api_put_settings(body: SettingsRequest) -> dict[str, Any]:
 @app.post("/api/settings/validate-path")
 def api_validate_path(body: ValidatePathRequest) -> dict[str, Any]:
     return validate_path(body.path)
+
+
+@app.get("/api/autostart/status")
+def api_autostart_status() -> dict[str, Any]:
+    return {"status": "success", "autostart": autostart_status()}
+
+
+@app.post("/api/autostart")
+def api_autostart(body: AutostartRequest) -> dict[str, Any]:
+    try:
+        return set_autostart(body.enabled)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/api/inbox")
