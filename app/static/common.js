@@ -37,6 +37,49 @@ function setStatus(state, label) {
   if (health) health.textContent = label;
 }
 
+function formatCompactCount(value) {
+  const n = Number(value) || 0;
+  if (n >= 1_000_000) {
+    const m = n / 1_000_000;
+    return `${m >= 10 ? Math.round(m) : m.toFixed(1).replace(/\.0$/, "")}M`;
+  }
+  if (n >= 1_000) {
+    const k = n / 1_000;
+    return `${k >= 10 ? Math.round(k) : k.toFixed(1).replace(/\.0$/, "")}k`;
+  }
+  return String(n);
+}
+
+function formatUsageMetrics(usage) {
+  if (!usage) return "";
+  const requests = Number(usage.requests) || 0;
+  const tokens = Number(usage.total_tokens) || 0;
+  const reqLabel = `${formatCompactCount(requests)} req`;
+  if (tokens <= 0) return reqLabel;
+  return `${reqLabel} · ${formatCompactCount(tokens)} tok`;
+}
+
+function renderUsageMetrics(usage) {
+  const el = document.getElementById("usage-metrics");
+  if (!el) return;
+  const text = formatUsageMetrics(usage);
+  if (!text) {
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
+  el.hidden = false;
+  el.textContent = text;
+  el.title = usage
+    ? [
+        `Requests: ${usage.requests || 0}`,
+        `Prompt tokens: ${usage.prompt_tokens || 0}`,
+        `Completion tokens: ${usage.completion_tokens || 0}`,
+        `Total tokens: ${usage.total_tokens || 0}`,
+      ].join("\n")
+    : "";
+}
+
 /* ————— Toasts ————— */
 
 function toast(message, tone = "info", timeout = 4200) {
@@ -293,6 +336,7 @@ async function refreshHealth() {
     if (data.cloud_disclaimer) {
       applyCloudDisclaimerStatus(data.cloud_disclaimer);
     }
+    renderUsageMetrics(data.usage);
     if (data.llm_provider === "ollama") {
       if (data.ollama) {
         renderOllamaStatus(data.ollama);
@@ -311,4 +355,14 @@ async function refreshHealth() {
     setStatus("offline", "offline");
     return null;
   }
+}
+
+const HEALTH_POLL_MS = 15000;
+let healthPollTimer = null;
+
+function startHealthPolling() {
+  if (healthPollTimer || window.PA_MOCK?.enabled) return;
+  healthPollTimer = window.setInterval(() => {
+    refreshHealth().catch(() => {});
+  }, HEALTH_POLL_MS);
 }

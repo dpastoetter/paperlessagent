@@ -196,10 +196,16 @@ def read_document(path: str) -> dict[str, Any]:
     return result
 
 
+def _short_descriptor(text: str, max_len: int = 40) -> str:
+    stem = _safe_stem(text)
+    return stem[:max_len] if len(stem) > max_len else stem
+
+
 def propose_filename(
     doc_type: str,
     doc_date: str | None = None,
     counterparty: str | None = None,
+    subject: str | None = None,
     amount: float | None = None,
     currency: str | None = None,
     original_path: str | None = None,
@@ -208,15 +214,26 @@ def propose_filename(
     """
     Build a collision-safe meaningful filename.
 
-    Example: 2024-03-15_Invoice_Acme_EUR120.pdf
+    Examples:
+      2024-06-12_Medical_Blood-test-results_Dr-Weber.pdf
+      2024-03-15_Invoice_Acme_EUR120.pdf
+      undated_Letter_Rent-increase-notice_Landlord.pdf
     """
     date_part = (doc_date or "undated").replace("/", "-")
     type_part = _safe_stem((doc_type or "other").title())
-    party_part = _safe_stem(counterparty) if counterparty else "Unknown"
+
+    descriptor_parts: list[str] = []
+    if subject and subject.strip():
+        descriptor_parts.append(_short_descriptor(subject))
+    if counterparty and counterparty.strip():
+        party_part = _safe_stem(counterparty)
+        if not descriptor_parts or party_part.lower() not in descriptor_parts[0].lower():
+            descriptor_parts.append(party_part)
+    descriptor = "_".join(descriptor_parts) if descriptor_parts else "Unknown"
+
     amount_part = ""
     if amount is not None:
         cur = (currency or "EUR").upper()
-        # Avoid decimals in filenames when whole euros/cents not critical
         if float(amount).is_integer():
             amount_part = f"_{cur}{int(amount)}"
         else:
@@ -229,7 +246,7 @@ def propose_filename(
     else:
         ext = ".pdf"
 
-    base = f"{date_part}_{type_part}_{party_part}{amount_part}"
+    base = f"{date_part}_{type_part}_{descriptor}{amount_part}"
     filename = f"{_safe_stem(base)}{ext}"
     return {"status": "success", "filename": filename}
 

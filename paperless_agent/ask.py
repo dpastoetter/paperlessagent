@@ -40,6 +40,7 @@ def _format_documents(documents: list[dict[str, Any]]) -> str:
         lines.append(
             f"- filename={doc.get('filename')} document_id={doc.get('id')} "
             f"doc_type={doc.get('doc_type')} doc_date={doc.get('doc_date')} "
+            f"subject={doc.get('subject')} "
             f"counterparties={doc.get('counterparties')} "
             f"amount={doc.get('amount')} {doc.get('currency') or ''}\n"
             f"  summary: {(doc.get('summary') or '').strip()}"

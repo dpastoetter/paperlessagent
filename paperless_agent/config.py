@@ -86,13 +86,37 @@ RETRIEVE_TOP_K = 6
 DOC_TYPES = (
     "invoice",
     "receipt",
-    "contract",
-    "letter",
+    "bank",
     "tax",
+    "utility",
+    "insurance",
+    "letter",
+    "contract",
+    "certificate",
+    "employment",
     "medical",
     "id",
+    "education",
+    "travel",
     "other",
 )
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    return int(raw)
+
+
+# OCR / vision — 0 means all pages (clamped to OCR_SAFETY_MAX_PAGES).
+OCR_MAX_PAGES = _env_int("PAPERLESS_OCR_MAX_PAGES", 0)
+OCR_SAFETY_MAX_PAGES = _env_int("PAPERLESS_OCR_SAFETY_MAX_PAGES", 128)
+OCR_DPI = _env_int("PAPERLESS_OCR_DPI", 200)
+OCR_PAGE_TIMEOUT = float(os.getenv("PAPERLESS_OCR_PAGE_TIMEOUT", "180"))
+OLLAMA_VISION_NUM_CTX = _env_int("PAPERLESS_OLLAMA_VISION_NUM_CTX", 8192)
+OLLAMA_VISION_NUM_PREDICT = _env_int("PAPERLESS_OLLAMA_VISION_NUM_PREDICT", 8192)
+EXTRACT_MAX_CHARS = _env_int("PAPERLESS_EXTRACT_MAX_CHARS", 48000)
 
 
 def ensure_data_dirs() -> None:

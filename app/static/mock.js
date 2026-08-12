@@ -22,6 +22,7 @@
       original_name: "scan_20240603_1412.pdf",
       doc_type: "invoice",
       doc_date: "2024-06-03",
+      subject: "Consulting services May 2024",
       counterparties: "Acme Corp",
       amount: 1240.0,
       currency: "EUR",
@@ -34,6 +35,7 @@
       original_name: "vertrag_stadtwerke.pdf",
       doc_type: "contract",
       doc_date: "2024-05-28",
+      subject: "Electricity supply agreement",
       counterparties: "Stadtwerke München",
       amount: null,
       currency: null,
@@ -46,6 +48,7 @@
       original_name: "steuerbescheid_2023.pdf",
       doc_type: "tax",
       doc_date: "2024-05-12",
+      subject: "Income tax assessment 2023",
       counterparties: "Finanzamt München",
       amount: 842.0,
       currency: "EUR",
@@ -54,10 +57,11 @@
     },
     {
       id: "demo-doc-4",
-      filename: "2024-04-19_Medical_DrWeber.pdf",
+      filename: "2024-04-19_Medical_MRI-right-knee_Dr-Weber.pdf",
       original_name: "befund_scan.pdf",
       doc_type: "medical",
       doc_date: "2024-04-19",
+      subject: "MRI right knee results",
       counterparties: "Dr. Weber",
       amount: null,
       currency: null,
@@ -70,6 +74,7 @@
       original_name: "IMG_2041.jpg",
       doc_type: "receipt",
       doc_date: "2024-03-30",
+      subject: "Paint and brushes purchase",
       counterparties: "Bauhaus",
       amount: 67.8,
       currency: "EUR",
@@ -88,6 +93,7 @@
         filename: "2024-06-14_Invoice_AcmeCorp_EUR380.pdf",
         doc_type: "invoice",
         doc_date: "2024-06-14",
+        subject: "On-site support June 12",
         counterparties: "Acme Corp",
         amount: 380.0,
         currency: "EUR",
@@ -157,7 +163,24 @@
   };
 
   const ROUTES = [
-    [/^\/api\/health/, () => ({ status: "ok", llm_provider: "openai", model: "gpt-5", auth: AUTH })],
+    [/^\/api\/health/, () => ({
+      status: "ok",
+      llm_provider: "openai",
+      model: "gpt-5",
+      auth: AUTH,
+      usage: {
+        requests: 12,
+        chat_requests: 10,
+        embed_requests: 2,
+        prompt_tokens: 8400,
+        completion_tokens: 2100,
+        total_tokens: 10500,
+        last_provider: "openai",
+        last_model: "gpt-5",
+        last_kind: "chat",
+        updated_at: "2026-01-01T00:00:00+00:00",
+      },
+    })],
     [/^\/api\/auth\/status/, () => ({ ...AUTH, cloud_disclaimer: { version: "1", accepted: true, accepted_at: "2026-01-01T00:00:00+00:00" } })],
     [
       /^\/api\/privacy\/cloud-disclaimer/,
@@ -188,6 +211,34 @@
     [
       /^\/api\/ollama\/pull/,
       () => ({ status: "success", model: "gemma3", ollama: { ...OLLAMA, active: true, ready: true } }),
+    ],
+    [
+      /^\/api\/ollama\/ps/,
+      () => ({
+        status: "success",
+        models: [{ name: "gemma3:4b", size: 2800000000, size_vram: 2800000000 }],
+      }),
+    ],
+    [
+      /^\/api\/ollama\/unload/,
+      () => ({ status: "success", unloaded: ["gemma3:4b"], running_models: [] }),
+    ],
+    [
+      /^\/api\/ollama\/restart/,
+      () => ({
+        status: "success",
+        restarted: true,
+        method: "systemctl --user restart ollama.service",
+        ollama: { ...OLLAMA, active: true, ready: true },
+      }),
+    ],
+    [
+      /^\/api\/process\/cancel/,
+      () => ({ status: "success", file_id: "demo-f2", message: "Cancellation requested" }),
+    ],
+    [
+      /^\/api\/process\/retry/,
+      () => ({ status: "success", cancelled: true, message: "Cancellation requested for the active file." }),
     ],
     [
       /^\/api\/llm\/provider/,
@@ -254,6 +305,7 @@
     // Frozen mid-run pipeline scene for the inbox workflow panel.
     workflow: {
       activeFilename: "scan_20240614_0932.pdf",
+      activeFileId: "demo-f2",
       jobTotal: 3,
       stepStatus: {
         read: "done",
@@ -264,10 +316,14 @@
         file: "wait",
         index: "wait",
       },
-      stepDetail: { read: "2 pages", ai_ocr: "ai_vision", extract: "invoice" },
+      stepDetail: {
+        read: "2 pages · 1840 chars in text layer",
+        ai_ocr: "2 pages · 3120 chars",
+        extract: "Extracting type, date, subject, parties via local Ollama · gemma3 — can take a while",
+      },
       queue: [
         { file_id: "demo-f1", filename: "invoice_mai.pdf", status: "done", stepLabel: "Done" },
-        { file_id: "demo-f2", filename: "scan_20240614_0932.pdf", status: "running", stepLabel: "Extract" },
+        { file_id: "demo-f2", filename: "scan_20240614_0932.pdf", status: "running", stepLabel: "Find details" },
         { file_id: "demo-f3", filename: "receipt_okt.jpg", status: "queued", stepLabel: null },
       ],
     },

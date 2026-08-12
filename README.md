@@ -261,6 +261,11 @@ data/                  # created at runtime (gitignored)
 ## Notes
 
 - Text recovery on ingest always uses AI vision OCR on rendered page images; a PDF text layer, when present, serves as a hint and fallback.
+- **Long documents / OCR tuning**: By default, all PDF pages are transcribed (one vision call per page, up to 128 pages). Per-page OCR is slower but avoids truncated output on multi-page scans. Tune via env vars in `.env.example`:
+  - `PAPERLESS_OCR_MAX_PAGES=0` — all pages (default); set to e.g. `8` on slow hardware
+  - `PAPERLESS_OCR_PAGE_TIMEOUT` — seconds per page (default 180)
+  - `PAPERLESS_OLLAMA_VISION_NUM_PREDICT` — max tokens per page for local Ollama
+  - `PAPERLESS_EXTRACT_MAX_CHARS` — how much OCR text is sent to the metadata LLM (default 48000)
 - If you switch embedding providers (Gemini / OpenAI / Ollama), re-index documents — vector spaces are not compatible.
 
 ## License

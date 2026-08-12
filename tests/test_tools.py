@@ -75,6 +75,45 @@ def test_propose_filename():
     assert result["filename"] == "2024-03-15_Invoice_Acme_GmbH_EUR120.pdf"
 
 
+def test_propose_filename_medical_with_subject():
+    result = filesystem.propose_filename(
+        doc_type="medical",
+        doc_date="2024-06-12",
+        subject="Blood test results",
+        counterparty="Dr. Weber",
+    )
+    assert result["status"] == "success"
+    assert result["filename"] == "2024-06-12_Medical_Blood_test_results_Dr._Weber.pdf"
+
+
+def test_propose_filename_letter_without_amount():
+    result = filesystem.propose_filename(
+        doc_type="letter",
+        doc_date=None,
+        subject="Rent increase notice",
+        counterparty="Landlord",
+    )
+    assert result["status"] == "success"
+    assert result["filename"] == "undated_Letter_Rent_increase_notice_Landlord.pdf"
+    assert "EUR" not in result["filename"]
+
+
+def test_search_metadata_includes_subject(isolated_data):
+    saved = metadata_db.upsert_metadata(
+        original_name="scan.pdf",
+        filename="2024-01-01_Letter_School-enrollment.pdf",
+        path=str(isolated_data / "archive" / "letter" / "2024" / "doc.pdf"),
+        doc_type="letter",
+        doc_date="2024-01-01",
+        subject="School enrollment confirmation",
+        counterparties="Grundschule Nord",
+        summary="Enrollment letter for the 2024 school year.",
+    )
+    found = metadata_db.search_metadata(query="enrollment")
+    assert found["count"] >= 1
+    assert any(d["id"] == saved["document_id"] for d in found["documents"])
+
+
 def test_move_and_metadata(isolated_data):
     src = isolated_data / "inbox" / "scan.pdf"
     _write_minimal_pdf(src)

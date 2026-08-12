@@ -22,6 +22,7 @@ READY_CACHE_TTL = 5.0
 PULL_TIMEOUT = 600.0
 START_WAIT_TIMEOUT = 25.0
 START_POLL_INTERVAL = 0.4
+OLLAMA_CHAT_TIMEOUT = float(os.getenv("PAPERLESS_OLLAMA_TIMEOUT", "300"))
 _TAGS_CACHE_TTL = 30.0
 
 _ENV_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
@@ -605,3 +606,161 @@ def pull_model(model: str, *, base_url: str | None = None) -> dict[str, Any]:
         "pull": payload if isinstance(payload, dict) else {},
         "ollama": status,
     }
+
+
+def list_running_models(base_url: str | None = None) -> dict[str, Any]:
+    """Return models currently loaded in Ollama (GET /api/ps)."""
+    url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
+    try:
+        with httpx.Client(timeout=READY_TIMEOUT) as client:
+            resp = client.get(f"{url}/api/ps")
+            resp.raise_for_status()
+            payload = resp.json() if resp.content else {}
+    except httpx.ConnectError as exc:
+        raise RuntimeError(
+            f"Cannot reach Ollama at {url} — is `ollama serve` running?"
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise RuntimeError(format_http_error(exc, kind="ps")) from exc
+    models = payload.get("models") if isinstance(payload, dict) else []
+    return {
+        "status": "success",
+        "models": models if isinstance(models, list) else [],
+        "raw": payload if isinstance(payload, dict) else {},
+    }
+
+
+def unload_model(
+    model: str | None = None,
+    *,
+    base_url: str | None = None,
+    embedding_model: str | None = None,
+) -> dict[str, Any]:
+    """Unload chat and embedding models from VRAM (keep_alive=0)."""
+    url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
+    chat = resolve_runtime_model(model or config.MODEL_NAME, base_url=url)
+    embed = resolve_runtime_model(
+        embedding_model or config.EMBEDDING_MODEL,
+        base_url=url,
+    )
+    unloaded: list[str] = []
+    with httpx.Client(timeout=OLLAMA_CHAT_TIMEOUT) as client:
+        chat_payload = {
+            "model": chat,
+            "messages": [{"role": "user", "content": " "}],
+            "stream": False,
+            "keep_alive": 0,
+        }
+        try:
+            resp = client.post(f"{url}/api/chat", json=chat_payload)
+            resp.raise_for_status()
+            unloaded.append(chat)
+        except httpx.HTTPError:
+            pass
+        embed_payload = {
+            "model": embed,
+            "input": " ",
+            "keep_alive": 0,
+        }
+        try:
+            resp = client.post(f"{url}/api/embed", json=embed_payload)
+            resp.raise_for_status()
+            if embed not in unloaded:
+                unloaded.append(embed)
+        except httpx.HTTPError:
+            pass
+    clear_ollama_tags_cache()
+    ps = list_running_models(base_url=url)
+    return {
+        "status": "success",
+        "unloaded": unloaded,
+        "running_models": ps.get("models") or [],
+    }
+
+
+def _try_systemctl_stop() -> str | None:
+    candidates = (
+        ["systemctl", "--user", "stop", "ollama.service"],
+        ["systemctl", "stop", "ollama.service"],
+    )
+    for args in candidates:
+        try:
+            completed = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            continue
+        if completed.returncode == 0:
+            return " ".join(args)
+    return None
+
+
+def _try_systemctl_restart() -> str | None:
+    candidates = (
+        ["systemctl", "--user", "restart", "ollama.service"],
+        ["systemctl", "restart", "ollama.service"],
+    )
+    for args in candidates:
+        try:
+            completed = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            continue
+        if completed.returncode == 0:
+            return " ".join(args)
+    return None
+
+
+def restart_ollama(
+    *,
+    base_url: str | None = None,
+    wait_timeout: float = START_WAIT_TIMEOUT,
+) -> dict[str, Any]:
+    """
+    Restart the local Ollama daemon (systemd restart, or stop + start).
+    """
+    url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
+    clear_ollama_tags_cache()
+    method = _try_systemctl_restart()
+    if not method:
+        stop_method = _try_systemctl_stop()
+        time.sleep(0.8)
+        if probe_ollama(url).get("reachable"):
+            raise RuntimeError(
+                "Ollama is still running and could not be stopped automatically. "
+                "Run `systemctl restart ollama` or restart the Ollama app manually."
+            )
+        started = start_ollama(base_url=url, wait_timeout=wait_timeout)
+        return {
+            "status": "success",
+            "restarted": True,
+            "method": stop_method or "stop",
+            "start": started,
+            "ollama": started.get("ollama") or ollama_status(base_url=url),
+        }
+
+    deadline = time.monotonic() + max(1.0, float(wait_timeout))
+    while time.monotonic() < deadline:
+        clear_ollama_tags_cache()
+        if probe_ollama(url).get("reachable"):
+            return {
+                "status": "success",
+                "restarted": True,
+                "method": method,
+                "ollama": ollama_status(base_url=url),
+            }
+        time.sleep(START_POLL_INTERVAL)
+
+    raise RuntimeError(
+        f"Restarted Ollama via `{method}` but it did not become reachable at {url} "
+        f"within {wait_timeout:.0f}s."
+    )

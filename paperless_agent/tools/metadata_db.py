@@ -55,6 +55,7 @@ def init_db() -> None:
         for ddl in (
             "ALTER TABLE documents ADD COLUMN checksum TEXT",
             "ALTER TABLE documents ADD COLUMN content_hash TEXT",
+            "ALTER TABLE documents ADD COLUMN subject TEXT",
         ):
             try:
                 conn.execute(ddl)
@@ -84,6 +85,7 @@ def upsert_metadata(
     path: str,
     doc_type: str = "other",
     doc_date: str | None = None,
+    subject: str | None = None,
     counterparties: str | None = None,
     amount: float | None = None,
     currency: str | None = None,
@@ -111,6 +113,7 @@ def upsert_metadata(
                     path = ?,
                     doc_type = ?,
                     doc_date = ?,
+                    subject = ?,
                     counterparties = ?,
                     amount = ?,
                     currency = ?,
@@ -126,6 +129,7 @@ def upsert_metadata(
                     path,
                     doc_type,
                     doc_date,
+                    subject,
                     counterparties,
                     amount,
                     currency,
@@ -141,9 +145,9 @@ def upsert_metadata(
                 """
                 INSERT INTO documents (
                     id, original_name, filename, path, doc_type, doc_date,
-                    counterparties, amount, currency, summary, extracted_json,
+                    subject, counterparties, amount, currency, summary, extracted_json,
                     checksum, content_hash, created_at, indexed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
                 """,
                 (
                     doc_id,
@@ -152,6 +156,7 @@ def upsert_metadata(
                     path,
                     doc_type,
                     doc_date,
+                    subject,
                     counterparties,
                     amount,
                     currency,
@@ -219,17 +224,18 @@ def search_metadata(
 
     if query:
         clauses.append(
-            "(filename LIKE ? OR summary LIKE ? OR counterparties LIKE ? "
-            "OR extracted_json LIKE ? OR original_name LIKE ?)"
+            "(filename LIKE ? OR summary LIKE ? OR subject LIKE ? "
+            "OR counterparties LIKE ? OR extracted_json LIKE ? OR original_name LIKE ?)"
         )
         like = f"%{query}%"
-        params.extend([like, like, like, like, like])
+        params.extend([like, like, like, like, like, like])
     if doc_type:
         clauses.append("doc_type = ?")
         params.append(doc_type)
     if counterparty:
-        clauses.append("counterparties LIKE ?")
-        params.append(f"%{counterparty}%")
+        clauses.append("(counterparties LIKE ? OR subject LIKE ?)")
+        like = f"%{counterparty}%"
+        params.extend([like, like])
     if date_from:
         clauses.append("doc_date >= ?")
         params.append(date_from)

@@ -36,9 +36,12 @@ from paperless_agent.config import (
 from paperless_agent.ollama_setup import (
     apply_llm_provider,
     enable_ollama,
+    list_running_models,
     ollama_status,
     pull_model,
+    restart_ollama,
     start_ollama,
+    unload_model,
 )
 from paperless_agent.privacy import (
     accept_cloud_disclaimer,
@@ -47,10 +50,12 @@ from paperless_agent.privacy import (
     revoke_cloud_disclaimer,
 )
 from paperless_agent.inbox_worker import (
+    cancel_active_file,
     inbox_poll_loop,
     is_processing,
     process_inbox,
     process_single_file,
+    retry_file,
 )
 from paperless_agent.llm import resolve_model_name
 from paperless_agent.progress import PIPELINE_STEPS, subscribe
@@ -85,6 +90,7 @@ from paperless_agent.updater import (
     get_current_version,
     schedule_restart,
 )
+from paperless_agent.usage import usage_snapshot
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -213,6 +219,7 @@ class ReviewApproveRequest(BaseModel):
     filename: str | None = None
     doc_type: str | None = None
     doc_date: str | None = None
+    subject: str | None = None
     counterparties: str | None = None
     amount: float | None = None
     currency: str | None = None
@@ -248,6 +255,18 @@ class OllamaPullRequest(BaseModel):
     model: str = Field(..., min_length=1)
 
 
+class ProcessCancelRequest(BaseModel):
+    file_id: str = Field(..., min_length=1)
+
+
+class ProcessRetryRequest(BaseModel):
+    path: str = Field(..., min_length=1)
+
+
+class OllamaRestartRequest(BaseModel):
+    force: bool = False
+
+
 class CloudDisclaimerRequest(BaseModel):
     accepted: bool = True
 
@@ -269,6 +288,7 @@ def health() -> dict[str, Any]:
         "embedding_model": config.EMBEDDING_MODEL,
         "auth": codex_auth_status(),
         "cloud_disclaimer": cloud_disclaimer_status(),
+        "usage": usage_snapshot(),
     }
     if config.LLM_PROVIDER == "ollama":
         ollama = ollama_status()
@@ -497,6 +517,68 @@ async def api_process(body: ProcessRequest) -> dict[str, Any]:
 @app.post("/api/process-inbox")
 async def api_process_inbox() -> dict[str, Any]:
     return await process_inbox()
+
+
+@app.post("/api/process/cancel")
+async def api_process_cancel(body: ProcessCancelRequest) -> dict[str, Any]:
+    """Cancel the currently running file in an active ingest job."""
+    result = await cancel_active_file(body.file_id)
+    if result.get("status") != "success":
+        raise HTTPException(status_code=409, detail=result.get("error", "cancel failed"))
+    return result
+
+
+@app.post("/api/process/retry")
+async def api_process_retry(body: ProcessRetryRequest) -> dict[str, Any]:
+    """Retry processing one inbox file (when idle, or cancel-then-retry when active)."""
+    result = await retry_file(body.path)
+    if result.get("status") == "error":
+        raise HTTPException(status_code=409, detail=result.get("error", "retry failed"))
+    return result
+
+
+@app.get("/api/ollama/ps")
+def api_ollama_ps() -> dict[str, Any]:
+    try:
+        return list_running_models()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/api/ollama/unload")
+def api_ollama_unload() -> dict[str, Any]:
+    try:
+        return unload_model()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/api/ollama/restart")
+async def api_ollama_restart(body: OllamaRestartRequest) -> dict[str, Any]:
+    if is_processing() and not body.force:
+        raise HTTPException(
+            status_code=409,
+            detail="documents are being processed — cancel the active file or use force=true",
+        )
+    if is_processing() and body.force:
+        from paperless_agent.job_control import get_active_file_id
+
+        file_id = get_active_file_id()
+        if file_id:
+            await cancel_active_file(file_id)
+        for _ in range(30):
+            if not is_processing():
+                break
+            await asyncio.sleep(0.1)
+        if is_processing():
+            raise HTTPException(
+                status_code=409,
+                detail="could not stop processing — try again in a moment",
+            )
+    try:
+        return restart_ollama()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/api/process/pipeline")

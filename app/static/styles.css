@@ -194,6 +194,20 @@ body {
   text-overflow: ellipsis;
 }
 
+.side-status-metrics {
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  color: var(--soft);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.side-status-metrics[hidden] {
+  display: none;
+}
+
 .status-dot {
   width: 0.5rem;
   height: 0.5rem;
@@ -553,29 +567,111 @@ input:focus, textarea:focus {
   letter-spacing: 0.04em;
 }
 
+.workflow-now {
+  margin: 0.55rem 0 0.65rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--inset));
+  font-family: var(--mono);
+  font-size: var(--type-xs);
+  line-height: 1.35;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 2.85rem;
+}
+
+.workflow-now[data-idle="true"] {
+  visibility: hidden;
+  border-color: transparent;
+  background: transparent;
+}
+
+.workflow-now strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.workflow-now .workflow-now-elapsed {
+  color: var(--accent);
+}
+
+.workflow-now[data-tone="error"] {
+  border-left-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, var(--inset));
+  color: var(--danger);
+}
+
+.workflow-now[data-tone="error"] strong {
+  color: var(--danger);
+}
+
 .pipeline {
   list-style: none;
   margin: 0;
-  padding: 0.1rem 0;
+  padding: 0.1rem 0 0.2rem;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.25rem 0;
-  align-items: stretch;
+  align-items: center;
+  row-gap: 0.65rem;
+  width: 100%;
+  --pipeline-cols: 4;
 }
 
 .pipeline-step {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: 0.15rem;
   min-width: 0;
+  flex: 0 0 calc(100% / var(--pipeline-cols));
+  box-sizing: border-box;
+  padding: 0 0.12rem;
+}
+
+/* Row 2: three steps tucked under the last column (L-turn). */
+.pipeline-step:nth-child(n + 5) {
+  flex-basis: calc(100% / var(--pipeline-cols));
+}
+
+.pipeline-step:nth-child(5) {
+  margin-left: calc(100% * (var(--pipeline-cols) - 3) / var(--pipeline-cols));
+}
+
+.pipeline-step:nth-child(4) {
+  position: relative;
+}
+
+/* Vertical leg of the L between row 1 and row 2. */
+.pipeline-step:nth-child(4)::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: calc(-0.65rem - 1px);
+  width: 1px;
+  height: 0.65rem;
+  background: var(--line-strong);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.pipeline-step:nth-child(4)[data-status="done"]::after,
+.pipeline-step:nth-child(4)[data-status="running"]::after {
+  background: var(--accent);
 }
 
 .pipeline-node {
   display: grid;
   gap: 0.1rem;
   justify-items: center;
-  min-width: 3.4rem;
-  padding: 0.32rem 0.4rem;
+  align-content: center;
+  min-width: 0;
+  flex: 1 1 auto;
+  min-height: 2.35rem;
+  padding: 0.3rem 0.35rem;
   border-radius: var(--radius-sm);
   border: 1px solid var(--line);
   background: var(--inset);
@@ -586,23 +682,39 @@ input:focus, textarea:focus {
   font-size: var(--type-sm);
   font-weight: 600;
   letter-spacing: -0.02em;
+  text-align: center;
+  line-height: 1.15;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pipeline-node .step-state {
   font-family: var(--mono);
-  font-size: 0.6rem;
+  font-size: 0.58rem;
   color: var(--soft);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
+  min-width: 0;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .pipeline-connector {
-  width: 0.9rem;
+  flex: 1 1 0.2rem;
+  min-width: 0.2rem;
   height: 1px;
   align-self: center;
   background: var(--line-strong);
   overflow: hidden;
   position: relative;
+}
+
+/* No horizontal stub after the corner step — the vertical leg takes over. */
+.pipeline-step:nth-child(4) .pipeline-connector {
+  display: none;
 }
 
 .pipeline-connector::after {
@@ -680,6 +792,22 @@ input:focus, textarea:focus {
 
 .job-queue li[data-status="done"] { color: var(--ok); }
 .job-queue li[data-status="error"] { color: var(--danger); }
+
+.job-queue li[data-status="cancelled"] {
+  color: var(--muted);
+  opacity: 0.85;
+}
+
+.job-queue .queue-actions {
+  display: flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.job-queue .queue-actions .btn.compact {
+  padding: 0.2rem 0.45rem;
+  font-size: 0.65rem;
+}
 
 .job-queue .queue-name {
   min-width: 0;
@@ -1661,6 +1789,20 @@ select:focus-visible {
   .auth-bar { align-items: stretch; flex-direction: column; }
   .auth-bar .actions .btn { flex: 1; }
   .cat-row { grid-template-columns: 1fr; }
-  .pipeline { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 0.25rem; }
   .doc { flex-direction: column; }
+}
+
+@media (max-width: 480px) {
+  .pipeline {
+    --pipeline-cols: 2;
+    row-gap: 0.5rem;
+  }
+
+  .pipeline-step:nth-child(5) {
+    margin-left: 0;
+  }
+
+  .pipeline-step:nth-child(4)::after {
+    display: none;
+  }
 }

@@ -22,7 +22,11 @@ from paperless_agent.ollama_setup import (
     resolve_runtime_model,
 )
 from paperless_agent.tools.metadata_db import get_document, mark_indexed
-
+from paperless_agent.usage import (
+    normalize_gemini_usage,
+    normalize_openai_usage,
+    record_usage,
+)
 
 def _chroma_collection():
     ensure_data_dirs()
@@ -45,6 +49,19 @@ def _embed_gemini(texts: list[str]) -> list[list[float]]:
             model=config.EMBEDDING_MODEL,
             contents=text,
         )
+        metadata = getattr(response, "usage_metadata", None)
+        if metadata is not None:
+            prompt, completion, total = normalize_gemini_usage(metadata)
+            record_usage(
+                "gemini",
+                config.EMBEDDING_MODEL,
+                prompt_tokens=prompt,
+                completion_tokens=completion,
+                total_tokens=total,
+                kind="embed",
+            )
+        else:
+            record_usage("gemini", config.EMBEDDING_MODEL, kind="embed")
         embeddings = getattr(response, "embeddings", None)
         if embeddings:
             vectors.append(list(embeddings[0].values))
@@ -71,6 +88,15 @@ def _embed_openai(texts: list[str]) -> list[list[float]]:
     ensure_openai_env()
     client = OpenAI()
     response = client.embeddings.create(model=config.EMBEDDING_MODEL, input=texts)
+    prompt, completion, total = normalize_openai_usage(getattr(response, "usage", None))
+    record_usage(
+        "openai",
+        config.EMBEDDING_MODEL,
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        total_tokens=total,
+        kind="embed",
+    )
     ordered = sorted(response.data, key=lambda item: item.index)
     return [list(item.embedding) for item in ordered]
 
@@ -92,9 +118,12 @@ def _embed_ollama(texts: list[str]) -> list[list[float]]:
         ) from exc
     except httpx.HTTPStatusError as exc:
         raise RuntimeError(format_http_error(exc, model=model, kind="embedding model")) from exc
-    embeddings = resp.json().get("embeddings")
+    payload = resp.json()
+    embeddings = payload.get("embeddings")
     if not embeddings or len(embeddings) != len(texts):
         raise RuntimeError("Unexpected embedding response shape from Ollama")
+    # Ollama /api/embed does not return eval counts; count the request only.
+    record_usage("ollama", model, kind="embed")
     return [list(vec) for vec in embeddings]
 
 

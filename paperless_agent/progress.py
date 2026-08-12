@@ -129,12 +129,37 @@ def new_file_id() -> str:
     return str(uuid.uuid4())
 
 
-PIPELINE_STEPS = (
-    {"id": "read", "label": "Read"},
-    {"id": "ai_ocr", "label": "AI OCR"},
-    {"id": "extract", "label": "Extract"},
-    {"id": "name", "label": "Name"},
-    {"id": "review", "label": "Review"},
-    {"id": "file", "label": "File"},
-    {"id": "index", "label": "Index"},
+PIPELINE_STEP_LABELS: dict[str, str] = {
+    "read": "Open file",
+    "ai_ocr": "Transcribe",
+    "extract": "Find details",
+    "name": "Name file",
+    "review": "Review",
+    "file": "Save",
+    "index": "Make searchable",
+}
+
+PIPELINE_STEPS = tuple(
+    {"id": step_id, "label": label} for step_id, label in PIPELINE_STEP_LABELS.items()
 )
+
+
+def step_label(step_id: str) -> str:
+    """Human-readable label for a pipeline step id."""
+    return PIPELINE_STEP_LABELS.get(step_id, step_id)
+
+
+def llm_busy_detail(action: str, *, model: str | None = None) -> str:
+    """Explain a long-running LLM call so the UI does not look stuck."""
+    from paperless_agent import config
+
+    provider = (config.LLM_PROVIDER or "llm").strip().lower()
+    model_name = (model or config.MODEL_NAME or "").strip()
+    model_bit = f" · {model_name}" if model_name else ""
+    if provider == "ollama":
+        return f"{action} via local Ollama{model_bit} — can take a while"
+    if provider == "openai":
+        return f"{action} via ChatGPT / OpenAI{model_bit}"
+    if provider == "gemini":
+        return f"{action} via Gemini{model_bit}"
+    return f"{action} via {provider}{model_bit}"

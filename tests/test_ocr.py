@@ -7,7 +7,12 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from paperless_agent.ocr import assess_text_quality, recover_document_text
+from paperless_agent import config
+from paperless_agent.ocr import (
+    assess_text_quality,
+    recover_document_text,
+    resolve_ocr_page_limit,
+)
 
 
 def test_assess_text_quality_rejects_short_garbage():
@@ -30,19 +35,21 @@ def test_recover_always_uses_ai_ocr(tmp_path: Path, monkeypatch):
     draw.text((8, 20), "x", fill="black")
     image.save(img_path)
 
-    async def fake_ai(images, *, text_layer_hint: str = ""):
+    async def fake_pages(path, *, page_count, text_layer_hint="", filename=""):
         return (
+            "[Page 1]\n"
             "Invoice FA2022-0001 from BV CRE8 dated 2022-09-05. "
             "Total including VAT is EUR 181.50 for the comanage business package."
         )
 
-    monkeypatch.setattr("paperless_agent.ocr._ai_vision_transcribe", fake_ai)
+    monkeypatch.setattr("paperless_agent.ocr._ai_vision_transcribe_pages", fake_pages)
 
     result = asyncio.run(recover_document_text(img_path))
     assert result["status"] == "success"
     assert result["method"] == "ai_vision"
     assert result["used_ai_ocr"] is True
     assert "181.50" in result["text"]
+    assert "[Page 1]" in result["text"]
 
 
 def test_recover_falls_back_to_text_layer_when_ai_fails(tmp_path: Path, monkeypatch):
@@ -77,17 +84,65 @@ def test_recover_falls_back_to_text_layer_when_ai_fails(tmp_path: Path, monkeypa
     path = tmp_path / "invoice.pdf"
     path.write_bytes(pdf)
 
-    async def failing_ai(images, *, text_layer_hint: str = ""):
+    async def failing_pages(path, *, page_count, text_layer_hint="", filename=""):
         raise RuntimeError("vision unavailable")
 
-    monkeypatch.setattr("paperless_agent.ocr._ai_vision_transcribe", failing_ai)
-    # Avoid needing poppler for this fallback path.
+    monkeypatch.setattr("paperless_agent.ocr._ai_vision_transcribe_pages", failing_pages)
     monkeypatch.setattr(
-        "paperless_agent.ocr.render_document_images",
-        lambda *_args, **_kwargs: [Image.new("RGB", (40, 20), "white")],
+        "paperless_agent.ocr.resolve_ocr_page_limit",
+        lambda *_args, **_kwargs: 1,
     )
 
     result = asyncio.run(recover_document_text(path))
     assert result["method"] in {"pdf_text_layer_fallback", "ai_vision"}
     if result["method"] == "pdf_text_layer_fallback":
         assert "Invoice" in (result.get("text") or "") or result["status"] == "partial"
+
+
+def test_per_page_ocr_concatenates_pages(tmp_path: Path, monkeypatch):
+    img_path = tmp_path / "scan.png"
+    Image.new("RGB", (40, 20), "white").save(img_path)
+    calls: list[int] = []
+
+    async def fake_pages(path, *, page_count, text_layer_hint="", filename=""):
+        parts = []
+        for i in range(1, page_count + 1):
+            calls.append(i)
+            parts.append(f"[Page {i}]\ncontent-{i}")
+        return "\n\n".join(parts)
+
+    monkeypatch.setattr("paperless_agent.ocr._ai_vision_transcribe_pages", fake_pages)
+    monkeypatch.setattr(
+        "paperless_agent.ocr.resolve_ocr_page_limit",
+        lambda *_args, **_kwargs: 3,
+    )
+
+    result = asyncio.run(recover_document_text(img_path))
+    assert result["status"] == "success"
+    assert calls == [1, 2, 3]
+    assert "[Page 1]" in result["text"]
+    assert "[Page 2]" in result["text"]
+    assert "[Page 3]" in result["text"]
+    assert "content-2" in result["text"]
+
+
+def test_resolve_ocr_page_limit_unlimited_clamps_to_safety(tmp_path: Path, monkeypatch):
+    pdf_path = tmp_path / "big.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 stub")
+
+    monkeypatch.setattr("paperless_agent.ocr.pdf_page_count", lambda _p: 150)
+    monkeypatch.setattr(config, "OCR_MAX_PAGES", 0)
+    monkeypatch.setattr(config, "OCR_SAFETY_MAX_PAGES", 128)
+
+    assert resolve_ocr_page_limit(pdf_path) == 128
+
+
+def test_resolve_ocr_page_limit_respects_explicit_cap(tmp_path: Path, monkeypatch):
+    pdf_path = tmp_path / "doc.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 stub")
+
+    monkeypatch.setattr("paperless_agent.ocr.pdf_page_count", lambda _p: 20)
+    monkeypatch.setattr(config, "OCR_MAX_PAGES", 4)
+    monkeypatch.setattr(config, "OCR_SAFETY_MAX_PAGES", 128)
+
+    assert resolve_ocr_page_limit(pdf_path) == 4

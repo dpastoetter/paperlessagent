@@ -6,11 +6,19 @@ from typing import Any
 
 from paperless_agent.ask import ask_archive
 from paperless_agent.ingest import ingest_document
+from paperless_agent.job_control import FileCancelledError
 
 
 async def run_pipeline_on_path(source_path: str) -> dict[str, Any]:
     """Run deterministic ingest on a local file path."""
-    result = await ingest_document(source_path)
+    try:
+        result = await ingest_document(source_path)
+    except FileCancelledError as exc:
+        return {
+            "status": "cancelled",
+            "reply": str(exc),
+            "result": {"status": "cancelled", "error": str(exc)},
+        }
     status = result.get("status")
     if status in {"success", "partial"}:
         return {

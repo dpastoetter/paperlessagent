@@ -26,6 +26,12 @@ from paperless_agent.ollama_setup import (
     format_http_error,
     resolve_runtime_model,
 )
+from paperless_agent.usage import (
+    normalize_gemini_usage,
+    normalize_ollama_usage,
+    normalize_openai_usage,
+    record_usage,
+)
 
 # ChatGPT Codex backend rejects many Platform API model IDs (e.g. gpt-4.1).
 CODEX_DEFAULT_MODEL = os.getenv("PAPERLESS_CODEX_MODEL", "gpt-5.6-luna").strip() or "gpt-5.6-luna"
@@ -36,6 +42,52 @@ _CODEX_MODEL_PREFIXES = ("gpt-5.6", "gpt-5.5", "gpt-5.4", "gpt-5.3-codex", "code
 LLM_TEXT_TIMEOUT = float(os.getenv("PAPERLESS_LLM_TIMEOUT", "120"))
 LLM_VISION_TIMEOUT = float(os.getenv("PAPERLESS_LLM_VISION_TIMEOUT", "300"))
 OLLAMA_CHAT_TIMEOUT = float(os.getenv("PAPERLESS_OLLAMA_TIMEOUT", "300"))
+
+
+async def run_cancellable(
+    coro,
+    *,
+    cancel_event: asyncio.Event | None = None,
+    timeout: float | None = None,
+) -> Any:
+    """Run a coroutine, aborting when cancel_event is set or timeout elapses."""
+    if cancel_event is None:
+        if timeout is not None:
+            return await asyncio.wait_for(coro, timeout=timeout)
+        return await coro
+
+    task = asyncio.create_task(coro)
+    cancel_wait = asyncio.create_task(cancel_event.wait())
+    try:
+        wait_set: set[asyncio.Task[Any]] = {task, cancel_wait}
+        done, _pending = await asyncio.wait(
+            wait_set,
+            return_when=asyncio.FIRST_COMPLETED,
+            timeout=timeout,
+        )
+        if not done:
+            task.cancel()
+            cancel_wait.cancel()
+            raise TimeoutError(f"LLM call timed out after {timeout:.0f}s")
+        if cancel_wait in done:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            from paperless_agent.job_control import FileCancelledError
+
+            raise FileCancelledError("File processing was cancelled")
+        cancel_wait.cancel()
+        try:
+            await cancel_wait
+        except asyncio.CancelledError:
+            pass
+        return await task
+    except asyncio.CancelledError:
+        task.cancel()
+        cancel_wait.cancel()
+        raise
 
 
 class CodexResponsesLlm(OpenAIResponsesLlm):
@@ -136,7 +188,50 @@ def get_model() -> Any:
     return OpenAILlm(model=model_name)
 
 
-async def complete_text(prompt: str, *, instructions: str) -> str:
+def _record_openai_response(provider: str, model_name: str, response: Any) -> None:
+    prompt, completion, total = normalize_openai_usage(getattr(response, "usage", None))
+    record_usage(
+        provider,
+        model_name,
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        total_tokens=total,
+        kind="chat",
+    )
+
+
+def _record_codex_completed(model_name: str, response: Any) -> None:
+    usage = getattr(response, "usage", None) if response is not None else None
+    prompt, completion, total = normalize_openai_usage(usage)
+    record_usage(
+        "openai",
+        model_name,
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        total_tokens=total,
+        kind="chat",
+    )
+
+
+def _record_gemini_response(model_name: str, response: Any) -> None:
+    metadata = getattr(response, "usage_metadata", None)
+    prompt, completion, total = normalize_gemini_usage(metadata)
+    record_usage(
+        "gemini",
+        model_name,
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        total_tokens=total,
+        kind="chat",
+    )
+
+
+async def complete_text(
+    prompt: str,
+    *,
+    instructions: str,
+    cancel_event: asyncio.Event | None = None,
+) -> str:
     """
     Non-ADK text completion for the active provider.
 
@@ -146,6 +241,7 @@ async def complete_text(prompt: str, *, instructions: str) -> str:
     model_name = resolve_model_name()
     if config.LLM_PROVIDER == "ollama":
         coro = _complete_ollama(prompt, instructions=instructions, model_name=model_name)
+        timeout = max(LLM_TEXT_TIMEOUT, OLLAMA_CHAT_TIMEOUT)
     elif config.LLM_PROVIDER == "openai":
         mode = resolve_auth_mode()
         if mode == "chatgpt_oauth":
@@ -154,13 +250,15 @@ async def complete_text(prompt: str, *, instructions: str) -> str:
             coro = _complete_openai_api(
                 prompt, instructions=instructions, model_name=model_name
             )
+        timeout = LLM_TEXT_TIMEOUT
     else:
         coro = _complete_gemini(prompt, instructions=instructions, model_name=model_name)
+        timeout = LLM_TEXT_TIMEOUT
     try:
-        return await asyncio.wait_for(coro, timeout=LLM_TEXT_TIMEOUT)
+        return await run_cancellable(coro, cancel_event=cancel_event, timeout=timeout)
     except TimeoutError as exc:
         raise RuntimeError(
-            f"LLM text completion timed out after {LLM_TEXT_TIMEOUT:.0f}s"
+            f"LLM text completion timed out after {timeout:.0f}s"
         ) from exc
 
 
@@ -187,6 +285,7 @@ async def _complete_codex(prompt: str, *, instructions: str, model_name: str) ->
         stream=True,
     )
     chunks: list[str] = []
+    recorded = False
     async for event in stream:
         etype = getattr(event, "type", None)
         if etype == "response.output_text.delta":
@@ -195,9 +294,13 @@ async def _complete_codex(prompt: str, *, instructions: str, model_name: str) ->
                 chunks.append(delta)
         elif etype == "response.completed":
             response = getattr(event, "response", None)
+            _record_codex_completed(model_name, response)
+            recorded = True
             output_text = getattr(response, "output_text", None) if response else None
             if output_text:
                 return str(output_text).strip()
+    if not recorded:
+        record_usage("openai", model_name, kind="chat")
     return "".join(chunks).strip()
 
 
@@ -223,6 +326,7 @@ async def _complete_ollama(
     instructions: str,
     model_name: str,
     images: list[bytes] | None = None,
+    options: dict[str, Any] | None = None,
 ) -> str:
     """Text or multimodal completion via a local Ollama server."""
     ensure_ollama_ready()
@@ -233,6 +337,9 @@ async def _complete_ollama(
         user_message["images"] = [
             base64.b64encode(raw).decode("ascii") for raw in images
         ]
+    ollama_opts: dict[str, Any] = {"temperature": 0.2}
+    if options:
+        ollama_opts.update(options)
     data = await _ollama_request(
         {
             "model": resolved,
@@ -241,8 +348,17 @@ async def _complete_ollama(
                 user_message,
             ],
             "stream": False,
-            "options": {"temperature": 0.2},
+            "options": ollama_opts,
         }
+    )
+    prompt_tok, completion_tok, total = normalize_ollama_usage(data)
+    record_usage(
+        "ollama",
+        resolved,
+        prompt_tokens=prompt_tok,
+        completion_tokens=completion_tok,
+        total_tokens=total,
+        kind="chat",
     )
     return ((data.get("message") or {}).get("content") or "").strip()
 
@@ -260,6 +376,7 @@ async def _complete_openai_api(prompt: str, *, instructions: str, model_name: st
         ],
         temperature=0.2,
     )
+    _record_openai_response("openai", model_name, response)
     return (response.choices[0].message.content or "").strip()
 
 
@@ -277,6 +394,7 @@ async def _complete_gemini(prompt: str, *, instructions: str, model_name: str) -
             model=model_name,
             contents=f"{instructions}\n\n{prompt}",
         )
+        _record_gemini_response(model_name, response)
         return (getattr(response, "text", None) or "").strip()
 
     # Sync Gemini client would otherwise freeze the whole asyncio event loop.
@@ -289,6 +407,9 @@ async def complete_with_images(
     images: list[bytes],
     instructions: str,
     mime_type: str = "image/png",
+    cancel_event: asyncio.Event | None = None,
+    timeout: float | None = None,
+    ollama_options: dict[str, Any] | None = None,
 ) -> str:
     """
     Multimodal completion with one or more page images (PNG/JPEG bytes).
@@ -302,7 +423,14 @@ async def complete_with_images(
     if config.LLM_PROVIDER == "ollama":
         # Ollama multimodal models take base64 images on the chat message.
         coro = _complete_ollama(
-            prompt, instructions=instructions, model_name=model_name, images=images
+            prompt,
+            instructions=instructions,
+            model_name=model_name,
+            images=images,
+            options=ollama_options,
+        )
+        effective_timeout = (
+            timeout if timeout is not None else max(LLM_VISION_TIMEOUT, OLLAMA_CHAT_TIMEOUT)
         )
     elif config.LLM_PROVIDER == "openai":
         mode = resolve_auth_mode()
@@ -322,6 +450,7 @@ async def complete_with_images(
                 model_name=model_name,
                 mime_type=mime_type,
             )
+        effective_timeout = timeout if timeout is not None else LLM_VISION_TIMEOUT
     else:
         coro = _complete_gemini_images(
             prompt,
@@ -330,11 +459,14 @@ async def complete_with_images(
             model_name=model_name,
             mime_type=mime_type,
         )
+        effective_timeout = timeout if timeout is not None else LLM_VISION_TIMEOUT
     try:
-        return await asyncio.wait_for(coro, timeout=LLM_VISION_TIMEOUT)
+        return await run_cancellable(
+            coro, cancel_event=cancel_event, timeout=effective_timeout
+        )
     except TimeoutError as exc:
         raise RuntimeError(
-            f"LLM vision completion timed out after {LLM_VISION_TIMEOUT:.0f}s"
+            f"LLM vision completion timed out after {effective_timeout:.0f}s"
         ) from exc
 
 
@@ -374,6 +506,7 @@ async def _complete_codex_images(
         stream=True,
     )
     chunks: list[str] = []
+    recorded = False
     async for event in stream:
         etype = getattr(event, "type", None)
         if etype == "response.output_text.delta":
@@ -382,9 +515,13 @@ async def _complete_codex_images(
                 chunks.append(delta)
         elif etype == "response.completed":
             response = getattr(event, "response", None)
+            _record_codex_completed(model_name, response)
+            recorded = True
             output_text = getattr(response, "output_text", None) if response else None
             if output_text:
                 return str(output_text).strip()
+    if not recorded:
+        record_usage("openai", model_name, kind="chat")
     return "".join(chunks).strip()
 
 
@@ -413,6 +550,7 @@ async def _complete_openai_images(
         ],
         temperature=0.1,
     )
+    _record_openai_response("openai", model_name, response)
     return (response.choices[0].message.content or "").strip()
 
 
@@ -441,6 +579,7 @@ async def _complete_gemini_images(
             model=model_name,
             contents=parts,
         )
+        _record_gemini_response(model_name, response)
         return (getattr(response, "text", None) or "").strip()
 
     return await asyncio.to_thread(_call)

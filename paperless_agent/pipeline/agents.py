@@ -10,7 +10,8 @@ from typing import Any
 from google.adk.agents import Agent
 
 from paperless_agent.llm import get_model
-from paperless_agent.progress import emit_step_sync
+from paperless_agent.job_control import raise_if_cancelled
+from paperless_agent.progress import emit_step_sync, llm_busy_detail, step_label
 from paperless_agent.settings import get_category_names
 from paperless_agent.tools.filesystem import move_to_archive, propose_filename, read_document
 from paperless_agent.tools.metadata_db import upsert_metadata
@@ -24,6 +25,7 @@ def file_and_persist(
     filename: str,
     doc_type: str,
     doc_date: str | None = None,
+    subject: str | None = None,
     counterparties: str | None = None,
     amount: float | None = None,
     currency: str | None = None,
@@ -40,12 +42,19 @@ def file_and_persist(
     the archive first, metadata is committed, and only then is the inbox source
     removed. A failure at any point leaves the source untouched in the inbox.
     """
+    raise_if_cancelled()
     source_name = source_path.rsplit("/", 1)[-1]
     year = None
     if doc_date and len(doc_date) >= 4:
         year = doc_date[:4]
 
-    emit_step_sync("file", label="File", status="running", filename=source_name)
+    emit_step_sync(
+        "file",
+        label=step_label("file"),
+        status="running",
+        detail="Copying into the archive…",
+        filename=source_name,
+    )
     moved = move_to_archive(
         source_path=source_path,
         filename=filename,
@@ -56,7 +65,7 @@ def file_and_persist(
     if moved.get("status") != "success":
         emit_step_sync(
             "file",
-            label="File",
+            label=step_label("file"),
             status="error",
             detail=moved.get("error"),
             filename=source_name,
@@ -71,6 +80,7 @@ def file_and_persist(
             path=moved["archive_path"],
             doc_type=doc_type,
             doc_date=doc_date,
+            subject=subject,
             counterparties=counterparties,
             amount=amount,
             currency=currency,
@@ -85,7 +95,7 @@ def file_and_persist(
         Path(moved["archive_path"]).unlink(missing_ok=True)
         emit_step_sync(
             "file",
-            label="File",
+            label=step_label("file"),
             status="error",
             detail=str(exc),
             filename=source_name,
@@ -95,7 +105,7 @@ def file_and_persist(
         Path(moved["archive_path"]).unlink(missing_ok=True)
         emit_step_sync(
             "file",
-            label="File",
+            label=step_label("file"),
             status="error",
             detail=saved.get("error"),
             filename=source_name,
@@ -111,7 +121,7 @@ def file_and_persist(
 
     emit_step_sync(
         "file",
-        label="File",
+        label=step_label("file"),
         status="done",
         detail=moved.get("archive_path"),
         filename=source_name,
@@ -121,7 +131,13 @@ def file_and_persist(
     text_for_index = full_text or summary or ""
     if extracted_json and not text_for_index:
         text_for_index = extracted_json
-    emit_step_sync("index", label="Index", status="running", filename=source_name)
+    emit_step_sync(
+        "index",
+        label=step_label("index"),
+        status="running",
+        detail=llm_busy_detail("Embedding text for Ask search"),
+        filename=source_name,
+    )
     indexed = index_document(
         document_id=document_id,
         text=text_for_index,
@@ -130,10 +146,11 @@ def file_and_persist(
     )
     emit_step_sync(
         "index",
-        label="Index",
+        label=step_label("index"),
         status="done" if indexed.get("status") == "success" else "error",
         detail=(
-            f"{indexed.get('chunk_count')} chunks"
+            f"{indexed.get('chunk_count')} searchable chunk"
+            f"{'' if indexed.get('chunk_count') == 1 else 's'}"
             if indexed.get("status") == "success"
             else indexed.get("error")
         ),
@@ -165,9 +182,10 @@ def build_pipeline_agent() -> Agent:
             "You ingest one scanned document into a personal archive.\n"
             f"Allowed doc_type values: {type_list}.\n"
             "1. Call read_document with the absolute source_path from the user.\n"
-            "2. Decide doc_type, doc_date (ISO), counterparties, amount, currency, "
-            "summary, and full_text from the document content/filename.\n"
-            "3. Call propose_filename with those fields and original_path.\n"
+            "2. Decide doc_type, doc_date (ISO), subject, parties (counterparties), "
+            "reference_ids, amount (only for financial docs), currency, summary, "
+            "and full_text from the document content/filename.\n"
+            "3. Call propose_filename with those fields (including subject) and original_path.\n"
             "4. Call file_and_persist with source_path, the proposed filename, "
             "and the extracted fields (pass extracted_json as a JSON string).\n"
             "5. Confirm document_id, archive_path, and filename.\n"

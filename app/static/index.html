@@ -119,6 +119,7 @@
         <span class="side-status-text">
           <span class="side-status-label">System</span>
           <span id="health">checking…</span>
+          <span id="usage-metrics" class="side-status-metrics" hidden>0 req</span>
         </span>
       </div>
     </aside>
@@ -176,6 +177,9 @@
               </div>
               <p id="workflow-count" class="workflow-count"></p>
             </header>
+            <p id="workflow-now" class="workflow-now" data-idle="true" aria-live="polite">
+              <strong class="workflow-now-step"></strong><span class="workflow-now-detail"></span><span class="workflow-now-elapsed"></span>
+            </p>
             <ol id="pipeline" class="pipeline" aria-label="Ingest pipeline steps"></ol>
             <div class="job-queue-wrap">
               <p class="section-kicker">Queue</p>
@@ -291,6 +295,8 @@
               <button id="ollama-start" type="button" class="btn secondary" disabled>Start Ollama</button>
               <button id="ollama-enable" type="button" class="btn primary">Use Ollama</button>
               <button id="ollama-pull" type="button" class="btn secondary">Pull required models</button>
+              <button id="ollama-unload" type="button" class="btn ghost">Unload model</button>
+              <button id="ollama-restart" type="button" class="btn ghost">Restart Ollama</button>
               <button id="ollama-refresh" type="button" class="btn ghost">Refresh</button>
             </div>
             <p class="fine">

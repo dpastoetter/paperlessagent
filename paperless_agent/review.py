@@ -18,6 +18,7 @@ EDITABLE_FIELDS = (
     "filename",
     "doc_type",
     "doc_date",
+    "subject",
     "counterparties",
     "amount",
     "currency",
@@ -244,6 +245,7 @@ def approve_review(review_id: str, overrides: dict[str, Any] | None = None) -> d
         filename=filename,
         doc_type=doc_type,
         doc_date=proposal.get("doc_date") if isinstance(proposal.get("doc_date"), str) else None,
+        subject=proposal.get("subject") if isinstance(proposal.get("subject"), str) else None,
         counterparties=(
             proposal.get("counterparties")
             if isinstance(proposal.get("counterparties"), str)

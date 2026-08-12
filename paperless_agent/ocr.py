@@ -13,13 +13,17 @@ from typing import Any
 from PIL import Image
 from pypdf import PdfReader
 
-from paperless_agent.progress import emit_step
+from paperless_agent import config
+from paperless_agent.progress import emit_step, llm_busy_detail, step_label
+from paperless_agent.job_control import (
+    FileCancelledError,
+    get_file_cancel_event,
+    raise_if_cancelled,
+)
 from paperless_agent.tools.filesystem import IMAGE_SUFFIXES, PDF_SUFFIXES, SUPPORTED_SUFFIXES
 
 logger = logging.getLogger(__name__)
 
-MAX_OCR_PAGES = 4
-OCR_DPI = 200
 MIN_CHARS = 40
 MIN_WORDS = 8
 MIN_ALNUM_RATIO = 0.45
@@ -83,31 +87,77 @@ def _extract_pdf_text_layer(path: Path) -> tuple[str, int | None]:
     return "\n\n".join(pages).strip(), len(reader.pages)
 
 
-def render_document_images(
+def pdf_page_count(path: Path) -> int:
+    """Return the number of pages in a PDF."""
+    reader = PdfReader(str(path))
+    return len(reader.pages)
+
+
+def resolve_ocr_page_limit(
     path: Path,
     *,
-    max_pages: int = MAX_OCR_PAGES,
-    dpi: int = OCR_DPI,
-) -> list[Image.Image]:
-    """Rasterize a PDF or load an image for vision OCR."""
+    total_pages: int | None = None,
+) -> int:
+    """How many pages to OCR, respecting config caps."""
     suffix = path.suffix.lower()
     if suffix in IMAGE_SUFFIXES:
+        return 1
+    if suffix not in PDF_SUFFIXES:
+        return 0
+
+    pages = total_pages if total_pages is not None else pdf_page_count(path)
+    configured = config.OCR_MAX_PAGES
+    if configured <= 0:
+        effective = pages
+    else:
+        effective = min(configured, pages)
+    return min(effective, config.OCR_SAFETY_MAX_PAGES)
+
+
+def render_document_page(
+    path: Path,
+    page_index: int,
+    *,
+    dpi: int | None = None,
+) -> Image.Image:
+    """Rasterize a single PDF page or load an image file (1-based page index)."""
+    render_dpi = dpi if dpi is not None else config.OCR_DPI
+    suffix = path.suffix.lower()
+    if suffix in IMAGE_SUFFIXES:
+        if page_index != 1:
+            raise ValueError("image files have only one page")
         with Image.open(path) as img:
-            return [img.convert("RGB")]
+            return img.convert("RGB")
 
     if suffix not in PDF_SUFFIXES:
-        return []
+        raise ValueError(f"unsupported file type for OCR: {suffix}")
 
     from pdf2image import convert_from_path
 
     images = convert_from_path(
         str(path),
-        dpi=dpi,
-        first_page=1,
-        last_page=max_pages,
+        dpi=render_dpi,
+        first_page=page_index,
+        last_page=page_index,
         fmt="png",
     )
-    return [img.convert("RGB") if img.mode != "RGB" else img for img in images]
+    if not images:
+        raise RuntimeError(f"failed to render page {page_index}")
+    img = images[0]
+    return img.convert("RGB") if img.mode != "RGB" else img
+
+
+def render_document_images(
+    path: Path,
+    *,
+    max_pages: int | None = None,
+    dpi: int | None = None,
+) -> list[Image.Image]:
+    """Rasterize up to max_pages from a PDF or load an image for vision OCR."""
+    limit = max_pages if max_pages is not None else resolve_ocr_page_limit(path)
+    if limit <= 0:
+        return []
+    return [render_document_page(path, i, dpi=dpi) for i in range(1, limit + 1)]
 
 
 def _image_to_png_bytes(image: Image.Image) -> bytes:
@@ -116,37 +166,59 @@ def _image_to_png_bytes(image: Image.Image) -> bytes:
     return buf.getvalue()
 
 
-async def _ai_vision_transcribe(
-    images: list[Image.Image],
+async def _ai_vision_transcribe_pages(
+    path: Path,
     *,
+    page_count: int,
     text_layer_hint: str = "",
+    filename: str = "",
 ) -> str:
-    """Transcribe page images with the multimodal LLM."""
+    """Transcribe each page with a separate multimodal LLM call."""
     from paperless_agent.llm import complete_with_images
 
-    png_pages = [_image_to_png_bytes(img) for img in images]
     instructions = (
         "You are a careful OCR transcription engine for scanned paper documents. "
-        "Transcribe all readable text from the page images. Preserve reading order, "
+        "Transcribe all readable text from the page image. Preserve reading order, "
         "line breaks, amounts, dates, and IDs. Return plain text only — no markdown, "
         "no commentary."
     )
-    hint = ""
-    if text_layer_hint.strip():
-        hint = (
-            "\n\nEmbedded PDF text (may be incomplete or wrong; prefer the images):\n"
-            f"{text_layer_hint.strip()[:4000]}"
+    ollama_options = {
+        "num_ctx": config.OLLAMA_VISION_NUM_CTX,
+        "num_predict": config.OLLAMA_VISION_NUM_PREDICT,
+    }
+    parts: list[str] = []
+    for page_index in range(1, page_count + 1):
+        raise_if_cancelled()
+        await emit_step(
+            "ai_ocr",
+            label=step_label("ai_ocr"),
+            status="running",
+            detail=llm_busy_detail(f"Reading page {page_index}/{page_count}…"),
+            filename=filename,
         )
-    prompt = (
-        f"Transcribe these {len(png_pages)} document page image(s). "
-        f"Output the full plain text.{hint}"
-    )
-    return await complete_with_images(
-        prompt,
-        images=png_pages,
-        instructions=instructions,
-        mime_type="image/png",
-    )
+        img = render_document_page(path, page_index)
+        png_bytes = _image_to_png_bytes(img)
+        hint = ""
+        if page_index == 1 and text_layer_hint.strip():
+            hint = (
+                "\n\nEmbedded PDF text (may be incomplete or wrong; prefer the image):\n"
+                f"{text_layer_hint.strip()[:4000]}"
+            )
+        prompt = (
+            "Transcribe this document page image. Output plain text only."
+            f"{hint}"
+        )
+        page_text = await complete_with_images(
+            prompt,
+            images=[png_bytes],
+            instructions=instructions,
+            mime_type="image/png",
+            cancel_event=get_file_cancel_event(),
+            timeout=config.OCR_PAGE_TIMEOUT,
+            ollama_options=ollama_options,
+        )
+        parts.append(f"[Page {page_index}]\n{page_text.strip()}")
+    return "\n\n".join(parts)
 
 
 async def recover_document_text(path: str | Path) -> dict[str, Any]:
@@ -173,8 +245,15 @@ async def recover_document_text(path: str | Path) -> dict[str, Any]:
     page_count: int | None = None
     filename = file_path.name
 
+    raise_if_cancelled()
     if suffix in PDF_SUFFIXES:
-        await emit_step("read", label="Read", status="running", filename=filename)
+        await emit_step(
+            "read",
+            label=step_label("read"),
+            status="running",
+            detail="Reading PDF text layer…",
+            filename=filename,
+        )
         try:
             text_layer, page_count = _extract_pdf_text_layer(file_path)
             layer_quality = assess_text_quality(text_layer)
@@ -185,11 +264,12 @@ async def recover_document_text(path: str | Path) -> dict[str, Any]:
                     "chars": layer_quality.chars,
                 }
             )
+            pages_note = f"{page_count} page{'s' if page_count != 1 else ''}" if page_count else "PDF"
             await emit_step(
                 "read",
-                label="Read",
+                label=step_label("read"),
                 status="done",
-                detail=f"text layer · {layer_quality.chars} chars",
+                detail=f"{pages_note} · {layer_quality.chars} chars in text layer",
                 filename=filename,
             )
         except Exception as exc:  # noqa: BLE001
@@ -197,7 +277,7 @@ async def recover_document_text(path: str | Path) -> dict[str, Any]:
             steps.append({"method": "pdf_text_layer", "error": str(exc)})
             await emit_step(
                 "read",
-                label="Read",
+                label=step_label("read"),
                 status="error",
                 detail=str(exc),
                 filename=filename,
@@ -205,9 +285,9 @@ async def recover_document_text(path: str | Path) -> dict[str, Any]:
     else:
         await emit_step(
             "read",
-            label="Read",
+            label=step_label("read"),
             status="skipped",
-            detail="image scan",
+            detail="Image file — no PDF text layer",
             filename=filename,
         )
 
@@ -215,15 +295,28 @@ async def recover_document_text(path: str | Path) -> dict[str, Any]:
     method = "none"
     quality = assess_text_quality("")
 
-    await emit_step("ai_ocr", label="AI OCR", status="running", filename=filename)
+    await emit_step(
+        "ai_ocr",
+        label=step_label("ai_ocr"),
+        status="running",
+        detail="Preparing page images…",
+        filename=filename,
+    )
+    raise_if_cancelled()
     try:
-        images = render_document_images(file_path)
-        if page_count is None:
-            page_count = len(images)
-        if not images:
+        page_limit = resolve_ocr_page_limit(file_path, total_pages=page_count)
+        if page_limit <= 0:
             raise RuntimeError("no page images available for AI OCR")
+        if page_count is None:
+            page_count = page_limit
+        page_n = page_limit
         ai_text = (
-            await _ai_vision_transcribe(images, text_layer_hint=text_layer)
+            await _ai_vision_transcribe_pages(
+                file_path,
+                page_count=page_n,
+                text_layer_hint=text_layer,
+                filename=filename,
+            )
         ).strip()
         ai_quality = assess_text_quality(ai_text)
         steps.append(
@@ -231,7 +324,7 @@ async def recover_document_text(path: str | Path) -> dict[str, Any]:
                 "method": "ai_vision",
                 "quality": ai_quality.__dict__,
                 "chars": ai_quality.chars,
-                "pages_ocrd": len(images),
+                "pages_ocrd": page_n,
             }
         )
         text = ai_text
@@ -239,17 +332,19 @@ async def recover_document_text(path: str | Path) -> dict[str, Any]:
         method = "ai_vision"
         await emit_step(
             "ai_ocr",
-            label="AI OCR",
+            label=step_label("ai_ocr"),
             status="done" if ai_text else "error",
-            detail=f"{ai_quality.chars} chars",
+            detail=f"{page_n} page{'s' if page_n != 1 else ''} · {ai_quality.chars} chars",
             filename=filename,
         )
+    except FileCancelledError:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("AI vision OCR failed for %s: %s", file_path, exc)
         steps.append({"method": "ai_vision", "error": str(exc)})
         await emit_step(
             "ai_ocr",
-            label="AI OCR",
+            label=step_label("ai_ocr"),
             status="error",
             detail=str(exc),
             filename=filename,

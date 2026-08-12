@@ -131,12 +131,16 @@ function reviewCardHtml(item, index) {
         <input type="text" class="rv-doc-date" value="${escapeHtml(p.doc_date || "")}" placeholder="YYYY-MM-DD" />
       </label>
       <label class="field grow">
-        <span>Counterparties</span>
-        <input type="text" class="rv-counterparties" value="${escapeHtml(p.counterparties || "")}" />
+        <span>Subject</span>
+        <input type="text" class="rv-subject" value="${escapeHtml(p.subject || "")}" placeholder="What the document is about" />
+      </label>
+      <label class="field grow">
+        <span>People / organizations</span>
+        <input type="text" class="rv-counterparties" value="${escapeHtml(p.counterparties || "")}" placeholder="Sender, doctor, insurer, employer…" />
       </label>
       <label class="field narrow">
         <span>Amount</span>
-        <input type="number" step="0.01" class="rv-amount" value="${escapeHtml(p.amount ?? "")}" />
+        <input type="number" step="0.01" class="rv-amount" value="${escapeHtml(p.amount ?? "")}" placeholder="Bills only" />
       </label>
       <label class="field narrow">
         <span>Currency</span>
@@ -184,6 +188,7 @@ function collectReviewOverrides(card) {
     filename: card.querySelector(".rv-filename")?.value.trim() || null,
     doc_type: card.querySelector(".rv-doc-type")?.value || null,
     doc_date: card.querySelector(".rv-doc-date")?.value.trim() || null,
+    subject: card.querySelector(".rv-subject")?.value.trim() || null,
     counterparties: card.querySelector(".rv-counterparties")?.value.trim() || null,
     currency: card.querySelector(".rv-currency")?.value.trim() || null,
     summary: card.querySelector(".rv-summary")?.value.trim() || null,
@@ -278,7 +283,8 @@ function renderDocs(payload) {
       const title = d.filename || d.original_name || d.id;
       const summary = d.summary || "No summary";
       const badge = d.doc_type || "other";
-      const meta = [d.doc_date || "undated", d.counterparties || "", d.id]
+      const context = d.subject || d.counterparties || "";
+      const meta = [d.doc_date || "undated", context, d.id]
         .filter(Boolean)
         .join(" · ");
       return `<article class="doc" style="animation-delay:${Math.min(i, 8) * 35}ms">
@@ -383,6 +389,52 @@ document.getElementById("clear-inbox").addEventListener("click", async (e) => {
   }
 });
 
+function setProcessInboxBusy(busy) {
+  const btn = document.getElementById("process-inbox");
+  if (btn) btn.disabled = Boolean(busy);
+}
+
+document.getElementById("job-queue")?.addEventListener("click", async (ev) => {
+  const cancelBtn = ev.target.closest(".queue-cancel");
+  if (cancelBtn) {
+    const fileId = cancelBtn.dataset.fileId;
+    if (!fileId) return;
+    try {
+      await api("/api/process/cancel", {
+        method: "POST",
+        body: JSON.stringify({ file_id: fileId }),
+      });
+      toast("Cancellation requested", "ok");
+    } catch (err) {
+      toast(String(err.message || err), "error");
+    }
+    return;
+  }
+  const retryBtn = ev.target.closest(".queue-retry");
+  if (retryBtn) {
+    const path = retryBtn.dataset.path;
+    if (!path) return;
+    retryBtn.disabled = true;
+    try {
+      const data = await api("/api/process/retry", {
+        method: "POST",
+        body: JSON.stringify({ path }),
+      });
+      if (data.cancelled) {
+        toast(data.message || "Cancelled — retry again when the job finishes", "warn");
+      } else {
+        toast("Retry started", "ok");
+        setProcessInboxBusy(true);
+      }
+      await refreshInbox();
+    } catch (err) {
+      toast(String(err.message || err), "error");
+    } finally {
+      retryBtn.disabled = false;
+    }
+  }
+});
+
 document.getElementById("process-inbox").addEventListener("click", async () => {
   const btn = document.getElementById("process-inbox");
   btn.disabled = true;
@@ -430,7 +482,7 @@ document.getElementById("process-inbox").addEventListener("click", async () => {
     setProcessStatus(msg, "error");
     toast(msg, "error");
   } finally {
-    btn.disabled = false;
+    setProcessInboxBusy(false);
   }
 });
 
@@ -604,6 +656,7 @@ document.getElementById("ask-form").addEventListener("submit", async (e) => {
       return;
     }
     renderAskResult(data);
+    refreshHealth().catch(() => {});
   } catch (err) {
     root.innerHTML = `<div class="ask-reply">${escapeHtml(String(err.message || err))}</div>`;
   }
@@ -612,32 +665,305 @@ document.getElementById("ask-form").addEventListener("submit", async (e) => {
 /* ————— Workflow (SSE) ————— */
 
 const DEFAULT_PIPELINE_STEPS = [
-  { id: "read", label: "Read" },
-  { id: "ai_ocr", label: "AI OCR" },
-  { id: "extract", label: "Extract" },
-  { id: "name", label: "Name" },
+  { id: "read", label: "Open file" },
+  { id: "ai_ocr", label: "Transcribe" },
+  { id: "extract", label: "Find details" },
+  { id: "name", label: "Name file" },
   { id: "review", label: "Review" },
-  { id: "file", label: "File" },
-  { id: "index", label: "Index" },
+  { id: "file", label: "Save" },
+  { id: "index", label: "Make searchable" },
 ];
 
-/** Minimum time each step stays visibly "running" before done/skip/error. */
-const STEP_MIN_VISIBLE_MS = 450;
+/** Minimum time a step stays visibly running before a terminal transition. */
+const STEP_MIN_VISIBLE_MS = 180;
 
 const workflowState = {
   steps: DEFAULT_PIPELINE_STEPS,
   stepStatus: {},
   stepDetail: {},
+  stepStartedAt: {},
+  elapsedTimer: null,
+  stepTimers: {},
+  stepAnimQueue: [],
+  stepAnimRunning: false,
+  stepShownAt: {},
+  pipelineMountKey: "",
+  queueMountKey: "",
   queue: [],
   activeFileId: null,
   activeFilename: null,
   jobTotal: 0,
   jobIndex: 0,
-  stepAnimQueue: [],
-  stepAnimRunning: false,
-  stepShownAt: {},
-  stepTimers: {},
 };
+
+function pipelineStepsKey() {
+  return workflowState.steps.map((step) => step.id).join("|");
+}
+
+function queueFilesKey() {
+  return workflowState.queue.map((item) => item.file_id || "").join("|");
+}
+
+function stepStateLabel(stepId, now = performance.now()) {
+  const status = workflowState.stepStatus[stepId] || "idle";
+  if (status === "running" && workflowState.stepStartedAt[stepId]) {
+    return formatElapsed(now - workflowState.stepStartedAt[stepId]);
+  }
+  if (status === "running") return "…";
+  if (status === "done") return "done";
+  if (status === "error") return "failed";
+  if (status === "skipped") return "skip";
+  if (status === "wait") return "wait";
+  return "wait";
+}
+
+function ensurePipelineMounted() {
+  const root = document.getElementById("pipeline");
+  if (!root) return;
+
+  const key = pipelineStepsKey();
+  if (workflowState.pipelineMountKey === key && root.querySelector(".pipeline-step")) {
+    return;
+  }
+
+  workflowState.pipelineMountKey = key;
+  root.replaceChildren();
+  workflowState.steps.forEach((step, index) => {
+    const li = document.createElement("li");
+    li.className = "pipeline-step";
+    li.dataset.step = step.id;
+    li.dataset.status = workflowState.stepStatus[step.id] || "idle";
+
+    const node = document.createElement("div");
+    node.className = "pipeline-node";
+
+    const labelEl = document.createElement("span");
+    labelEl.className = "step-label";
+    labelEl.textContent = step.label;
+
+    const stateEl = document.createElement("span");
+    stateEl.className = "step-state";
+    stateEl.textContent = stepStateLabel(step.id);
+
+    node.append(labelEl, stateEl);
+    li.appendChild(node);
+
+    if (index < workflowState.steps.length - 1) {
+      const connector = document.createElement("span");
+      connector.className = "pipeline-connector";
+      connector.setAttribute("aria-hidden", "true");
+      li.appendChild(connector);
+    }
+
+    root.appendChild(li);
+  });
+}
+
+function patchPipelineStep(stepEl, step, now) {
+  const status = workflowState.stepStatus[step.id] || "idle";
+  const detail = workflowState.stepDetail[step.id] || "";
+  stepEl.dataset.status = status;
+  stepEl.title = detail || step.label;
+  const stateEl = stepEl.querySelector(".step-state");
+  if (stateEl) stateEl.textContent = stepStateLabel(step.id, now);
+}
+
+function patchPipeline(now = performance.now()) {
+  const root = document.getElementById("pipeline");
+  if (!root) return;
+  ensurePipelineMounted();
+  for (const step of workflowState.steps) {
+    const stepEl = root.querySelector(`[data-step="${step.id}"]`);
+    if (stepEl) patchPipelineStep(stepEl, step, now);
+  }
+}
+
+function ensureWorkflowNowStructure(el) {
+  if (el.querySelector(".workflow-now-step")) return;
+  el.innerHTML =
+    '<strong class="workflow-now-step"></strong><span class="workflow-now-detail"></span><span class="workflow-now-elapsed"></span>';
+}
+
+function renderWorkflowNow() {
+  const el = document.getElementById("workflow-now");
+  if (!el) return;
+  ensureWorkflowNowStructure(el);
+
+  const stepEl = el.querySelector(".workflow-now-step");
+  const detailEl = el.querySelector(".workflow-now-detail");
+  const elapsedEl = el.querySelector(".workflow-now-elapsed");
+  if (!stepEl || !detailEl || !elapsedEl) return;
+
+  const now = performance.now();
+  const runningStep = workflowState.steps.find(
+    (step) => workflowState.stepStatus[step.id] === "running",
+  );
+
+  if (runningStep) {
+    const detail = workflowState.stepDetail[runningStep.id] || "";
+    const started = workflowState.stepStartedAt[runningStep.id];
+    const elapsed = started ? formatElapsed(now - started) : "";
+    el.dataset.idle = "false";
+    delete el.dataset.tone;
+    stepEl.textContent = runningStep.label;
+    detailEl.textContent = detail ? ` · ${detail}` : "";
+    elapsedEl.textContent = elapsed ? ` · ${elapsed}` : "";
+    return;
+  }
+
+  const errorStep = [...workflowState.steps]
+    .reverse()
+    .find((step) => workflowState.stepStatus[step.id] === "error");
+  if (errorStep) {
+    const detail = workflowState.stepDetail[errorStep.id] || "Step failed";
+    el.dataset.idle = "false";
+    el.dataset.tone = "error";
+    stepEl.textContent = errorStep.label;
+    detailEl.textContent = ` · ${detail}`;
+    elapsedEl.textContent = "";
+    return;
+  }
+
+  el.dataset.idle = "true";
+  delete el.dataset.tone;
+  stepEl.textContent = "";
+  detailEl.textContent = "";
+  elapsedEl.textContent = "";
+}
+
+function patchWorkflowNowElapsed() {
+  const el = document.getElementById("workflow-now");
+  if (!el || el.dataset.idle === "true") return;
+
+  const runningStep = workflowState.steps.find(
+    (step) => workflowState.stepStatus[step.id] === "running",
+  );
+  if (!runningStep) return;
+
+  const started = workflowState.stepStartedAt[runningStep.id];
+  const elapsedEl = el.querySelector(".workflow-now-elapsed");
+  if (elapsedEl) {
+    elapsedEl.textContent = started
+      ? ` · ${formatElapsed(performance.now() - started)}`
+      : "";
+  }
+
+  const root = document.getElementById("pipeline");
+  const stepEl = root?.querySelector(`[data-step="${runningStep.id}"]`);
+  const stateEl = stepEl?.querySelector(".step-state");
+  if (stateEl && started) {
+    stateEl.textContent = formatElapsed(performance.now() - started);
+  }
+}
+
+function queueStatusLabel(item) {
+  const status = item.status || "queued";
+  if (status === "running") return item.stepLabel || "Running";
+  if (status === "done") return "Done";
+  if (status === "review") return "Needs review";
+  if (status === "cancelled") return "Cancelled";
+  if (status === "error") return "Failed";
+  return "Queued";
+}
+
+function updateQueueRowActions(li, item) {
+  let actions = li.querySelector(".queue-actions");
+  if (!actions) {
+    actions = document.createElement("span");
+    actions.className = "queue-actions";
+    li.appendChild(actions);
+  }
+  actions.replaceChildren();
+  if (item.status === "running") {
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "btn ghost compact queue-cancel";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.dataset.fileId = item.file_id || "";
+    actions.appendChild(cancelBtn);
+  } else if (item.status === "cancelled" || item.status === "error") {
+    const retryBtn = document.createElement("button");
+    retryBtn.type = "button";
+    retryBtn.className = "btn ghost compact queue-retry";
+    retryBtn.textContent = "Retry";
+    retryBtn.dataset.path = item.path || "";
+    actions.appendChild(retryBtn);
+  }
+}
+
+function mountQueue() {
+  const root = document.getElementById("job-queue");
+  if (!root) return;
+
+  const key = queueFilesKey();
+  workflowState.queueMountKey = key;
+  root.replaceChildren();
+
+  if (!workflowState.queue.length) {
+    const empty = document.createElement("li");
+    empty.className = "queue-empty";
+    empty.textContent = "No active job";
+    root.appendChild(empty);
+    return;
+  }
+
+  for (const item of workflowState.queue) {
+    const li = document.createElement("li");
+    li.dataset.fileId = item.file_id || "";
+    li.dataset.status = item.status || "queued";
+
+    const nameEl = document.createElement("span");
+    nameEl.className = "queue-name";
+    nameEl.textContent = item.filename || "document";
+
+    const statusEl = document.createElement("span");
+    statusEl.className = "queue-status";
+    statusEl.textContent = queueStatusLabel(item);
+
+    li.append(nameEl, statusEl);
+    updateQueueRowActions(li, item);
+    root.appendChild(li);
+  }
+}
+
+function patchQueueRow(fileId) {
+  if (!fileId) return;
+  const root = document.getElementById("job-queue");
+  const item = workflowState.queue.find((q) => q.file_id === fileId);
+  if (!root || !item) return;
+
+  const li = root.querySelector(`[data-file-id="${fileId}"]`);
+  if (!li) return;
+
+  li.dataset.status = item.status || "queued";
+  const statusEl = li.querySelector(".queue-status");
+  if (statusEl) statusEl.textContent = queueStatusLabel(item);
+  updateQueueRowActions(li, item);
+}
+
+function patchQueue() {
+  const root = document.getElementById("job-queue");
+  if (!root) return;
+
+  const key = queueFilesKey();
+  if (key !== workflowState.queueMountKey) {
+    mountQueue();
+    return;
+  }
+
+  if (!workflowState.queue.length) return;
+
+  for (const item of workflowState.queue) {
+    const li = root.querySelector(`[data-file-id="${item.file_id || ""}"]`);
+    if (!li) continue;
+    li.dataset.status = item.status || "queued";
+    const nameEl = li.querySelector(".queue-name");
+    const statusEl = li.querySelector(".queue-status");
+    if (nameEl) nameEl.textContent = item.filename || "document";
+    if (statusEl) statusEl.textContent = queueStatusLabel(item);
+    updateQueueRowActions(li, item);
+  }
+}
 
 function clearStepTimers() {
   for (const timer of Object.values(workflowState.stepTimers)) {
@@ -647,12 +973,14 @@ function clearStepTimers() {
   workflowState.stepAnimQueue = [];
   workflowState.stepAnimRunning = false;
   workflowState.stepShownAt = {};
+  stopElapsedTicker();
 }
 
 function resetStepStatuses(mode = "idle") {
   clearStepTimers();
   workflowState.stepStatus = {};
   workflowState.stepDetail = {};
+  workflowState.stepStartedAt = {};
   for (const step of workflowState.steps) {
     workflowState.stepStatus[step.id] = mode === "queued" ? "wait" : "idle";
   }
@@ -662,10 +990,41 @@ function sleep(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function formatElapsed(ms) {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rem = seconds % 60;
+  return `${minutes}m ${rem.toString().padStart(2, "0")}s`;
+}
+
+function stopElapsedTicker() {
+  if (workflowState.elapsedTimer) {
+    window.clearInterval(workflowState.elapsedTimer);
+    workflowState.elapsedTimer = null;
+  }
+}
+
+function ensureElapsedTicker() {
+  const hasRunning = Object.values(workflowState.stepStatus).includes("running");
+  if (hasRunning && !workflowState.elapsedTimer) {
+    workflowState.elapsedTimer = window.setInterval(() => {
+      patchWorkflowNowElapsed();
+    }, 1000);
+  } else if (!hasRunning) {
+    stopElapsedTicker();
+  }
+}
+
 function applyStepVisual(stepId, status, detail, label) {
   workflowState.stepStatus[stepId] = status;
-  if (detail) workflowState.stepDetail[stepId] = detail;
+  if (detail != null && detail !== "") {
+    workflowState.stepDetail[stepId] = detail;
+  }
   if (status === "running") {
+    if (!workflowState.stepStartedAt[stepId]) {
+      workflowState.stepStartedAt[stepId] = performance.now();
+    }
     workflowState.stepShownAt[stepId] = performance.now();
     const row = workflowState.queue.find(
       (q) => q.file_id === workflowState.activeFileId,
@@ -674,8 +1033,14 @@ function applyStepVisual(stepId, status, detail, label) {
       row.status = "running";
       row.stepLabel = label || stepId;
     }
+  } else {
+    delete workflowState.stepStartedAt[stepId];
   }
-  renderWorkflow();
+  ensureElapsedTicker();
+  renderWorkflowNow();
+  patchPipeline();
+  patchQueueRow(workflowState.activeFileId);
+  updateWorkflowChrome();
 }
 
 async function drainStepAnimQueue() {
@@ -698,12 +1063,11 @@ async function drainStepAnimQueue() {
 
     if (status === "running") {
       applyStepVisual(stepId, "running", detail, label);
-      // Hold long enough to be readable; later terminal update may wait out the rest.
       await sleep(STEP_MIN_VISIBLE_MS);
       continue;
     }
 
-    // Terminal / skipped: keep the step on screen long enough to register.
+    // Terminal / skipped: keep running step visible briefly when switching steps.
     if (current === "running") {
       const shownAt = workflowState.stepShownAt[stepId] || 0;
       const elapsed = performance.now() - shownAt;
@@ -712,87 +1076,52 @@ async function drainStepAnimQueue() {
       }
       applyStepVisual(stepId, status, detail, label);
     } else {
-      // Never saw "running" (or it was instant) — flash active, then settle.
-      applyStepVisual(stepId, "running", detail, label);
-      await sleep(STEP_MIN_VISIBLE_MS);
       applyStepVisual(stepId, status, detail, label);
     }
-    // Brief beat so the settled state is visible before the next step.
-    await sleep(120);
+    await sleep(80);
   }
   workflowState.stepAnimRunning = false;
 }
 
 function enqueueStepUpdate(stepId, status, detail, label, fileId) {
   if (!stepId) return;
+
+  if (
+    fileId &&
+    workflowState.activeFileId &&
+    fileId !== workflowState.activeFileId
+  ) {
+    return;
+  }
+
+  const normalizedStatus = status || "wait";
+  const current = workflowState.stepStatus[stepId];
+
+  // Detail-only running refresh — patch immediately, skip animation queue.
+  if (normalizedStatus === "running" && current === "running") {
+    if (detail != null && detail !== "") {
+      workflowState.stepDetail[stepId] = detail;
+    }
+    const row = workflowState.queue.find(
+      (q) => q.file_id === workflowState.activeFileId,
+    );
+    if (row) {
+      row.stepLabel = label || stepId;
+    }
+    renderWorkflowNow();
+    patchPipeline();
+    patchQueueRow(workflowState.activeFileId);
+    return;
+  }
+
   workflowState.stepAnimQueue.push({
     stepId,
-    status: status || "wait",
+    status: normalizedStatus,
     detail,
     label,
     fileId,
   });
   drainStepAnimQueue();
-}
-
-function renderPipeline() {
-  const root = document.getElementById("pipeline");
-  if (!root) return;
-  root.innerHTML = workflowState.steps
-    .map((step, index) => {
-      const status = workflowState.stepStatus[step.id] || "idle";
-      const detail = workflowState.stepDetail[step.id] || "";
-      const stateLabel =
-        status === "running"
-          ? "run"
-          : status === "done"
-            ? "done"
-            : status === "error"
-              ? "err"
-              : status === "skipped"
-                ? "skip"
-                : "wait";
-      const connector =
-        index < workflowState.steps.length - 1
-          ? '<span class="pipeline-connector" aria-hidden="true"></span>'
-          : "";
-      return `<li class="pipeline-step" data-status="${escapeHtml(status)}" data-step="${escapeHtml(step.id)}" title="${escapeHtml(detail)}">
-        <div class="pipeline-node">
-          <span class="step-label">${escapeHtml(step.label)}</span>
-          <span class="step-state">${escapeHtml(stateLabel)}</span>
-        </div>
-        ${connector}
-      </li>`;
-    })
-    .join("");
-}
-
-function renderQueue() {
-  const root = document.getElementById("job-queue");
-  if (!root) return;
-  if (!workflowState.queue.length) {
-    root.innerHTML = '<li class="queue-empty">No active job</li>';
-    return;
-  }
-  root.innerHTML = workflowState.queue
-    .map((item) => {
-      const status = item.status || "queued";
-      const label =
-        status === "running"
-          ? item.stepLabel || "Running"
-          : status === "done"
-            ? "Done"
-            : status === "review"
-              ? "Needs review"
-              : status === "error"
-                ? "Failed"
-                : "Queued";
-      return `<li data-status="${escapeHtml(status)}" data-file-id="${escapeHtml(item.file_id || "")}">
-        <span class="queue-name">${escapeHtml(item.filename || "document")}</span>
-        <span class="queue-status">${escapeHtml(label)}</span>
-      </li>`;
-    })
-    .join("");
 }
 
 function updateWorkflowChrome() {
@@ -826,8 +1155,10 @@ function updateWorkflowChrome() {
 }
 
 function renderWorkflow() {
-  renderPipeline();
-  renderQueue();
+  ensurePipelineMounted();
+  renderWorkflowNow();
+  patchPipeline();
+  patchQueue();
   updateWorkflowChrome();
 }
 
@@ -858,6 +1189,7 @@ function handleWorkflowEvent(event) {
     }));
     workflowState.activeFileId = null;
     workflowState.activeFilename = null;
+    setProcessInboxBusy(true);
     resetStepStatuses("idle");
     renderWorkflow();
     return;
@@ -911,6 +1243,9 @@ function handleWorkflowEvent(event) {
         } else if (event.status === "review") {
           row.status = "review";
           row.stepLabel = "Needs review";
+        } else if (event.status === "cancelled") {
+          row.status = "cancelled";
+          row.stepLabel = "Cancelled";
         } else {
           row.status = "done";
           row.stepLabel = "Done";
@@ -923,6 +1258,14 @@ function handleWorkflowEvent(event) {
               workflowState.stepStatus[step.id] = "idle";
             }
           }
+        } else if (event.status === "cancelled") {
+          for (const step of workflowState.steps) {
+            const st = workflowState.stepStatus[step.id];
+            if (st === "running" || st === "wait") {
+              workflowState.stepStatus[step.id] = "idle";
+            }
+          }
+          workflowState.activeFileId = null;
         } else {
           for (const step of workflowState.steps) {
             const st = workflowState.stepStatus[step.id];
@@ -945,6 +1288,7 @@ function handleWorkflowEvent(event) {
   }
 
   if (type === "job_finished") {
+    setProcessInboxBusy(false);
     if (event.status === "empty") {
       workflowState.queue = [];
       workflowState.activeFileId = null;
@@ -956,6 +1300,7 @@ function handleWorkflowEvent(event) {
     refreshInbox().catch(() => {});
     refreshDocs().catch(() => {});
     refreshReviews().catch(() => {});
+    refreshHealth().catch(() => {});
   }
 }
 
@@ -1150,6 +1495,59 @@ document.getElementById("ollama-pull")?.addEventListener("click", async () => {
 
 document.getElementById("ollama-refresh")?.addEventListener("click", () => {
   refreshOllamaStatus().catch((err) => toast(String(err.message || err), "error"));
+});
+
+document.getElementById("ollama-unload")?.addEventListener("click", async () => {
+  const btn = document.getElementById("ollama-unload");
+  try {
+    if (btn) btn.disabled = true;
+    const data = await api("/api/ollama/unload", { method: "POST" });
+    toast(
+      data.unloaded?.length
+        ? `Unloaded: ${data.unloaded.join(", ")}`
+        : "Unload requested",
+      "ok",
+    );
+    await refreshOllamaStatus();
+  } catch (err) {
+    toast(String(err.message || err), "error");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
+
+document.getElementById("ollama-restart")?.addEventListener("click", async () => {
+  const btn = document.getElementById("ollama-restart");
+  if (!window.confirm("Restart Ollama? Active processing will be blocked unless you force-cancel first.")) {
+    return;
+  }
+  try {
+    if (btn) btn.disabled = true;
+    const data = await api("/api/ollama/restart", {
+      method: "POST",
+      body: JSON.stringify({ force: false }),
+    });
+    toast(data.method ? `Ollama restarted (${data.method})` : "Ollama restarted", "ok");
+    await refreshOllamaStatus();
+  } catch (err) {
+    const msg = String(err.message || err);
+    if (msg.includes("being processed") && window.confirm("Cancel the active file and restart Ollama?")) {
+      try {
+        const forced = await api("/api/ollama/restart", {
+          method: "POST",
+          body: JSON.stringify({ force: true }),
+        });
+        toast(forced.method ? `Ollama restarted (${forced.method})` : "Ollama restarted", "ok");
+        await refreshOllamaStatus();
+      } catch (forceErr) {
+        toast(String(forceErr.message || forceErr), "error");
+      }
+    } else {
+      toast(msg, "error");
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 });
 
 document.getElementById("auth-toggle").addEventListener("click", () => {
@@ -1457,9 +1855,14 @@ function applyMockScene() {
   // Frozen mid-run workflow so the inbox screenshot shows the pipeline alive.
   const scene = window.PA_MOCK.workflow;
   workflowState.activeFilename = scene.activeFilename;
+  workflowState.activeFileId = scene.activeFileId || "demo-f2";
   workflowState.jobTotal = scene.jobTotal;
   workflowState.stepStatus = { ...scene.stepStatus };
   workflowState.stepDetail = { ...scene.stepDetail };
+  workflowState.stepStartedAt = {};
+  if (scene.stepStatus?.extract === "running") {
+    workflowState.stepStartedAt.extract = performance.now() - 47_000;
+  }
   workflowState.queue = scene.queue.map((q) => ({ ...q }));
   renderWorkflow();
 
@@ -1628,6 +2031,7 @@ refreshHealth()
     return refreshAuth();
   })
   .catch(() => {});
+startHealthPolling();
 refreshInbox().catch(() => {});
 refreshDocs().catch(() => {});
 refreshReviews().catch(() => {});

@@ -8,6 +8,14 @@ import time
 from pathlib import Path
 from typing import Any
 
+from paperless_agent.job_control import (
+    FileCancelledError,
+    bind_file_cancel,
+    clear_file_cancel,
+    get_active_file_id,
+    get_active_file_path,
+    request_cancel_file,
+)
 from paperless_agent.progress import (
     current_file_id,
     current_job_id,
@@ -38,7 +46,162 @@ async def process_single_file(path: str) -> dict[str, Any]:
                 "status": "pending_review",
                 "message": "file is already awaiting review",
             }
-        return await run_pipeline_on_path(path)
+        file_id = new_file_id()
+        file_token = current_file_id.set(file_id)
+        bind_file_cancel(file_id, path)
+        try:
+            return await run_pipeline_on_path(path)
+        except FileCancelledError as exc:
+            return {
+                "status": "cancelled",
+                "message": str(exc),
+                "path": path,
+                "file_id": file_id,
+            }
+        finally:
+            clear_file_cancel()
+            current_file_id.reset(file_token)
+
+
+async def cancel_active_file(file_id: str) -> dict[str, Any]:
+    """Request cancellation of the file currently being processed."""
+    if not is_processing():
+        return {"status": "error", "error": "no ingest job is running"}
+    if not request_cancel_file(file_id):
+        active = get_active_file_id()
+        if active is None:
+            return {"status": "error", "error": "no file is actively processing"}
+        return {
+            "status": "error",
+            "error": f"file_id does not match the active file ({active})",
+        }
+    return {
+        "status": "success",
+        "file_id": file_id,
+        "message": "Cancellation requested",
+    }
+
+
+async def retry_file(path: str) -> dict[str, Any]:
+    """
+    Re-process one inbox file.
+
+    When another file is running, returns 409 unless the path matches the active
+    file (cancel is requested; retry again once the job finishes).
+    """
+    resolved = str(Path(path).expanduser().resolve())
+    if is_processing():
+        active_path = get_active_file_path()
+        if active_path and Path(active_path).resolve() == Path(resolved):
+            file_id = get_active_file_id()
+            if file_id:
+                await cancel_active_file(file_id)
+            return {
+                "status": "success",
+                "cancelled": True,
+                "message": (
+                    "Cancellation requested for the active file. "
+                    "Click Retry again once the job finishes."
+                ),
+            }
+        return {
+            "status": "error",
+            "error": "another file is processing — cancel it first or wait",
+        }
+    return await process_single_file(resolved)
+
+
+async def _process_one_file(
+    *,
+    job_id: str,
+    item: dict[str, Any],
+    queued: dict[str, Any],
+    index: int,
+    total: int,
+) -> dict[str, Any]:
+    file_id = queued["file_id"]
+    filename = queued["filename"]
+    source_path = item["path"]
+    file_token = current_file_id.set(file_id)
+    bind_file_cancel(file_id, source_path)
+    entry: dict[str, Any] = {
+        "path": source_path,
+        "file_id": file_id,
+        "filename": filename,
+    }
+    try:
+        result = await run_pipeline_on_path(source_path)
+        entry["result"] = result
+        if result.get("status") == "cancelled":
+            entry["status"] = "cancelled"
+        elif result.get("status") not in {
+            "success",
+            "partial",
+            "pending_review",
+        }:
+            entry["error"] = result.get("reply") or result.get("result", {}).get(
+                "error", "ingest failed"
+            )
+        if entry.get("status") != "cancelled":
+            if entry.get("error"):
+                file_status = "error"
+            elif result.get("status") == "pending_review":
+                file_status = "review"
+            else:
+                file_status = "done"
+        else:
+            file_status = "cancelled"
+        await publish(
+            {
+                "type": "file_finished",
+                "job_id": job_id,
+                "file_id": file_id,
+                "filename": filename,
+                "path": source_path,
+                "status": file_status,
+                "detail": entry.get("error")
+                or result.get("reply")
+                or result.get("message")
+                or result.get("filename"),
+                "index": index,
+                "total": total,
+            }
+        )
+    except FileCancelledError as exc:
+        entry["status"] = "cancelled"
+        entry["error"] = str(exc)
+        await publish(
+            {
+                "type": "file_finished",
+                "job_id": job_id,
+                "file_id": file_id,
+                "filename": filename,
+                "path": source_path,
+                "status": "cancelled",
+                "detail": str(exc),
+                "index": index,
+                "total": total,
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        entry["error"] = str(exc)
+        await publish(
+            {
+                "type": "file_finished",
+                "job_id": job_id,
+                "file_id": file_id,
+                "filename": filename,
+                "path": source_path,
+                "status": "error",
+                "detail": str(exc),
+                "index": index,
+                "total": total,
+            }
+        )
+    finally:
+        clear_file_cancel()
+        current_file_id.reset(file_token)
+    return entry
 
 
 async def process_inbox(min_age_seconds: float | None = None) -> dict[str, Any]:
@@ -113,7 +276,6 @@ async def process_inbox(min_age_seconds: float | None = None) -> dict[str, Any]:
         try:
             for index, (item, queued) in enumerate(zip(files, queued_files, strict=True)):
                 file_id = queued["file_id"]
-                file_token = current_file_id.set(file_id)
                 filename = queued["filename"]
                 await publish(
                     {
@@ -126,70 +288,19 @@ async def process_inbox(min_age_seconds: float | None = None) -> dict[str, Any]:
                         "total": len(files),
                     }
                 )
-                try:
-                    result = await run_pipeline_on_path(item["path"])
-                    entry: dict[str, Any] = {
-                        "path": item["path"],
-                        "result": result,
-                        "file_id": file_id,
-                        "filename": filename,
-                    }
-                    if result.get("status") not in {
-                        "success",
-                        "partial",
-                        "pending_review",
-                    }:
-                        entry["error"] = result.get("reply") or result.get(
-                            "result", {}
-                        ).get("error", "ingest failed")
-                    results.append(entry)
-                    if entry.get("error"):
-                        file_status = "error"
-                    elif result.get("status") == "pending_review":
-                        file_status = "review"
-                    else:
-                        file_status = "done"
-                    await publish(
-                        {
-                            "type": "file_finished",
-                            "job_id": job_id,
-                            "file_id": file_id,
-                            "filename": filename,
-                            "path": item["path"],
-                            "status": file_status,
-                            "detail": entry.get("error")
-                            or result.get("reply")
-                            or result.get("filename"),
-                            "index": index,
-                            "total": len(files),
-                        }
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    results.append(
-                        {
-                            "path": item["path"],
-                            "error": str(exc),
-                            "file_id": file_id,
-                            "filename": filename,
-                        }
-                    )
-                    await publish(
-                        {
-                            "type": "file_finished",
-                            "job_id": job_id,
-                            "file_id": file_id,
-                            "filename": filename,
-                            "path": item["path"],
-                            "status": "error",
-                            "detail": str(exc),
-                            "index": index,
-                            "total": len(files),
-                        }
-                    )
-                finally:
-                    current_file_id.reset(file_token)
+                entry = await _process_one_file(
+                    job_id=job_id,
+                    item=item,
+                    queued=queued,
+                    index=index,
+                    total=len(files),
+                )
+                results.append(entry)
 
-            errors = sum(1 for r in results if r.get("error"))
+            errors = sum(
+                1 for r in results if r.get("error") and r.get("status") != "cancelled"
+            )
+            cancelled = sum(1 for r in results if r.get("status") == "cancelled")
             status = "success" if errors == 0 else "partial"
             await publish(
                 {
@@ -198,6 +309,7 @@ async def process_inbox(min_age_seconds: float | None = None) -> dict[str, Any]:
                     "status": status,
                     "processed": len(results),
                     "error_count": errors,
+                    "cancelled_count": cancelled,
                     "total": len(files),
                     "source_dir": inbox.get("source_dir"),
                 }
@@ -206,6 +318,7 @@ async def process_inbox(min_age_seconds: float | None = None) -> dict[str, Any]:
                 "status": status,
                 "processed": len(results),
                 "error_count": errors,
+                "cancelled_count": cancelled,
                 "source_dir": inbox.get("source_dir"),
                 "batch": get_batch_settings(),
                 "results": results,
