@@ -69,12 +69,11 @@ install_from_release() {
   local api="https://api.github.com/repos/${REPO}/releases/latest"
   local tmp
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/paperless-install.XXXXXX")"
-  # shellcheck disable=SC2064
-  trap 'rm -rf "$tmp"' RETURN
 
   bold "Fetching latest GitHub release"
   if ! curl -fsSL -H "Accept: application/vnd.github+json" -H "User-Agent: PaperlessAgent-installer" \
       "$api" >"$tmp/release.json"; then
+    rm -rf "$tmp"
     die "Could not fetch $api — check network or set PAPERLESS_INSTALL_SOURCE=git"
   fi
 
@@ -97,25 +96,23 @@ for asset in assets:
         archive = (name, url, (asset.get("digest") or ""))
 if archive is None:
     raise SystemExit("latest release has no paperlessagent-*.tar.gz asset")
-(out / "meta.env").write_text(
-    "\n".join(
-        [
-            f"TAG={release.get('tag_name') or ''}",
-            f"ARCHIVE_NAME={archive[0]}",
-            f"ARCHIVE_URL={archive[1]}",
-            f"ARCHIVE_DIGEST={archive[2]}",
-            f"SUMS_NAME={sums[0] if sums else ''}",
-            f"SUMS_URL={sums[1] if sums else ''}",
-        ]
-    )
-    + "\n",
-    encoding="utf-8",
-)
-print(release.get("tag_name") or "unknown")
+meta = {
+    "TAG": release.get("tag_name") or "",
+    "ARCHIVE_NAME": archive[0],
+    "ARCHIVE_URL": archive[1],
+    "ARCHIVE_DIGEST": archive[2],
+    "SUMS_NAME": sums[0] if sums else "",
+    "SUMS_URL": sums[1] if sums else "",
+}
+(out / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+print(meta["TAG"])
 PY
 
-  # shellcheck disable=SC1091
-  source "$tmp/meta.env"
+  TAG="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8"))["TAG"])' "$tmp/meta.json")"
+  ARCHIVE_NAME="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8"))["ARCHIVE_NAME"])' "$tmp/meta.json")"
+  ARCHIVE_URL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8"))["ARCHIVE_URL"])' "$tmp/meta.json")"
+  ARCHIVE_DIGEST="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8"))["ARCHIVE_DIGEST"])' "$tmp/meta.json")"
+  SUMS_URL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8"))["SUMS_URL"])' "$tmp/meta.json")"
   ok "release $TAG ($ARCHIVE_NAME)"
 
   curl -fsSL -H "User-Agent: PaperlessAgent-installer" -o "$tmp/$ARCHIVE_NAME" "$ARCHIVE_URL"
@@ -215,6 +212,7 @@ PY
   else
     ok "installed $TAG"
   fi
+  rm -rf "$tmp"
 }
 
 install_from_git() {
