@@ -139,14 +139,34 @@ PIPELINE_STEP_LABELS: dict[str, str] = {
     "index": "Make searchable",
 }
 
+PIPELINE_STEP_DESCRIPTIONS: dict[str, str] = {
+    "read": "Load the scan and read any embedded PDF text layer.",
+    "ai_ocr": "Use AI vision to read each page image and recover the text.",
+    "extract": "Pull out dates, parties, amounts, and other metadata with the LLM.",
+    "name": "Propose a clear filename from the extracted details.",
+    "review": "Pause for your approval before anything is written to disk.",
+    "file": "Move the document into the archive folder for its category.",
+    "index": "Chunk the text and store embeddings so Ask can search it.",
+}
+
 PIPELINE_STEPS = tuple(
-    {"id": step_id, "label": label} for step_id, label in PIPELINE_STEP_LABELS.items()
+    {
+        "id": step_id,
+        "label": PIPELINE_STEP_LABELS[step_id],
+        "description": PIPELINE_STEP_DESCRIPTIONS[step_id],
+    }
+    for step_id in PIPELINE_STEP_LABELS
 )
 
 
 def step_label(step_id: str) -> str:
     """Human-readable label for a pipeline step id."""
     return PIPELINE_STEP_LABELS.get(step_id, step_id)
+
+
+def step_description(step_id: str) -> str:
+    """Short hover/help text explaining what a pipeline step does."""
+    return PIPELINE_STEP_DESCRIPTIONS.get(step_id, step_label(step_id))
 
 
 def llm_busy_detail(action: str, *, model: str | None = None) -> str:

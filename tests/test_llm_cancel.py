@@ -41,6 +41,24 @@ def test_run_cancellable_raises_when_event_set():
     asyncio.run(exercise())
 
 
+def test_ollama_request_timeout_has_clear_message(monkeypatch):
+    import httpx
+
+    monkeypatch.setattr("paperless_agent.llm.config.OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+
+    async def slow_post(*_args, **_kwargs):
+        await asyncio.sleep(0.01)
+        raise httpx.ReadTimeout("")
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", slow_post)
+
+    async def exercise():
+        with pytest.raises(RuntimeError, match="timed out after 42s"):
+            await _ollama_request({"model": "gemma3", "messages": []}, timeout=42)
+
+    asyncio.run(exercise())
+
+
 def test_ollama_request_aborts_when_cancel_event_set(monkeypatch):
     import httpx
 

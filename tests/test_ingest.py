@@ -80,6 +80,24 @@ def test_normalize_keeps_amount_for_invoice():
     assert out["currency"] == "EUR"
 
 
+def test_normalize_defaults_doc_type_to_other():
+    raw = {
+        "subject": "Unknown scan",
+        "summary": "Could not classify.",
+    }
+    out = normalize_extracted_fields(raw)
+    assert out["doc_type"] == "other"
+
+
+def test_normalize_accepts_document_type_alias():
+    raw = {
+        "document_type": "Medical",
+        "parties": "Dr. Smith",
+    }
+    out = normalize_extracted_fields(raw)
+    assert out["doc_type"] == "medical"
+
+
 def test_text_for_extract_prompt_uses_head_and_tail():
     from paperless_agent.ingest import _text_for_extract_prompt
 

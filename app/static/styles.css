@@ -676,6 +676,32 @@ input:focus, textarea:focus {
   border: 1px solid var(--line);
   background: var(--inset);
   transition: border-color 0.2s var(--ease), background 0.2s var(--ease), box-shadow 0.2s var(--ease);
+  position: relative;
+  cursor: help;
+}
+
+.pipeline-node[data-tip]:hover::after,
+.pipeline-node[data-tip]:focus-visible::after {
+  content: attr(data-tip);
+  position: absolute;
+  z-index: 30;
+  left: 50%;
+  bottom: calc(100% + 0.45rem);
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 13.5rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 0.68rem;
+  font-weight: 400;
+  line-height: 1.35;
+  white-space: normal;
+  text-align: center;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
 }
 
 .pipeline-node .step-label {

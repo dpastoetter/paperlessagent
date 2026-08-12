@@ -48,7 +48,7 @@ def ollama_provider(monkeypatch):
     )
     captured: list[dict] = []
 
-    async def fake_request(payload, *, cancel_event=None):
+    async def fake_request(payload, *, cancel_event=None, timeout=None):
         captured.append(payload)
         return {"message": {"role": "assistant", "content": "  transcribed text  "}}
 

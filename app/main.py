@@ -169,7 +169,10 @@ async def csrf_guard(request: Request, call_next):
                 )
             },
         )
-    return await call_next(request)
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return response
 
 
 class AskRequest(BaseModel):

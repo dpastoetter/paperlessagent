@@ -1,3 +1,53 @@
+function formatApiError(data, fallback = "Request failed") {
+  const detail = data?.detail ?? data?.error;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((item) => {
+        if (typeof item === "string") return item;
+        if (item && typeof item.msg === "string") return item.msg;
+        return null;
+      })
+      .filter(Boolean);
+    if (parts.length) return parts.join("; ");
+  }
+  if (detail && typeof detail === "object") {
+    if (typeof detail.message === "string" && detail.message.trim()) return detail.message;
+    if (typeof detail.error === "string" && detail.error.trim()) return detail.error;
+    if (typeof detail.msg === "string" && detail.msg.trim()) return detail.msg;
+  }
+  return fallback;
+}
+
+function errorMessage(err, fallback = "Something went wrong") {
+  if (err == null) return fallback;
+  if (typeof err === "string") return err.trim() || fallback;
+  if (typeof err.message === "string") {
+    const msg = err.message.trim();
+    if (msg && msg !== "[object Object]") return msg;
+  }
+  if (typeof err.detail !== "undefined") {
+    return formatApiError({ detail: err.detail }, fallback);
+  }
+  if (typeof err.error !== "undefined") {
+    return formatApiError({ error: err.error }, fallback);
+  }
+  try {
+    const encoded = JSON.stringify(err);
+    if (encoded && encoded !== "{}" && encoded !== "[]") return encoded;
+  } catch (_err) {
+    // ignore
+  }
+  return fallback;
+}
+
+function displayText(value, fallback = "") {
+  if (value == null || value === "") return fallback;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return errorMessage(value, fallback);
+}
+
 async function api(path, options = {}) {
   // Mockup mode (Settings → Appearance): serve canned demo data, block writes.
   if (window.PA_MOCK?.enabled) {
@@ -7,10 +57,27 @@ async function api(path, options = {}) {
   // Custom header required by the server on mutating routes — blocks CSRF
   // from cross-site form posts (browsers cannot attach it without CORS).
   headers.set("X-Requested-With", "PaperlessAgent");
-  const res = await fetch(path, { ...options, headers });
+  let body = options.body;
+  if (
+    body != null &&
+    typeof body === "object" &&
+    !(body instanceof FormData) &&
+    !(body instanceof URLSearchParams) &&
+    !(body instanceof Blob) &&
+    !(body instanceof ArrayBuffer)
+  ) {
+    body = JSON.stringify(body);
+    headers.set("Content-Type", "application/json");
+  } else if (typeof body === "string" && body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const res = await fetch(path, { ...options, headers, body });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data.detail || data.error || res.statusText);
+    throw new Error(formatApiError(data, res.statusText || "Request failed"));
+  }
+  if (data && data.status === "error") {
+    throw new Error(formatApiError(data, "Request failed"));
   }
   return data;
 }
@@ -109,13 +176,14 @@ function toast(message, tone = "info", timeout = 4200) {
   const el = document.createElement("div");
   el.className = "toast";
   el.dataset.tone = tone;
+  const text = displayText(message, "Something went wrong");
   const icon =
     tone === "error" || tone === "warn"
       ? "i-alert"
       : tone === "ok"
         ? "i-check"
         : "i-file";
-  el.innerHTML = `<svg class="icon" aria-hidden="true"><use href="#${icon}" /></svg><span>${escapeHtml(message)}</span>`;
+  el.innerHTML = `<svg class="icon" aria-hidden="true"><use href="#${icon}" /></svg><span>${escapeHtml(text)}</span>`;
   stack.appendChild(el);
   window.setTimeout(() => {
     el.dataset.leaving = "true";

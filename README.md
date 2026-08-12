@@ -8,10 +8,10 @@ Built with [Google ADK](https://adk.dev/) (Python) + FastAPI. Works with **OpenA
 
 ## Features
 
-- **Ingest pipeline**: Read → AI OCR → Extract → Name → Review → File → Index, with a live workflow strip (Server-Sent Events) while processing runs
-- **Per-file cancel & retry**: stop a stuck or slow file mid-pipeline; retry failed or cancelled items from the inbox queue
+- **Ingest pipeline**: Open file → Transcribe → Find details → Name file → Review → Save → Make searchable, with a live workflow strip (Server-Sent Events) and hover descriptions on each step
+- **Per-file cancel & retry**: stop a stuck or slow file mid-pipeline; retry failed or cancelled items from the inbox queue (readable error toasts for API failures)
 - **Human-in-the-loop review**: every proposed filing waits in a review queue where you can correct filename, category, date, parties, reference IDs, amount (financial docs only), and summary before approving — nothing touches your filesystem until you say so (optional; can be switched to fully automatic)
-- **Smart metadata extraction**: category-aware fields — `subject`, `parties`, and `reference_ids` for all document types; amount/currency only for invoices, receipts, bank/tax/utility/insurance documents
+- **Smart metadata extraction**: category-aware fields — `subject`, `parties`, and `reference_ids` for all document types; amount/currency only for invoices, receipts, bank/tax/utility/insurance documents. Missing `doc_type` defaults to `other`; common aliases (`document_type`, `category`) are accepted
 - **Duplicate detection**: SHA-256 file checksums, normalized content hashes, and text-similarity matching flag re-scans and near-duplicates before they are filed
 - **Ask your archive**: RAG-backed natural-language questions with source citations
 - **Local storage**: configurable inbox and per-category archive folders, `data/paperless.db` (SQLite), `data/chroma/` (vectors)
@@ -137,6 +137,8 @@ PAPERLESS_EMBEDDING_MODEL=text-embedding-3-small
 
 ChatGPT OAuth only supports Codex models (e.g. `gpt-5.6-luna` / `terra` / `sol`). Platform IDs like `gpt-4.1` are rejected — the app auto-falls back to `gpt-5.6-luna` in that case. ChatGPT OAuth uses a local embedding fallback for RAG; for higher-quality embeddings, save an API key.
 
+**Find details (metadata extract)** uses the Codex Responses streaming API. The pipeline asks for JSON only and parses fenced or partially wrapped replies; empty model output is reported distinctly from invalid JSON. Platform API-key mode can additionally request JSON object mode on chat completions.
+
 ### Gemini (alternative)
 
 ```bash
@@ -194,7 +196,8 @@ uvicorn app.main:app --host 127.0.0.1 --port 8080
 | `.venv/bin/activate: No such file or directory` | Re-run the installer. On Debian/Ubuntu also install `python3-venv`, then remove a broken leftover with `rm -rf ~/paperlessagent/.venv` and install again |
 | `ModuleNotFoundError: No module named 'fastapi'` | Same — dependencies were never installed into `.venv`, or the venv was not activated |
 | Port already in use | Stop the other instance: `pkill -f "uvicorn app.main:app"`, or pick another port with `--port 8081` and `PAPERLESS_PORT=8081` |
-| Ollama OCR times out on CPU | Raise `PAPERLESS_OLLAMA_OCR_PAGE_TIMEOUT` (default 600s); see [OCR tuning](#ocr-and-long-documents) |
+| Ollama OCR times out on CPU | Raise `PAPERLESS_OLLAMA_OCR_PAGE_TIMEOUT` (default 900s) or lower `PAPERLESS_OLLAMA_OCR_MAX_IMAGE_PX` (default 1024); see [OCR tuning](#ocr-and-long-documents) |
+| Find details fails with “invalid JSON” | Usually empty/malformed model output — retry the file; with ChatGPT OAuth confirm a Codex model is selected and you are signed in |
 
 Uvicorn binds to `127.0.0.1` by default — keep it that way. The API has no login; mutating routes are protected against cross-site form posts by a custom header the UI always sends, but binding with `--host 0.0.0.0` would still expose your documents and settings to anyone on the network.
 
@@ -235,7 +238,7 @@ Filing rules (source folder, category → folder mapping, poll interval, review 
 | **Unload model** | Settings → Local Ollama | Drops loaded Ollama weights to free memory |
 | **Restart Ollama** | Settings → Local Ollama | Restarts the daemon; blocked while processing unless the active file is cancelled |
 
-Progress updates stream over `GET /api/process/events` (SSE). The workflow UI mounts once and patches in place to avoid flicker during rapid updates.
+Progress updates stream over `GET /api/process/events` (SSE). The workflow UI mounts once and patches in place to avoid flicker during rapid updates. Hover a pipeline step for a short description of what that stage does (and live detail while it is running).
 
 ### Metadata & review fields
 
@@ -243,7 +246,7 @@ During **Extract**, the LLM returns JSON with:
 
 | Field | Description |
 | --- | --- |
-| `doc_type` | One of your configured categories (built-in types include invoice, receipt, bank, tax, utility, insurance, letter, contract, certificate, employment, medical, id, education, travel, other) |
+| `doc_type` | One of your configured categories (built-in types include invoice, receipt, bank, tax, utility, insurance, letter, contract, certificate, employment, medical, id, education, travel, other). Defaults to `other` when omitted; aliases like `document_type` / `category` are normalized |
 | `doc_date` | Document date when present |
 | `subject` | Short topic or title |
 | `parties` | Sender, recipient, issuer, etc. |
@@ -257,7 +260,7 @@ The review form shows amount/currency only when the selected category is financi
 
 Text recovery on ingest always uses **AI vision OCR** on rendered page images; a PDF text layer, when present, serves as a hint and fallback.
 
-By default, **all PDF pages** are transcribed (one vision call per page, up to 128 pages). Per-page OCR is slower but avoids truncated output on multi-page scans. Page images are downscaled (default max edge 1536px) and sent as JPEG to reduce payload size for local Ollama.
+By default, **all PDF pages** are transcribed (one vision call per page, up to 128 pages). Per-page OCR is slower but avoids truncated output on multi-page scans. Page images are downscaled before vision OCR. For **local Ollama**, images use a tighter default max edge (`1024px`) and JPEG quality ~80 so dense scans stay tractable on CPU; cloud providers keep the larger `1536px` default.
 
 Tune via `.env` (see `.env.example` for the full list):
 
@@ -267,10 +270,11 @@ Tune via `.env` (see `.env.example` for the full list):
 | `PAPERLESS_OCR_SAFETY_MAX_PAGES` | `128` | Hard ceiling on page count |
 | `PAPERLESS_OCR_DPI` | `200` | PDF render resolution |
 | `PAPERLESS_OCR_PAGE_TIMEOUT` | `180` | Seconds per page (cloud providers) |
-| `PAPERLESS_OLLAMA_OCR_PAGE_TIMEOUT` | `600` | Seconds per page (local Ollama — CPU can be slow) |
-| `PAPERLESS_OCR_MAX_IMAGE_PX` | `1536` | Max width/height before vision OCR |
+| `PAPERLESS_OLLAMA_OCR_PAGE_TIMEOUT` | `900` | Seconds per page (local Ollama — CPU can be slow) |
+| `PAPERLESS_OCR_MAX_IMAGE_PX` | `1536` | Max width/height before vision OCR (cloud) |
+| `PAPERLESS_OLLAMA_OCR_MAX_IMAGE_PX` | `1024` | Max width/height for local Ollama OCR |
 | `PAPERLESS_OLLAMA_OCR_NUM_CTX` | `4096` | Ollama context for OCR calls |
-| `PAPERLESS_OLLAMA_OCR_NUM_PREDICT` | `2048` | Max tokens per OCR page (Ollama) |
+| `PAPERLESS_OLLAMA_OCR_NUM_PREDICT` | `4096` | Max tokens per OCR page (Ollama) |
 | `PAPERLESS_OLLAMA_VISION_NUM_CTX` | `8192` | Ollama context for other vision calls |
 | `PAPERLESS_OLLAMA_VISION_NUM_PREDICT` | `8192` | Max tokens for other vision calls |
 | `PAPERLESS_EXTRACT_MAX_CHARS` | `48000` | OCR text sampled for metadata extraction (head + tail when longer) |
@@ -344,7 +348,8 @@ python scripts/watch_inbox.py --process-existing
 paperless_agent/       # ingest pipeline, review queue, dedup, updater, auth/llm helpers
   ingest.py            #   OCR → extract → name → review gate → file + index
   ocr.py               #   per-page vision OCR, PDF render, image prep
-  llm.py               #   OpenAI / Gemini / Ollama completions + cooperative cancel
+  llm.py               #   OpenAI / Codex OAuth / Gemini / Ollama + cooperative cancel
+  progress.py          #   SSE progress + pipeline step labels/descriptions
   job_control.py       #   per-file cancel events for ingest
   review.py            #   human-in-the-loop queue (approve / reject)
   dedup.py             #   checksum + content-hash + similarity duplicate detection

@@ -201,8 +201,11 @@ async def _process_one_file(
             "partial",
             "pending_review",
         }:
-            entry["error"] = result.get("reply") or result.get("result", {}).get(
+            raw_error = result.get("reply") or result.get("result", {}).get(
                 "error", "ingest failed"
+            )
+            entry["error"] = (
+                raw_error if isinstance(raw_error, str) else str(raw_error)
             )
         if entry.get("status") != "cancelled":
             if entry.get("error"):

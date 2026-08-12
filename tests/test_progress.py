@@ -27,6 +27,7 @@ def test_step_labels_are_human_readable():
         "file",
         "index",
     ]
+    assert all(s.get("description") for s in PIPELINE_STEPS)
     detail = llm_busy_detail("Reading 2 page images")
     assert "Reading 2 page images" in detail
 

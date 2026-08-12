@@ -447,7 +447,7 @@ document.getElementById("job-queue")?.addEventListener("click", async (ev) => {
     try {
       await api("/api/process/cancel", {
         method: "POST",
-        body: JSON.stringify({ file_id: fileId }),
+        body: { file_id: fileId },
       });
       toast("Cancellation requested", "ok");
       const row = workflowState.queue.find((q) => q.file_id === fileId);
@@ -458,7 +458,7 @@ document.getElementById("job-queue")?.addEventListener("click", async (ev) => {
     } catch (err) {
       cancelBtn.disabled = false;
       cancelBtn.textContent = prevLabel;
-      toast(String(err.message || err), "error");
+      toast(errorMessage(err, "Could not cancel this file"), "error");
     }
     return;
   }
@@ -470,7 +470,7 @@ document.getElementById("job-queue")?.addEventListener("click", async (ev) => {
     try {
       const data = await api("/api/process/retry", {
         method: "POST",
-        body: JSON.stringify({ path }),
+        body: { path },
       });
       if (data.cancelled) {
         toast(data.message || "Cancelled — retry again when the job finishes", "warn");
@@ -717,13 +717,41 @@ document.getElementById("ask-form").addEventListener("submit", async (e) => {
 /* ————— Workflow (SSE) ————— */
 
 const DEFAULT_PIPELINE_STEPS = [
-  { id: "read", label: "Open file" },
-  { id: "ai_ocr", label: "Transcribe" },
-  { id: "extract", label: "Find details" },
-  { id: "name", label: "Name file" },
-  { id: "review", label: "Review" },
-  { id: "file", label: "Save" },
-  { id: "index", label: "Make searchable" },
+  {
+    id: "read",
+    label: "Open file",
+    description: "Load the scan and read any embedded PDF text layer.",
+  },
+  {
+    id: "ai_ocr",
+    label: "Transcribe",
+    description: "Use AI vision to read each page image and recover the text.",
+  },
+  {
+    id: "extract",
+    label: "Find details",
+    description: "Pull out dates, parties, amounts, and other metadata with the LLM.",
+  },
+  {
+    id: "name",
+    label: "Name file",
+    description: "Propose a clear filename from the extracted details.",
+  },
+  {
+    id: "review",
+    label: "Review",
+    description: "Pause for your approval before anything is written to disk.",
+  },
+  {
+    id: "file",
+    label: "Save",
+    description: "Move the document into the archive folder for its category.",
+  },
+  {
+    id: "index",
+    label: "Make searchable",
+    description: "Chunk the text and store embeddings so Ask can search it.",
+  },
 ];
 
 /** Minimum time a step stays visibly running before a terminal transition. */
@@ -769,6 +797,14 @@ function stepStateLabel(stepId, now = performance.now()) {
   return "wait";
 }
 
+function stepHoverText(step, detail = "", status = "idle") {
+  const desc = step.description || step.label;
+  if (status === "running" && detail) {
+    return `${desc} — ${detail}`;
+  }
+  return desc;
+}
+
 function ensurePipelineMounted() {
   const root = document.getElementById("pipeline");
   if (!root) return;
@@ -788,6 +824,7 @@ function ensurePipelineMounted() {
 
     const node = document.createElement("div");
     node.className = "pipeline-node";
+    node.dataset.tip = stepHoverText(step);
 
     const labelEl = document.createElement("span");
     labelEl.className = "step-label";
@@ -815,7 +852,11 @@ function patchPipelineStep(stepEl, step, now) {
   const status = workflowState.stepStatus[step.id] || "idle";
   const detail = workflowState.stepDetail[step.id] || "";
   stepEl.dataset.status = status;
-  stepEl.title = detail || step.label;
+  const tip = stepHoverText(step, detail, status);
+  const nodeEl = stepEl.querySelector(".pipeline-node");
+  if (nodeEl) {
+    nodeEl.dataset.tip = tip;
+  }
   const stateEl = stepEl.querySelector(".step-state");
   if (stateEl) stateEl.textContent = stepStateLabel(step.id, now);
 }
@@ -852,7 +893,7 @@ function renderWorkflowNow() {
   );
 
   if (runningStep) {
-    const detail = workflowState.stepDetail[runningStep.id] || "";
+    const detail = displayText(workflowState.stepDetail[runningStep.id], "");
     const started = workflowState.stepStartedAt[runningStep.id];
     const elapsed = started ? formatElapsed(now - started) : "";
     el.dataset.idle = "false";
@@ -867,7 +908,7 @@ function renderWorkflowNow() {
     .reverse()
     .find((step) => workflowState.stepStatus[step.id] === "error");
   if (errorStep) {
-    const detail = workflowState.stepDetail[errorStep.id] || "Step failed";
+    const detail = displayText(workflowState.stepDetail[errorStep.id], "Step failed");
     el.dataset.idle = "false";
     el.dataset.tone = "error";
     stepEl.textContent = errorStep.label;

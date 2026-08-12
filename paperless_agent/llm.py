@@ -243,6 +243,7 @@ async def complete_text(
     *,
     instructions: str,
     cancel_event: asyncio.Event | None = None,
+    json_mode: bool = False,
 ) -> str:
     """
     Non-ADK text completion for the active provider.
@@ -252,20 +253,28 @@ async def complete_text(
     """
     model_name = resolve_model_name()
     if config.LLM_PROVIDER == "ollama":
+        timeout = max(LLM_TEXT_TIMEOUT, OLLAMA_CHAT_TIMEOUT)
         coro = _complete_ollama(
             prompt,
             instructions=instructions,
             model_name=model_name,
             cancel_event=cancel_event,
+            timeout=timeout,
         )
-        timeout = max(LLM_TEXT_TIMEOUT, OLLAMA_CHAT_TIMEOUT)
     elif config.LLM_PROVIDER == "openai":
         mode = resolve_auth_mode()
         if mode == "chatgpt_oauth":
-            coro = _complete_codex(prompt, instructions=instructions, model_name=model_name)
+            coro = _complete_codex(
+                prompt,
+                instructions=instructions,
+                model_name=model_name,
+            )
         else:
             coro = _complete_openai_api(
-                prompt, instructions=instructions, model_name=model_name
+                prompt,
+                instructions=instructions,
+                model_name=model_name,
+                json_mode=json_mode,
             )
         timeout = LLM_TEXT_TIMEOUT
     else:
@@ -279,7 +288,38 @@ async def complete_text(
         ) from exc
 
 
-async def _complete_codex(prompt: str, *, instructions: str, model_name: str) -> str:
+async def _collect_codex_stream(stream: Any, model_name: str) -> str:
+    """Merge Codex SSE deltas and final output_text into one string."""
+    chunks: list[str] = []
+    recorded = False
+    output_text = ""
+    async for event in stream:
+        etype = getattr(event, "type", None)
+        if etype == "response.output_text.delta":
+            delta = getattr(event, "delta", None)
+            if delta:
+                chunks.append(delta)
+        elif etype == "response.completed":
+            response = getattr(event, "response", None)
+            _record_codex_completed(model_name, response)
+            recorded = True
+            final = getattr(response, "output_text", None) if response else None
+            if final:
+                output_text = str(final).strip()
+    if not recorded:
+        record_usage("openai", model_name, kind="chat")
+    streamed = "".join(chunks).strip()
+    if streamed and output_text:
+        return streamed if len(streamed) >= len(output_text) else output_text
+    return streamed or output_text
+
+
+async def _complete_codex(
+    prompt: str,
+    *,
+    instructions: str,
+    model_name: str,
+) -> str:
     tokens = get_valid_chatgpt_tokens()
     if not tokens:
         raise RuntimeError("ChatGPT OAuth tokens are missing; sign in again")
@@ -294,42 +334,28 @@ async def _complete_codex(prompt: str, *, instructions: str, model_name: str) ->
             "originator": ORIGINATOR,
         },
     )
-    stream = await client.responses.create(
-        model=model_name,
-        instructions=instructions,
-        input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
-        store=False,
-        stream=True,
-    )
-    chunks: list[str] = []
-    recorded = False
-    async for event in stream:
-        etype = getattr(event, "type", None)
-        if etype == "response.output_text.delta":
-            delta = getattr(event, "delta", None)
-            if delta:
-                chunks.append(delta)
-        elif etype == "response.completed":
-            response = getattr(event, "response", None)
-            _record_codex_completed(model_name, response)
-            recorded = True
-            output_text = getattr(response, "output_text", None) if response else None
-            if output_text:
-                return str(output_text).strip()
-    if not recorded:
-        record_usage("openai", model_name, kind="chat")
-    return "".join(chunks).strip()
+    create_kwargs: dict[str, Any] = {
+        "model": model_name,
+        "instructions": instructions,
+        "input": [{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
+        "store": False,
+        "stream": True,
+    }
+    stream = await client.responses.create(**create_kwargs)
+    return await _collect_codex_stream(stream, model_name)
 
 
 async def _ollama_request(
     payload: dict[str, Any],
     *,
     cancel_event: asyncio.Event | None = None,
+    timeout: float | None = None,
 ) -> dict[str, Any]:
     """POST a chat payload to the local Ollama server."""
     model = str(payload.get("model") or config.MODEL_NAME)
     url = f"{config.OLLAMA_BASE_URL}/api/chat"
-    client = httpx.AsyncClient(timeout=OLLAMA_CHAT_TIMEOUT)
+    request_timeout = timeout if timeout is not None else OLLAMA_CHAT_TIMEOUT
+    client = httpx.AsyncClient(timeout=request_timeout)
     try:
         post_task = asyncio.create_task(client.post(url, json=payload))
         if cancel_event is not None:
@@ -352,6 +378,10 @@ async def _ollama_request(
         raise RuntimeError(
             f"Cannot reach Ollama at {config.OLLAMA_BASE_URL} — is `ollama serve` running?"
         ) from exc
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(
+            f"Ollama request timed out after {request_timeout:.0f}s"
+        ) from exc
     except httpx.HTTPStatusError as exc:
         raise RuntimeError(format_http_error(exc, model=model, kind="model")) from exc
     finally:
@@ -367,6 +397,7 @@ async def _complete_ollama(
     images: list[bytes] | None = None,
     options: dict[str, Any] | None = None,
     cancel_event: asyncio.Event | None = None,
+    timeout: float | None = None,
 ) -> str:
     """Text or multimodal completion via a local Ollama server."""
     ensure_ollama_ready()
@@ -391,6 +422,7 @@ async def _complete_ollama(
             "options": ollama_opts,
         },
         cancel_event=cancel_event,
+        timeout=timeout,
     )
     prompt_tok, completion_tok, total = normalize_ollama_usage(data)
     record_usage(
@@ -404,7 +436,13 @@ async def _complete_ollama(
     return ((data.get("message") or {}).get("content") or "").strip()
 
 
-async def _complete_openai_api(prompt: str, *, instructions: str, model_name: str) -> str:
+async def _complete_openai_api(
+    prompt: str,
+    *,
+    instructions: str,
+    model_name: str,
+    json_mode: bool = False,
+) -> str:
     from paperless_agent.auth import ensure_openai_env
 
     ensure_openai_env()
@@ -416,6 +454,7 @@ async def _complete_openai_api(prompt: str, *, instructions: str, model_name: st
             {"role": "user", "content": prompt},
         ],
         temperature=0.2,
+        **({"response_format": {"type": "json_object"}} if json_mode else {}),
     )
     _record_openai_response("openai", model_name, response)
     return (response.choices[0].message.content or "").strip()
@@ -462,7 +501,9 @@ async def complete_with_images(
 
     model_name = resolve_model_name()
     if config.LLM_PROVIDER == "ollama":
-        # Ollama multimodal models take base64 images on the chat message.
+        effective_timeout = (
+            timeout if timeout is not None else max(LLM_VISION_TIMEOUT, OLLAMA_CHAT_TIMEOUT)
+        )
         coro = _complete_ollama(
             prompt,
             instructions=instructions,
@@ -470,9 +511,7 @@ async def complete_with_images(
             images=images,
             options=ollama_options,
             cancel_event=cancel_event,
-        )
-        effective_timeout = (
-            timeout if timeout is not None else max(LLM_VISION_TIMEOUT, OLLAMA_CHAT_TIMEOUT)
+            timeout=effective_timeout,
         )
     elif config.LLM_PROVIDER == "openai":
         mode = resolve_auth_mode()
@@ -547,24 +586,7 @@ async def _complete_codex_images(
         store=False,
         stream=True,
     )
-    chunks: list[str] = []
-    recorded = False
-    async for event in stream:
-        etype = getattr(event, "type", None)
-        if etype == "response.output_text.delta":
-            delta = getattr(event, "delta", None)
-            if delta:
-                chunks.append(delta)
-        elif etype == "response.completed":
-            response = getattr(event, "response", None)
-            _record_codex_completed(model_name, response)
-            recorded = True
-            output_text = getattr(response, "output_text", None) if response else None
-            if output_text:
-                return str(output_text).strip()
-    if not recorded:
-        record_usage("openai", model_name, kind="chat")
-    return "".join(chunks).strip()
+    return await _collect_codex_stream(stream, model_name)
 
 
 async def _complete_openai_images(

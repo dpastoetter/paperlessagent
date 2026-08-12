@@ -73,6 +73,15 @@ def _text_for_extract_prompt(text: str, max_chars: int) -> str:
     )
 
 
+def _resolve_doc_type(raw: dict[str, Any]) -> str:
+    """Pick doc_type from common LLM key variants."""
+    for key in ("doc_type", "document_type", "category", "document_category"):
+        value = raw.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip().lower()
+    return "other"
+
+
 def normalize_extracted_fields(raw: dict[str, Any]) -> dict[str, Any]:
     """Normalize LLM extraction output to consistent field names and types."""
     parties_raw = raw.get("parties")
@@ -126,7 +135,8 @@ def normalize_extracted_fields(raw: dict[str, Any]) -> dict[str, Any]:
     normalized["amount"] = amount
     normalized["currency"] = currency if amount is not None else None
 
-    doc_type = str(raw.get("doc_type") or "other").lower()
+    doc_type = _resolve_doc_type(raw)
+    normalized["doc_type"] = doc_type
     if not config.is_financial_doc_type(doc_type):
         normalized["amount"] = None
         normalized["currency"] = None
@@ -170,6 +180,7 @@ async def extract_document_fields(source_path: str) -> dict[str, Any]:
             prompt,
             instructions=_FIELD_INSTRUCTIONS,
             cancel_event=get_file_cancel_event(),
+            json_mode=True,
         )
     except FileCancelledError:
         raise
@@ -191,8 +202,26 @@ async def extract_document_fields(source_path: str) -> dict[str, Any]:
             },
         }
 
-    fields = normalize_extracted_fields(parse_json_blob(raw))
-    if not fields.get("doc_type"):
+    if not raw.strip():
+        await emit_step(
+            "extract",
+            label=step_label("extract"),
+            status="error",
+            detail="Model returned empty response",
+            filename=filename,
+        )
+        return {
+            "status": "error",
+            "error": "LLM returned empty extraction response",
+            "recovery": {
+                "method": method,
+                "quality": quality,
+                "steps": recovery.get("steps"),
+            },
+        }
+
+    parsed = parse_json_blob(raw)
+    if not parsed:
         await emit_step(
             "extract",
             label=step_label("extract"),
@@ -210,6 +239,8 @@ async def extract_document_fields(source_path: str) -> dict[str, Any]:
                 "steps": recovery.get("steps"),
             },
         }
+
+    fields = normalize_extracted_fields(parsed)
 
     # Always prefer recovered OCR text for indexing over LLM output.
     if text:

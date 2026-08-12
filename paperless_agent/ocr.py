@@ -24,6 +24,14 @@ from paperless_agent.tools.filesystem import IMAGE_SUFFIXES, PDF_SUFFIXES, SUPPO
 
 logger = logging.getLogger(__name__)
 
+
+def _exc_detail(exc: BaseException) -> str:
+    """Human-readable exception text (httpx timeouts often have empty str())."""
+    msg = str(exc).strip()
+    if msg:
+        return msg
+    return f"{type(exc).__name__}"
+
 MIN_CHARS = 40
 MIN_WORDS = 8
 MIN_ALNUM_RATIO = 0.45
@@ -188,6 +196,8 @@ def prepare_page_image_for_vision(image: Image.Image) -> tuple[bytes, str]:
     """
     img = image.convert("RGB")
     max_px = max(256, int(config.OCR_MAX_IMAGE_PX))
+    if config.LLM_PROVIDER == "ollama":
+        max_px = min(max_px, max(256, int(config.OLLAMA_OCR_MAX_IMAGE_PX)))
     width, height = img.size
     long_edge = max(width, height)
     if long_edge > max_px:
@@ -199,7 +209,7 @@ def prepare_page_image_for_vision(image: Image.Image) -> tuple[bytes, str]:
 
     buf = io.BytesIO()
     if config.LLM_PROVIDER == "ollama":
-        img.save(buf, format="JPEG", quality=85, optimize=True)
+        img.save(buf, format="JPEG", quality=80, optimize=True)
         return buf.getvalue(), "image/jpeg"
     img.save(buf, format="PNG")
     return buf.getvalue(), "image/png"
@@ -376,13 +386,14 @@ async def recover_document_text(path: str | Path) -> dict[str, Any]:
     except FileCancelledError:
         raise
     except Exception as exc:  # noqa: BLE001
-        logger.warning("AI vision OCR failed for %s: %s", file_path, exc)
-        steps.append({"method": "ai_vision", "error": str(exc)})
+        detail = _exc_detail(exc)
+        logger.warning("AI vision OCR failed for %s: %s", file_path, detail)
+        steps.append({"method": "ai_vision", "error": detail})
         await emit_step(
             "ai_ocr",
             label=step_label("ai_ocr"),
             status="error",
-            detail=str(exc),
+            detail=detail,
             filename=filename,
         )
         # Last resort: keep any embedded PDF text if AI OCR failed.
