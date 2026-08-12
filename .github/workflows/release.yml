@@ -12,8 +12,27 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout tag
         uses: actions/checkout@v4
+        with:
+          # Full history so the tag resolves cleanly and git archive sees every path.
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+
+      - name: Verify tag points at checked-out commit
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          CHECKOUT="$(git rev-parse HEAD)"
+          TAGGED="$(git rev-parse "${TAG}^{commit}")"
+          echo "checkout=${CHECKOUT}"
+          echo "tag=${TAG} → ${TAGGED}"
+          if [ "$CHECKOUT" != "$TAGGED" ]; then
+            echo "Checked-out commit does not match tag ${TAG}" >&2
+            exit 1
+          fi
+          git log -1 --oneline HEAD
+          echo "Tracked files: $(git ls-tree -r --name-only HEAD | wc -l)"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -22,8 +41,16 @@ jobs:
 
       - name: Build release assets
         run: |
+          set -euo pipefail
           chmod +x scripts/make-release-assets.sh
           ./scripts/make-release-assets.sh "${GITHUB_REF_NAME}"
+          # Confirm the packed commit matches this tag.
+          grep -F "commit=$(git rev-parse HEAD)" dist/stage/paperlessagent-*/.release-commit
+          # Sanity: archive must contain every currently tracked path we care about.
+          tar -tzf dist/paperlessagent-*.tar.gz | grep -E 'paperless_agent/system_service\.py$'
+          tar -tzf dist/paperlessagent-*.tar.gz | grep -E 'app/static/app\.js$'
+          tar -tzf dist/paperlessagent-*.tar.gz | grep -E '\.release-commit$'
+          cat dist/stage/paperlessagent-*/.release-commit
 
       - name: Publish GitHub Release
         env:
@@ -32,12 +59,17 @@ jobs:
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"
+          COMMIT="$(git rev-parse HEAD)"
+          COMMIT_SHORT="$(git rev-parse --short=12 HEAD)"
+          FILE_COUNT="$(git ls-tree -r --name-only HEAD | wc -l | tr -d ' ')"
 
           cat > /tmp/release-notes.md <<EOF
           ## PaperlessAgent ${TAG}
 
+          Built from commit \`${COMMIT_SHORT}\` (\`${COMMIT}\`) — ${FILE_COUNT} tracked files packed into the release archive.
+
           ### Assets
-          - \`paperlessagent-${VERSION}.tar.gz\` — source archive for the in-app updater (SHA-256 verified)
+          - \`paperlessagent-${VERSION}.tar.gz\` — full source archive for the in-app updater (SHA-256 verified)
           - \`SHA256SUMS\` — checksums
 
           ### Install
@@ -52,9 +84,10 @@ jobs:
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "${ASSETS[@]}" --clobber
-            gh release edit "$TAG" --notes-file /tmp/release-notes.md
+            gh release edit "$TAG" --notes-file /tmp/release-notes.md --target "$COMMIT"
           else
             gh release create "$TAG" "${ASSETS[@]}" \
               --title "$TAG" \
-              --notes-file /tmp/release-notes.md
+              --notes-file /tmp/release-notes.md \
+              --target "$COMMIT"
           fi

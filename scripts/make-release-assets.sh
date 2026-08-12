@@ -3,14 +3,20 @@
 #   paperlessagent-<version>.tar.gz
 #   SHA256SUMS
 #
-# Usage (from a clean checkout of the release tag):
+# Always packs the *exact git commit* for the given tag (not a dirty working tree).
+# Usage (from a clean checkout that contains the tag):
 #   ./scripts/make-release-assets.sh v0.2.0
+#
+# Optional: pack an untagged commit while naming the archive for a future tag:
+#   ./scripts/make-release-assets.sh v0.2.0 HEAD
+#   ./scripts/make-release-assets.sh v0.2.0 abcdef012345
 
 set -euo pipefail
 
 TAG="${1:-}"
+REF_ARG="${2:-}"
 if [ -z "$TAG" ]; then
-  echo "usage: $0 <tag>   e.g. $0 v0.2.0" >&2
+  echo "usage: $0 <tag> [git-ref]   e.g. $0 v0.2.0" >&2
   exit 1
 fi
 
@@ -20,24 +26,66 @@ DIST="$ROOT/dist"
 ARCHIVE_NAME="paperlessagent-${VERSION}.tar.gz"
 STAGE="$DIST/stage"
 
-rm -rf "$DIST"
-mkdir -p "$STAGE"
-
-# Pack the repository the same way GitHub source archives do: one root folder.
-PREFIX="paperlessagent-${VERSION}"
-mkdir -p "$STAGE/$PREFIX"
-
-# Copy tracked files only (no .git, .venv, data, local .env).
-if command -v git >/dev/null && git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  git -C "$ROOT" archive --format=tar HEAD | tar -x -C "$STAGE/$PREFIX"
-else
+if ! command -v git >/dev/null; then
+  echo "git is required to build a clean release archive" >&2
+  exit 1
+fi
+if ! git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "git checkout required to build a clean release archive" >&2
   exit 1
 fi
 
+# Prefer the annotated/lightweight tag commit; fall back to an explicit ref.
+if [ -n "$REF_ARG" ]; then
+  REF="$REF_ARG"
+elif git -C "$ROOT" rev-parse -q --verify "refs/tags/${TAG}^{commit}" >/dev/null; then
+  REF="refs/tags/${TAG}"
+elif git -C "$ROOT" rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+  REF="refs/tags/${TAG}"
+else
+  echo "tag ${TAG} not found locally — pass an explicit ref, e.g. $0 ${TAG} HEAD" >&2
+  echo "Create and push the tag from the commit that should ship before building CI assets." >&2
+  exit 1
+fi
+
+COMMIT="$(git -C "$ROOT" rev-parse "${REF}^{commit}")"
+COMMIT_SHORT="$(git -C "$ROOT" rev-parse --short=12 "$COMMIT")"
+SUBJECT="$(git -C "$ROOT" log -1 --format='%s' "$COMMIT")"
+
+rm -rf "$DIST"
+mkdir -p "$STAGE"
+
+# Pack tracked files for that commit only (no .git, .venv, data, local .env).
+PREFIX="paperlessagent-${VERSION}"
+mkdir -p "$STAGE/$PREFIX"
+git -C "$ROOT" archive --format=tar "$COMMIT" | tar -x -C "$STAGE/$PREFIX"
+
 # Never ship local secrets or runtime data even if somehow tracked.
 rm -rf "$STAGE/$PREFIX/data" "$STAGE/$PREFIX/.venv" "$STAGE/$PREFIX/venv"
 rm -f "$STAGE/$PREFIX/.env"
+
+EXPECTED_LIST="$DIST/expected-files.txt"
+ARCHIVED_LIST="$DIST/archived-files.txt"
+
+git -C "$ROOT" ls-tree -r --name-only "$COMMIT" \
+  | awk '$0 != ".env" && $0 !~ /^data(\/|$)/ && $0 !~ /^\.venv(\/|$)/ && $0 !~ /^venv(\/|$)/ { print }' \
+  | sort > "$EXPECTED_LIST"
+
+(
+  cd "$STAGE/$PREFIX"
+  find . -type f | sed 's|^\./||' | sort
+) > "$ARCHIVED_LIST"
+
+if ! cmp -s "$EXPECTED_LIST" "$ARCHIVED_LIST"; then
+  echo "release archive file list does not match commit $COMMIT_SHORT" >&2
+  echo "--- only in git commit ---" >&2
+  comm -23 "$EXPECTED_LIST" "$ARCHIVED_LIST" >&2 || true
+  echo "--- only in archive ---" >&2
+  comm -13 "$EXPECTED_LIST" "$ARCHIVED_LIST" >&2 || true
+  exit 1
+fi
+
+EXPECTED_COUNT="$(wc -l < "$EXPECTED_LIST" | tr -d ' ')"
 
 # Align archived pyproject version with the release tag.
 if [ -f "$STAGE/$PREFIX/pyproject.toml" ]; then
@@ -61,6 +109,40 @@ path.write_text(text, encoding="utf-8")
 PY
 fi
 
+# Record exactly what was packed so installs/debugging can confirm completeness.
+{
+  echo "tag=${TAG}"
+  echo "version=${VERSION}"
+  echo "commit=${COMMIT}"
+  echo "commit_short=${COMMIT_SHORT}"
+  echo "subject=${SUBJECT}"
+  echo "file_count=${EXPECTED_COUNT}"
+} > "$STAGE/$PREFIX/.release-commit"
+
+# Required paths that must always ship (guards against accidental export-ignore / sparse packs).
+REQUIRED_PATHS=(
+  "pyproject.toml"
+  "README.md"
+  ".env.example"
+  "app/main.py"
+  "app/static/app.js"
+  "app/static/common.js"
+  "app/static/index.html"
+  "paperless_agent/ingest.py"
+  "paperless_agent/llm.py"
+  "paperless_agent/ocr.py"
+  "paperless_agent/system_service.py"
+  "paperless_agent/updater.py"
+  "scripts/install.sh"
+  "scripts/make-release-assets.sh"
+)
+for path in "${REQUIRED_PATHS[@]}"; do
+  if [ ! -f "$STAGE/$PREFIX/$path" ]; then
+    echo "required path missing from release archive: $path" >&2
+    exit 1
+  fi
+done
+
 tar -czf "$DIST/$ARCHIVE_NAME" -C "$STAGE" "$PREFIX"
 
 (
@@ -71,6 +153,8 @@ tar -czf "$DIST/$ARCHIVE_NAME" -C "$STAGE" "$PREFIX"
 echo "Release assets ready in $DIST:"
 echo "  $ARCHIVE_NAME"
 echo "  SHA256SUMS"
+echo "  commit ${COMMIT_SHORT} (${COMMIT})"
+echo "  tracked files packed: ${EXPECTED_COUNT} (+ .release-commit)"
 cat "$DIST/SHA256SUMS"
 echo
 echo "Upload these files to the GitHub release for $TAG."

@@ -298,11 +298,17 @@ Installs are **fail-closed on integrity checks**: the updater only applies a rel
 
 Override the release source with `PAPERLESS_UPDATE_REPO=owner/repo` if you fork the project.
 
-Pushing a version tag (`v*`) runs GitHub Actions, which builds the tarball and `SHA256SUMS`, then publishes/updates the GitHub Release. Local dry-run:
+Pushing a version tag (`v*`) runs GitHub Actions, which builds the tarball and `SHA256SUMS`, then publishes/updates the GitHub Release. The packager archives the **exact tagged commit** (not a dirty working tree), verifies the file list against `git ls-tree`, and embeds a `.release-commit` manifest (tag, SHA, file count) inside the archive.
+
+**Release checklist:** land every change on `main` first, bump `version` in `pyproject.toml`, commit, then create the tag on that commit (`git tag v0.2.0 && git push origin v0.2.0`). Tagging an older commit is how earlier releases missed later work.
+
+Local dry-run:
 
 ```bash
 git checkout v0.2.0
 ./scripts/make-release-assets.sh v0.2.0
+# or before the tag exists:
+./scripts/make-release-assets.sh v0.2.0 HEAD
 # dist/ contains paperlessagent-0.2.0.tar.gz and SHA256SUMS
 ```
 
