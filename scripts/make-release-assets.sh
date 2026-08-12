@@ -87,6 +87,9 @@ fi
 
 EXPECTED_COUNT="$(wc -l < "$EXPECTED_LIST" | tr -d ' ')"
 
+# Full file manifest so installers/updaters can prune stale paths on upgrade.
+cp "$EXPECTED_LIST" "$STAGE/$PREFIX/.release-files"
+
 # Align archived pyproject version with the release tag.
 if [ -f "$STAGE/$PREFIX/pyproject.toml" ]; then
   python3 - "$STAGE/$PREFIX/pyproject.toml" "$VERSION" <<'PY'
@@ -154,7 +157,7 @@ echo "Release assets ready in $DIST:"
 echo "  $ARCHIVE_NAME"
 echo "  SHA256SUMS"
 echo "  commit ${COMMIT_SHORT} (${COMMIT})"
-echo "  tracked files packed: ${EXPECTED_COUNT} (+ .release-commit)"
+echo "  tracked files packed: ${EXPECTED_COUNT} (+ .release-commit + .release-files)"
 cat "$DIST/SHA256SUMS"
 echo
 echo "Upload these files to the GitHub release for $TAG."

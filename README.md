@@ -39,10 +39,17 @@ Cloning the repo alone is not enough — Python dependencies must be installed i
 
 ### One-line install (recommended)
 
-Creates `~/paperlessagent` (or updates it), builds `.venv`, installs dependencies, and writes a starter `.env`:
+Creates `~/paperlessagent` (or updates it), installs the **latest verified GitHub Release** tarball (same artifact as the in-app updater), builds `.venv`, installs dependencies, and writes a starter `.env`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dpastoetter/paperlessagent/main/scripts/install.sh | bash
+```
+
+To track `main` instead of the release (developers):
+
+```bash
+PAPERLESS_INSTALL_SOURCE=git curl -fsSL \
+  https://raw.githubusercontent.com/dpastoetter/paperlessagent/main/scripts/install.sh | bash
 ```
 
 Then start it:
@@ -298,7 +305,7 @@ Installs are **fail-closed on integrity checks**: the updater only applies a rel
 
 Override the release source with `PAPERLESS_UPDATE_REPO=owner/repo` if you fork the project.
 
-Pushing a version tag (`v*`) runs GitHub Actions, which builds the tarball and `SHA256SUMS`, then publishes/updates the GitHub Release. The packager archives the **exact tagged commit** (not a dirty working tree), verifies the file list against `git ls-tree`, and embeds a `.release-commit` manifest (tag, SHA, file count) inside the archive.
+Pushing a version tag (`v*`) runs GitHub Actions, which builds the tarball and `SHA256SUMS`, then publishes/updates the GitHub Release. The packager archives the **exact tagged commit** (not a dirty working tree), verifies the file list against `git ls-tree`, and embeds `.release-commit` plus `.release-files` so installs/updates can confirm the SHA and prune stale paths.
 
 **Release checklist:** land every change on `main` first, bump `version` in `pyproject.toml`, commit, then create the tag on that commit (`git tag v0.2.0 && git push origin v0.2.0`). Tagging an older commit is how earlier releases missed later work.
 

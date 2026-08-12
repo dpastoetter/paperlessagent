@@ -50,6 +50,7 @@ jobs:
           tar -tzf dist/paperlessagent-*.tar.gz | grep -E 'paperless_agent/system_service\.py$'
           tar -tzf dist/paperlessagent-*.tar.gz | grep -E 'app/static/app\.js$'
           tar -tzf dist/paperlessagent-*.tar.gz | grep -E '\.release-commit$'
+          tar -tzf dist/paperlessagent-*.tar.gz | grep -E '\.release-files$'
           cat dist/stage/paperlessagent-*/.release-commit
 
       - name: Publish GitHub Release

@@ -408,6 +408,20 @@ def _root_matches_commit(source_root: Path, commit_sha: str | None) -> bool:
     return name.endswith(sha) or name.endswith(sha[:12]) or name.endswith(sha[:7])
 
 
+def _read_release_file_list(path: Path) -> set[str]:
+    if not path.is_file():
+        return set()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return set()
+    return {
+        line.strip()
+        for line in lines
+        if line.strip() and not line.strip().startswith("#")
+    }
+
+
 def apply_tarball(
     tar_bytes: bytes,
     *,
@@ -415,20 +429,25 @@ def apply_tarball(
     expect_commit_match: bool = False,
 ) -> dict[str, Any]:
     """
-    Extract a GitHub source tarball and copy it over the install directory.
+    Extract a release/source tarball and sync it over the install directory.
 
     User data (data/), credentials (.env), virtualenvs, and .git are untouched.
     Destinations that are symlinks (or would resolve outside PROJECT_ROOT) are
     skipped so a malicious archive cannot write through a symlink escape.
+
+    When `.release-files` is present (current and/or previous install), files
+    that were part of the previous release but absent from the new archive are
+    removed so upgrades cannot leave stale modules behind.
     """
     root = Path(config.PROJECT_ROOT).resolve()
     updated: list[str] = []
+    removed: list[str] = []
     with tempfile.TemporaryDirectory(prefix="paperless-update-") as tmp:
         tmp_path = Path(tmp)
         with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:*") as tar:
             tar.extractall(tmp_path, filter="data")
 
-        # GitHub tarballs wrap everything in a single "{owner}-{repo}-{sha}/" dir.
+        # GitHub / release tarballs wrap everything in a single root directory.
         entries = [p for p in tmp_path.iterdir() if p.is_dir()]
         if len(entries) != 1:
             return {"status": "error", "error": "unexpected tarball layout"}
@@ -442,6 +461,9 @@ def apply_tarball(
                     f"commit {commit_sha} — update aborted"
                 ),
             }
+
+        previous_files = _read_release_file_list(root / ".release-files")
+        new_files: set[str] = set()
 
         for path in sorted(source_root.rglob("*")):
             if not path.is_file():
@@ -465,9 +487,46 @@ def apply_tarball(
                 continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, dest)
-            updated.append(str(relative))
+            rel_s = relative.as_posix()
+            updated.append(rel_s)
+            if rel_s not in {".release-commit", ".release-files"}:
+                new_files.add(rel_s)
 
-    return {"status": "success", "updated_count": len(updated), "updated": updated}
+        archive_manifest = _read_release_file_list(source_root / ".release-files")
+        if archive_manifest:
+            new_files |= archive_manifest
+
+        # After the first manifest-aware install, prune paths that disappeared.
+        if previous_files:
+            for rel_s in sorted(previous_files - new_files):
+                relative = Path(rel_s)
+                if _is_protected(relative):
+                    continue
+                dest = root / relative
+                if dest.is_symlink():
+                    continue
+                if not dest.is_file():
+                    continue
+                try:
+                    resolved = dest.resolve()
+                    if not resolved.is_relative_to(root):
+                        continue
+                except OSError:
+                    continue
+                dest.unlink()
+                removed.append(rel_s)
+                parent = dest.parent
+                while parent != root and parent.is_dir() and not any(parent.iterdir()):
+                    parent.rmdir()
+                    parent = parent.parent
+
+    return {
+        "status": "success",
+        "updated_count": len(updated),
+        "updated": updated,
+        "removed_count": len(removed),
+        "removed": removed,
+    }
 
 
 def apply_update() -> dict[str, Any]:

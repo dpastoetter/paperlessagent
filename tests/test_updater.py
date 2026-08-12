@@ -154,6 +154,31 @@ def test_apply_tarball_updates_code_but_protects_user_data(isolated_root):
     assert "secret" in (isolated_root / ".env").read_text()
 
 
+def test_apply_tarball_prunes_obsolete_release_files(isolated_root):
+    (isolated_root / "app").mkdir()
+    (isolated_root / "app" / "main.py").write_text("old\n")
+    (isolated_root / "legacy.py").write_text("stale\n")
+    (isolated_root / ".release-files").write_text("app/main.py\nlegacy.py\n")
+    (isolated_root / "data").mkdir()
+    (isolated_root / "data" / "keep.db").write_bytes(b"db")
+
+    tarball = _make_tarball(
+        {
+            "app/main.py": b"new\n",
+            ".release-files": b"app/main.py\n",
+            ".release-commit": b"tag=v9.9.9\n",
+        }
+    )
+    result = apply_tarball(tarball)
+    assert result["status"] == "success"
+    assert result["removed_count"] == 1
+    assert "legacy.py" in result["removed"]
+    assert not (isolated_root / "legacy.py").exists()
+    assert (isolated_root / "app" / "main.py").read_text() == "new\n"
+    assert (isolated_root / "data" / "keep.db").read_bytes() == b"db"
+    assert (isolated_root / ".release-files").read_text() == "app/main.py\n"
+
+
 def test_apply_tarball_rejects_unexpected_layout(isolated_root):
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
