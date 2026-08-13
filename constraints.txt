@@ -233,7 +233,7 @@ propcache==0.5.2
     # via
     #   aiohttp
     #   yarl
-protobuf==6.33.6
+protobuf==7.35.1
     # via
     #   googleapis-common-protos
     #   onnxruntime
