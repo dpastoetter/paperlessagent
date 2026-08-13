@@ -314,7 +314,7 @@ async def _ai_vision_one_page(
     from paperless_agent.llm import complete_with_images
 
     raise_if_cancelled()
-    img = render_document_page(path, page_index)
+    img = await asyncio.to_thread(render_document_page, path, page_index)
     image_bytes, mime_type = prepare_page_image_for_vision(img)
     prompt = "Transcribe this document page image. Output plain text only."
     if hint.strip():
@@ -452,7 +452,7 @@ async def recover_document_text(path: str | Path) -> dict[str, Any]:
             filename=filename,
         )
         try:
-            page_layer_texts = _extract_pdf_page_texts(file_path)
+            page_layer_texts = await asyncio.to_thread(_extract_pdf_page_texts, file_path)
             page_count = len(page_layer_texts)
             joined = "\n\n".join(
                 f"[Page {i + 1}]\n{t}" for i, t in enumerate(page_layer_texts) if t

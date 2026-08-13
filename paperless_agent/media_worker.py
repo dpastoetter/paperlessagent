@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import multiprocessing as mp
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -121,6 +122,10 @@ def run_media_job(
     Execute ``job`` in a child process with CPU/memory/time limits.
 
     Returns the job result payload, or raises ``MediaWorkerError``.
+
+    Important: large results (page PNG bytes) must be ``recv``'d while the child
+    is still writing. Joining before reading the Pipe deadlocks once the OS
+    pipe buffer fills (~64 KiB).
     """
     effective = limits or _default_limits()
     ctx = mp.get_context("spawn")
@@ -132,28 +137,59 @@ def run_media_job(
     )
     proc.start()
     child_conn.close()
-    proc.join(effective.timeout_s)
-    if proc.is_alive():
-        proc.terminate()
-        proc.join(2.0)
+
+    deadline = time.monotonic() + effective.timeout_s
+    result: tuple[str, Any] | None = None
+    timed_out = False
+    try:
+        while result is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            # Drain as soon as bytes are available so the child can finish send().
+            if parent_conn.poll(min(0.25, remaining)):
+                try:
+                    result = parent_conn.recv()
+                except EOFError:
+                    break
+                break
+            if not proc.is_alive():
+                if parent_conn.poll(0.5):
+                    try:
+                        result = parent_conn.recv()
+                    except EOFError:
+                        break
+                break
+
+        if result is None:
+            if proc.is_alive() or timed_out:
+                proc.terminate()
+                proc.join(2.0)
+                if proc.is_alive():
+                    proc.kill()
+                    proc.join(1.0)
+                raise MediaWorkerError(
+                    f"media worker timed out after {effective.timeout_s:.0f}s ({job})",
+                    code="timeout",
+                )
+            exit_code = proc.exitcode
+            raise MediaWorkerError(
+                f"media worker exited without result (job={job}, exit={exit_code})",
+                code="worker_failed",
+            )
+    finally:
+        try:
+            parent_conn.close()
+        except OSError:
+            pass
         if proc.is_alive():
-            proc.kill()
-            proc.join(1.0)
-        raise MediaWorkerError(
-            f"media worker timed out after {effective.timeout_s:.0f}s ({job})",
-            code="timeout",
-        )
+            proc.join(5.0)
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(2.0)
 
-    if parent_conn.poll(0.1):
-        status, body = parent_conn.recv()
-    else:
-        exit_code = proc.exitcode
-        raise MediaWorkerError(
-            f"media worker exited without result (job={job}, exit={exit_code})",
-            code="worker_failed",
-        )
-    parent_conn.close()
-
+    status, body = result
     if status == "ok":
         return body
     raise MediaWorkerError(str(body), code="worker_failed")

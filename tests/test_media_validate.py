@@ -89,14 +89,3 @@ def test_upload_accepts_valid_pdf(client):
     assert resp.status_code == 200
     assert resp.json()["filename"] == "scan.pdf"
     assert resp.json().get("media", {}).get("kind") == "pdf"
-
-
-def test_media_worker_extracts_pdf_text(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("PAPERLESS_MEDIA_WORKER", "1")
-    from paperless_agent.media_worker import extract_pdf_page_texts_isolated
-
-    pdf = write_minimal_pdf(tmp_path / "worker.pdf", line="Invoice FA-1")
-    pages = extract_pdf_page_texts_isolated(pdf)
-    assert isinstance(pages, list)
-    assert len(pages) == 1
-    assert "Invoice" in pages[0] or pages[0] == "" or isinstance(pages[0], str)

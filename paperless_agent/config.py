@@ -158,8 +158,10 @@ MEDIA_MAX_PDF_PAGES = _env_int("PAPERLESS_MEDIA_MAX_PDF_PAGES", OCR_SAFETY_MAX_P
 # ~200 inches at 72 pt/inch — rejects absurd MediaBox decompression bombs.
 MEDIA_MAX_PDF_PAGE_POINTS = float(os.getenv("PAPERLESS_MEDIA_MAX_PDF_PAGE_POINTS", "14400"))
 MEDIA_WORKER_TIMEOUT_S = float(os.getenv("PAPERLESS_MEDIA_WORKER_TIMEOUT_S", "90"))
-MEDIA_WORKER_MEMORY_MB = _env_int("PAPERLESS_MEDIA_WORKER_MEMORY_MB", 1024)
-MEDIA_WORKER_CPU_S = _env_int("PAPERLESS_MEDIA_WORKER_CPU_S", 60)
+# Virtual address space cap for the worker. Poppler needs headroom beyond RSS;
+# 1 GiB AS commonly breaks rendering — keep a generous default.
+MEDIA_WORKER_MEMORY_MB = _env_int("PAPERLESS_MEDIA_WORKER_MEMORY_MB", 4096)
+MEDIA_WORKER_CPU_S = _env_int("PAPERLESS_MEDIA_WORKER_CPU_S", 120)
 
 
 def ensure_data_dirs() -> None:
