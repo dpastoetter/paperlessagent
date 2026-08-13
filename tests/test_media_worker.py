@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import multiprocessing as mp
+import shutil
 import time
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,11 @@ def _noisy_png(path: Path, size: tuple[int, int] = (1600, 1600)) -> Path:
     Image.effect_noise(size, 80).convert("RGB").save(path, format="PNG", compress_level=0)
     assert path.stat().st_size > 64 * 1024
     return path
+
+
+def _require_poppler() -> None:
+    if shutil.which("pdftoppm") is None or shutil.which("pdfinfo") is None:
+        pytest.skip("poppler-utils not installed (pdftoppm/pdfinfo)")
 
 
 def _legacy_join_before_recv(
@@ -173,6 +179,7 @@ def test_worker_main_load_image(tmp_path: Path, no_parent_resource_limits):
 
 
 def test_worker_main_render_pdf_page(tmp_path: Path, no_parent_resource_limits):
+    _require_poppler()
     pdf = write_minimal_pdf(tmp_path / "page.pdf", line="Render me")
     conn = _CaptureConn()
     limits = MediaWorkerLimits(timeout_s=30, memory_bytes=1024 * 1024 * 1024, cpu_seconds=60)
@@ -267,6 +274,7 @@ def test_load_image_rgb_png_isolated_small(tmp_path: Path, monkeypatch):
 
 
 def test_render_pdf_page_png_isolated(tmp_path: Path, monkeypatch):
+    _require_poppler()
     monkeypatch.setenv("PAPERLESS_MEDIA_WORKER", "1")
     pdf = write_minimal_pdf(tmp_path / "page.pdf", line="Hello")
     raw = render_pdf_page_png_isolated(pdf, 1, dpi=72)
@@ -362,6 +370,7 @@ def test_run_media_job_timeout_terminates_hung_child(monkeypatch):
 
 
 def test_render_document_page_pdf_via_worker(tmp_path: Path, monkeypatch):
+    _require_poppler()
     monkeypatch.setenv("PAPERLESS_MEDIA_WORKER", "1")
     pdf = write_minimal_pdf(tmp_path / "scan.pdf", line="OCR page")
     img = render_document_page(pdf, 1, dpi=72)
@@ -378,6 +387,7 @@ def test_render_document_page_image_via_worker(tmp_path: Path, monkeypatch):
 
 
 def test_render_document_page_pdf_without_worker(tmp_path: Path, monkeypatch):
+    _require_poppler()
     monkeypatch.setenv("PAPERLESS_MEDIA_WORKER", "0")
     pdf = write_minimal_pdf(tmp_path / "scan.pdf", line="Direct poppler")
     img = render_document_page(pdf, 1, dpi=72)
