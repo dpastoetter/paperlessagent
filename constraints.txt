@@ -192,7 +192,7 @@ opentelemetry-exporter-otlp-proto-common==1.42.1
     # via opentelemetry-exporter-otlp-proto-grpc
 opentelemetry-exporter-otlp-proto-grpc==1.42.1
     # via chromadb
-opentelemetry-proto==1.42.1
+opentelemetry-proto==1.44.0
     # via
     #   opentelemetry-exporter-otlp-proto-common
     #   opentelemetry-exporter-otlp-proto-grpc
