@@ -57,28 +57,8 @@ export async function api(path, options = {}) {
   // Custom header required by the server on mutating routes — blocks CSRF
   // from cross-site form posts (browsers cannot attach it without CORS).
   headers.set("X-Requested-With", "PaperlessAgent");
-  // Optional API token (PAPERLESS_API_TOKEN): required for non-loopback access.
-  try {
-    const params = new URLSearchParams(window.location.search);
-    const fromQuery = params.get("token");
-    if (fromQuery) {
-      sessionStorage.setItem("pa-api-token", fromQuery);
-    }
-  } catch (_err) {
-    /* private mode */
-  }
-  let token = null;
-  try {
-    token =
-      window.PA_API_TOKEN ||
-      sessionStorage.getItem("pa-api-token") ||
-      null;
-  } catch (_err) {
-    token = window.PA_API_TOKEN || null;
-  }
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
+  // Auth is the HttpOnly pa_session cookie (set via POST /api/auth/session or
+  // loopback bootstrap). Never put PAPERLESS_API_TOKEN in JS / sessionStorage.
   let body = options.body;
   if (
     body != null &&
@@ -93,7 +73,7 @@ export async function api(path, options = {}) {
   } else if (typeof body === "string" && body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  const res = await fetch(path, { ...options, headers, body });
+  const res = await fetch(path, { ...options, headers, body, credentials: "same-origin" });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(formatApiError(data, res.statusText || "Request failed"));
@@ -102,6 +82,52 @@ export async function api(path, options = {}) {
     throw new Error(formatApiError(data, "Request failed"));
   }
   return data;
+}
+
+export async function ensureBrowserSession() {
+  /** If API auth is required and no session cookie yet, show the unlock panel. */
+  try {
+    const status = await api("/api/auth/session/status");
+    if (!status.auth_required || status.authenticated) {
+      hideSessionUnlock();
+      return true;
+    }
+    showSessionUnlock();
+    return false;
+  } catch (_err) {
+    return true;
+  }
+}
+
+function showSessionUnlock() {
+  const panel = document.getElementById("session-unlock");
+  if (panel) panel.classList.remove("hidden");
+}
+
+function hideSessionUnlock() {
+  const panel = document.getElementById("session-unlock");
+  if (panel) panel.classList.add("hidden");
+}
+
+export function initSessionUnlock() {
+  const form = document.getElementById("session-unlock-form");
+  if (!form) return;
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const input = document.getElementById("session-unlock-token");
+    const errEl = document.getElementById("session-unlock-error");
+    const token = (input?.value || "").trim();
+    if (!token) return;
+    try {
+      if (errEl) errEl.textContent = "";
+      await api("/api/auth/session", { method: "POST", body: { token } });
+      if (input) input.value = "";
+      hideSessionUnlock();
+      window.location.reload();
+    } catch (err) {
+      if (errEl) errEl.textContent = String(err.message || err);
+    }
+  });
 }
 
 export function setText(id, value) {
@@ -240,6 +266,8 @@ export function armedConfirm(btn, armedLabel) {
 
 export let lastProvider = "";
 export let cloudDisclaimerAccepted = false;
+/** When true, Settings is showing the Remote Ollama panel (documents leave this machine). */
+export let ollamaRemoteMode = false;
 
 function setCloudAuthLocked(locked) {
   const panel = document.getElementById("cloud-auth-panel");
@@ -281,20 +309,33 @@ export async function refreshCloudDisclaimer() {
   }
 }
 
-export function setProviderUi(provider) {
+export function setProviderUi(provider, { remoteOllama = false } = {}) {
   lastProvider = provider || "";
+  ollamaRemoteMode = provider === "ollama" && Boolean(remoteOllama);
   const section = document.getElementById("auth-section");
   const ollamaPanel = document.getElementById("ollama-panel");
   const cloudPanel = document.getElementById("cloud-auth-panel");
+  const remoteFields = document.getElementById("ollama-remote-fields");
   const cloudBtn = document.getElementById("provider-cloud");
   const ollamaBtn = document.getElementById("provider-ollama");
+  const remoteBtn = document.getElementById("provider-ollama-remote");
   const isOllama = provider === "ollama";
 
   if (section) section.dataset.provider = provider || "";
   if (ollamaPanel) ollamaPanel.classList.toggle("hidden", !isOllama);
-  if (cloudPanel) cloudPanel.classList.toggle("hidden", isOllama);
-  if (cloudBtn) cloudBtn.dataset.active = isOllama ? "false" : "true";
-  if (ollamaBtn) ollamaBtn.dataset.active = isOllama ? "true" : "false";
+  // Remote Ollama reuses the cloud privacy disclaimer (documents leave this machine).
+  if (cloudPanel) cloudPanel.classList.toggle("hidden", isOllama && !ollamaRemoteMode);
+  if (remoteFields) remoteFields.classList.toggle("hidden", !ollamaRemoteMode);
+  if (cloudBtn) cloudBtn.dataset.active = !isOllama ? "true" : "false";
+  if (ollamaBtn) ollamaBtn.dataset.active = isOllama && !ollamaRemoteMode ? "true" : "false";
+  if (remoteBtn) remoteBtn.dataset.active = ollamaRemoteMode ? "true" : "false";
+
+  const enableBtn = document.getElementById("ollama-enable");
+  if (enableBtn) enableBtn.textContent = ollamaRemoteMode ? "Use remote Ollama" : "Use Ollama";
+  const startBtn = document.getElementById("ollama-start");
+  const restartBtn = document.getElementById("ollama-restart");
+  if (startBtn) startBtn.classList.toggle("hidden", ollamaRemoteMode);
+  if (restartBtn) restartBtn.classList.toggle("hidden", ollamaRemoteMode);
 }
 
 function formatOllamaCompute(ollama) {
@@ -360,9 +401,14 @@ export function renderOllamaStatus(ollama) {
   const chatLabel = ollama.resolved_chat_model || ollama.chat_model;
   const embedLabel = ollama.resolved_embedding_model || ollama.embedding_model;
   const computeLabel = formatOllamaCompute(ollama);
+  const isLocal = ollama.is_local !== false;
+  const urlInput = document.getElementById("ollama-base-url");
+  if (urlInput && ollama.base_url && !urlInput.value) {
+    urlInput.value = ollama.base_url;
+  }
   if (statusEl) {
     statusEl.textContent = ollama.active
-      ? `Using local Ollama · ${chatLabel} + ${embedLabel}${computeLabel}`
+      ? `Using ${isLocal ? "local" : "remote"} Ollama · ${chatLabel} + ${embedLabel}${computeLabel}`
       : `Ollama ready · ${chatLabel} + ${embedLabel}${computeLabel}`;
     statusEl.dataset.tone = "ok";
   }
@@ -371,15 +417,21 @@ export function renderOllamaStatus(ollama) {
       ollama.compute === "idle"
         ? " Processor shows CPU/GPU once a model is loaded."
         : "";
-    hintEl.textContent = ollama.active
-      ? `Documents stay on this machine — no cloud sign-in needed.${idleCompute}`
-      : `Click Use Ollama to switch the app to local models.${idleCompute}`;
+    if (!isLocal) {
+      hintEl.textContent = ollama.active
+        ? `Documents are processed on ${ollama.base_url || "the remote Ollama host"} — not kept on-device.${idleCompute}`
+        : `Remote Ollama requires the privacy disclaimer. Documents leave this machine.${idleCompute}`;
+    } else {
+      hintEl.textContent = ollama.active
+        ? `Documents stay on this machine — no cloud sign-in needed.${idleCompute}`
+        : `Click Use Ollama to switch the app to local models.${idleCompute}`;
+    }
   }
   if (ollama.active) {
     const authLine = document.getElementById("auth-status");
     if (authLine) {
-      authLine.textContent = `Local Ollama · ${chatLabel}${computeLabel}`;
-      authLine.dataset.tone = "ok";
+      authLine.textContent = `${isLocal ? "Local" : "Remote"} Ollama · ${chatLabel}${computeLabel}`;
+      authLine.dataset.tone = isLocal ? "ok" : "warn";
     }
     if (section) section.dataset.ready = "true";
     setStatus("ready", `ollama · ${ollama.chat_model || "local"}${computeLabel}`);
@@ -453,8 +505,10 @@ export async function refreshOllamaStatus() {
 
 export async function refreshHealth() {
   try {
-    const data = await api("/api/health");
-    setProviderUi(data.llm_provider || "");
+    const data = await api("/api/diagnostics");
+    setProviderUi(data.llm_provider || "", {
+      remoteOllama: data.llm_provider === "ollama" && data.ollama?.is_local === false,
+    });
     if (data.cloud_disclaimer) {
       applyCloudDisclaimerStatus(data.cloud_disclaimer);
     }

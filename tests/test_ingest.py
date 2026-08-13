@@ -98,6 +98,26 @@ def test_normalize_accepts_document_type_alias():
     assert out["doc_type"] == "medical"
 
 
+def test_normalize_clamps_oversized_model_fields():
+    raw = {
+        "doc_type": "invoice",
+        "subject": "S" * 500,
+        "parties": "P" * 2000,
+        "summary": "Sum. " * 1000,
+        "reference_ids": [f"ID-{i}-" + ("x" * 200) for i in range(50)],
+        "amount": 12.5,
+        "currency": "EUROPEAN",
+    }
+    out = normalize_extracted_fields(raw)
+    assert out["subject"] is not None and len(out["subject"]) <= 200
+    assert out["parties"] is not None and len(out["parties"]) <= 500
+    assert out["counterparties"] is not None and len(out["counterparties"]) <= 500
+    assert out["summary"] is not None and len(out["summary"]) <= 2000
+    assert len(out["reference_ids"]) <= 20
+    assert all(len(rid) <= 128 for rid in out["reference_ids"])
+    assert out["currency"] == "EUROPEAN"[:8]
+
+
 def test_text_for_extract_prompt_uses_head_and_tail():
     from paperless_agent.ingest import _text_for_extract_prompt
 

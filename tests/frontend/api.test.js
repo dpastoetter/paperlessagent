@@ -98,7 +98,7 @@ describe("api()", () => {
     );
   });
 
-  it("attaches bearer token when configured", async () => {
+  it("does not attach bearer tokens from window globals", async () => {
     window.PA_API_TOKEN = "secret-token";
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -108,6 +108,7 @@ describe("api()", () => {
     vi.stubGlobal("fetch", fetchMock);
     await api("/api/health");
     const headers = fetchMock.mock.calls[0][1].headers;
-    expect(headers.get("Authorization")).toBe("Bearer secret-token");
+    expect(headers.get("Authorization")).toBeNull();
+    expect(fetchMock.mock.calls[0][1].credentials).toBe("same-origin");
   });
 });

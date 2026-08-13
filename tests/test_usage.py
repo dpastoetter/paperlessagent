@@ -84,11 +84,27 @@ def test_complete_ollama_records_usage(monkeypatch):
     assert snap["last_model"] == "gemma3:4b"
 
 
-def test_health_includes_usage(client):
+def test_diagnostics_includes_usage(client):
     record_usage("openai", "gpt-5", prompt_tokens=100, completion_tokens=20)
-    resp = client.get("/api/health")
+    resp = client.get("/api/diagnostics")
     assert resp.status_code == 200
     body = resp.json()
     assert "usage" in body
     assert body["usage"]["requests"] == 1
     assert body["usage"]["total_tokens"] == 120
+
+
+def test_health_is_minimal(client):
+    record_usage("openai", "gpt-5", prompt_tokens=100, completion_tokens=20)
+    resp = client.get("/api/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert "version" in body
+    assert "usage" not in body
+    assert "auth" not in body
+    assert "llm_provider" not in body
+    assert "model" not in body
+    assert "embedding_model" not in body
+    assert "cloud_disclaimer" not in body
+    assert "ollama" not in body

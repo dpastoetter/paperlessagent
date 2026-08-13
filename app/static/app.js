@@ -1,4 +1,6 @@
 import {
+  ensureBrowserSession,
+  initSessionUnlock,
   refreshAuth,
   refreshHealth,
   startHealthPolling,
@@ -49,6 +51,7 @@ initWorkflowEvents();
 
 renderRoute();
 initTheme();
+initSessionUnlock();
 resetStepStatuses("idle");
 renderWorkflow();
 document.getElementById("mock-toggle").checked = Boolean(window.PA_MOCK?.enabled);
@@ -58,23 +61,26 @@ if (window.PA_MOCK?.enabled) {
   connectWorkflowEvents();
 }
 
-refreshHealth()
-  .then((health) => {
-    if (health?.llm_provider === "ollama") return null;
-    return refreshAuth();
-  })
-  .catch(() => {});
-startHealthPolling();
-refreshInbox().catch(() => {});
-refreshDocs().catch(() => {});
-refreshReviews().catch(() => {});
-refreshUpdateVersion().catch(() => {});
-refreshSetup()
-  .catch((err) => {
-    setSetupStatus(String(err.message || err), "err");
-  })
-  .finally(() => {
-    // Re-render once categories are known so review cards get full select options.
-    refreshReviews().catch(() => {});
-  });
-refreshAutostart().catch(() => {});
+ensureBrowserSession().then((ready) => {
+  if (!ready) return;
+  refreshHealth()
+    .then((health) => {
+      if (health?.llm_provider === "ollama") return null;
+      return refreshAuth();
+    })
+    .catch(() => {});
+  startHealthPolling();
+  refreshInbox().catch(() => {});
+  refreshDocs().catch(() => {});
+  refreshReviews().catch(() => {});
+  refreshUpdateVersion().catch(() => {});
+  refreshSetup()
+    .catch((err) => {
+      setSetupStatus(String(err.message || err), "err");
+    })
+    .finally(() => {
+      // Re-render once categories are known so review cards get full select options.
+      refreshReviews().catch(() => {});
+    });
+  refreshAutostart().catch(() => {});
+});

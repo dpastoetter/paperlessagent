@@ -1,4 +1,4 @@
-"""API security boundary: bind policy, bearer token, Host allowlist."""
+"""API security boundary: bind policy, bearer token, session cookies."""
 
 from __future__ import annotations
 
@@ -9,10 +9,13 @@ from app.main import CSRF_HEADER_NAME, CSRF_HEADER_VALUE, app
 from paperless_agent.local_security import (
     COOKIE_NAME,
     assert_bind_allowed,
+    forwarded_client_host,
     generate_api_token,
     is_loopback_hostname,
     is_wildcard_or_non_loopback_bind,
+    request_appears_https,
 )
+from paperless_agent.sessions import clear_all_sessions, session_is_valid
 
 
 def test_loopback_bind_helpers():
@@ -27,12 +30,37 @@ def test_loopback_bind_helpers():
     assert not is_wildcard_or_non_loopback_bind("127.0.0.1")
 
 
-def test_assert_bind_requires_token_for_non_loopback(monkeypatch):
+def test_assert_bind_requires_remote_opt_in_token_and_tls(tmp_path, monkeypatch):
     monkeypatch.delenv("PAPERLESS_API_TOKEN", raising=False)
+    monkeypatch.delenv("PAPERLESS_ALLOW_REMOTE", raising=False)
+    monkeypatch.delenv("PAPERLESS_SSL_CERTFILE", raising=False)
+    monkeypatch.delenv("PAPERLESS_SSL_KEYFILE", raising=False)
+
+    with pytest.raises(RuntimeError, match="PAPERLESS_ALLOW_REMOTE"):
+        assert_bind_allowed("0.0.0.0")
+
+    monkeypatch.setenv("PAPERLESS_ALLOW_REMOTE", "1")
     with pytest.raises(RuntimeError, match="PAPERLESS_API_TOKEN"):
         assert_bind_allowed("0.0.0.0")
+
     monkeypatch.setenv("PAPERLESS_API_TOKEN", generate_api_token())
-    assert_bind_allowed("0.0.0.0")  # does not raise
+    with pytest.raises(RuntimeError, match="PAPERLESS_SSL_CERTFILE"):
+        assert_bind_allowed("0.0.0.0")
+
+    cert = tmp_path / "cert.pem"
+    key = tmp_path / "key.pem"
+    cert.write_text("cert", encoding="utf-8")
+    key.write_text("key", encoding="utf-8")
+    monkeypatch.setenv("PAPERLESS_SSL_CERTFILE", str(cert))
+    monkeypatch.setenv("PAPERLESS_SSL_KEYFILE", str(key))
+    assert_bind_allowed("0.0.0.0")  # network mode fully configured
+
+    # Loopback stays local mode (HTTP OK, no remote flags needed).
+    monkeypatch.delenv("PAPERLESS_ALLOW_REMOTE", raising=False)
+    monkeypatch.delenv("PAPERLESS_API_TOKEN", raising=False)
+    monkeypatch.delenv("PAPERLESS_SSL_CERTFILE", raising=False)
+    monkeypatch.delenv("PAPERLESS_SSL_KEYFILE", raising=False)
+    assert_bind_allowed("127.0.0.1")
 
 
 def test_invalid_host_header_rejected(isolated_data):
@@ -45,6 +73,7 @@ def test_invalid_host_header_rejected(isolated_data):
 def test_token_required_when_configured(isolated_data, monkeypatch):
     token = generate_api_token()
     monkeypatch.setenv("PAPERLESS_API_TOKEN", token)
+    clear_all_sessions()
     bare = TestClient(app)
     denied = bare.get("/api/inbox")
     assert denied.status_code == 401
@@ -55,9 +84,38 @@ def test_token_required_when_configured(isolated_data, monkeypatch):
     )
     assert ok.status_code == 200
 
-    # Cookie session also works (SSE / browser).
+    # API secret must not work as a cookie value anymore.
     bare.cookies.set(COOKIE_NAME, token)
-    assert bare.get("/api/inbox").status_code == 200
+    assert bare.get("/api/inbox").status_code == 401
+
+
+def test_session_exchange_sets_independent_cookie(isolated_data, monkeypatch):
+    token = generate_api_token()
+    monkeypatch.setenv("PAPERLESS_API_TOKEN", token)
+    clear_all_sessions()
+    client = TestClient(app)
+    client.headers.update({CSRF_HEADER_NAME: CSRF_HEADER_VALUE})
+
+    bad = client.post("/api/auth/session", json={"token": "wrong-token-value"})
+    assert bad.status_code == 401
+
+    exchanged = client.post("/api/auth/session", json={"token": token})
+    assert exchanged.status_code == 200
+    session = exchanged.cookies.get(COOKIE_NAME)
+    assert session
+    assert session != token
+    assert session_is_valid(session)
+
+    # Cookie authenticates subsequent API calls without Bearer.
+    authed = TestClient(app)
+    authed.cookies.set(COOKIE_NAME, session)
+    assert authed.get("/api/inbox").status_code == 200
+
+    # Logout revokes the hashed session.
+    authed.headers.update({CSRF_HEADER_NAME: CSRF_HEADER_VALUE})
+    logged_out = authed.post("/api/auth/session/logout")
+    assert logged_out.status_code == 200
+    assert not session_is_valid(session)
 
 
 def test_mutations_still_need_csrf_with_token(isolated_data, monkeypatch):
@@ -84,15 +142,83 @@ def test_mutations_still_need_csrf_with_token(isolated_data, monkeypatch):
 def test_health_exempt_from_bearer(isolated_data, monkeypatch):
     monkeypatch.setenv("PAPERLESS_API_TOKEN", generate_api_token())
     client = TestClient(app)
-    assert client.get("/api/health").status_code == 200
+    resp = client.get("/api/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {"status": "ok", "version": body["version"]}
+    assert "auth" not in body
+    assert "usage" not in body
+    assert "llm_provider" not in body
 
 
-def test_index_sets_session_cookie_on_loopback_when_token_configured(isolated_data, monkeypatch):
+def test_diagnostics_requires_bearer_when_token_set(isolated_data, monkeypatch):
     token = generate_api_token()
     monkeypatch.setenv("PAPERLESS_API_TOKEN", token)
+    client = TestClient(app)
+    assert client.get("/api/diagnostics").status_code == 401
+    ok = client.get("/api/diagnostics", headers={"Authorization": f"Bearer {token}"})
+    assert ok.status_code == 200
+    body = ok.json()
+    assert body["status"] in {"ok", "degraded"}
+    assert "usage" in body
+    assert "auth" in body
+    assert "llm_provider" in body
+
+
+def test_index_sets_random_session_cookie_on_loopback(isolated_data, monkeypatch):
+    token = generate_api_token()
+    monkeypatch.setenv("PAPERLESS_API_TOKEN", token)
+    clear_all_sessions()
     client = TestClient(app)
     resp = client.get("/")
     assert resp.status_code == 200
     assert COOKIE_NAME in resp.cookies
-    assert resp.cookies.get(COOKIE_NAME) == token
-    assert "PA_API_TOKEN" in resp.text
+    cookie = resp.cookies.get(COOKIE_NAME)
+    assert cookie
+    assert cookie != token
+    assert "PA_API_TOKEN" not in resp.text
+    assert session_is_valid(cookie)
+
+
+def test_query_token_exchanges_then_redirects(isolated_data, monkeypatch):
+    token = generate_api_token()
+    monkeypatch.setenv("PAPERLESS_API_TOKEN", token)
+    clear_all_sessions()
+    client = TestClient(app)
+    resp = client.get(f"/?token={token}", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers.get("location") == "/"
+    cookie = resp.cookies.get(COOKIE_NAME)
+    assert cookie
+    assert cookie != token
+    assert session_is_valid(cookie)
+
+
+def test_forwarded_headers_only_from_trusted_proxies(monkeypatch):
+    monkeypatch.setenv("PAPERLESS_TRUSTED_PROXIES", "10.0.0.1,192.168.0.0/24")
+    # Untrusted peer — ignore spoofed XFF.
+    assert (
+        forwarded_client_host(
+            peer_host="8.8.8.8",
+            x_forwarded_for="1.2.3.4",
+        )
+        == "8.8.8.8"
+    )
+    # Trusted peer — take first non-proxy hop.
+    assert (
+        forwarded_client_host(
+            peer_host="10.0.0.1",
+            x_forwarded_for="203.0.113.9, 10.0.0.1",
+        )
+        == "203.0.113.9"
+    )
+    assert not request_appears_https(
+        peer_host="8.8.8.8",
+        url_scheme="http",
+        x_forwarded_proto="https",
+    )
+    assert request_appears_https(
+        peer_host="10.0.0.1",
+        url_scheme="http",
+        x_forwarded_proto="https",
+    )

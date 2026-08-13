@@ -10,8 +10,8 @@
   --accent-dim: rgba(60, 191, 212, 0.13);
   --accent-glow: rgba(60, 191, 212, 0.28);
   --line: rgba(148, 170, 186, 0.13);
-  --font: "Space Grotesk", "Segoe UI", sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, monospace;
+  --font: ui-sans-serif, system-ui, "Segoe UI", "Helvetica Neue", "Noto Sans", sans-serif;
+  --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 

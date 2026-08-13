@@ -58,6 +58,75 @@ def _normalize_path(value: str) -> Path:
     return Path(value).expanduser().resolve()
 
 
+# Exact home children that must never be used as inbox or category roots.
+_FORBIDDEN_HOME_CHILDREN = frozenset(
+    {
+        "Documents",
+        "Downloads",
+        "Desktop",
+        "Pictures",
+        "Music",
+        "Videos",
+        "Library",
+    }
+)
+
+# System prefixes that must never be configured as storage roots.
+_FORBIDDEN_SYSTEM_PREFIXES = (
+    Path("/etc"),
+    Path("/usr"),
+    Path("/bin"),
+    Path("/sbin"),
+    Path("/boot"),
+    Path("/dev"),
+    Path("/proc"),
+    Path("/sys"),
+    Path("/lib"),
+    Path("/lib64"),
+    Path("/run"),
+)
+
+
+def refuse_dangerous_storage_path(path: Path, *, label: str) -> None:
+    """
+    Raise ValueError when a settings path is a dangerous filesystem root.
+
+    Category and inbox paths may live under home, but never *be* home, common
+    user libraries, the project root, or system directories.
+    """
+    try:
+        resolved = path.expanduser().resolve()
+    except OSError as exc:
+        raise ValueError(f"{label}: cannot resolve path ({exc})") from exc
+
+    if resolved == Path("/"):
+        raise ValueError(f"{label}: refusing filesystem root /")
+
+    home = Path.home().resolve()
+    if resolved == home:
+        raise ValueError(f"{label}: refusing home directory ({home})")
+    if resolved.parent == home and resolved.name in _FORBIDDEN_HOME_CHILDREN:
+        raise ValueError(f"{label}: refusing {resolved.name} under home")
+
+    project = config.PROJECT_ROOT.resolve()
+    if resolved == project:
+        raise ValueError(f"{label}: refusing project root ({project})")
+
+    data_dir = Path(config.DATA_DIR).expanduser().resolve()
+    if resolved == data_dir:
+        raise ValueError(
+            f"{label}: refuse DATA_DIR itself — use DATA_DIR/inbox or a category subfolder"
+        )
+
+    for prefix in _FORBIDDEN_SYSTEM_PREFIXES:
+        try:
+            under = resolved == prefix or resolved.is_relative_to(prefix)
+        except (OSError, ValueError):
+            continue
+        if under:
+            raise ValueError(f"{label}: refusing system path under {prefix}")
+
+
 def _normalize_category_name(name: str) -> str:
     cleaned = (name or "").strip().lower()
     cleaned = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in cleaned)
@@ -98,6 +167,7 @@ def validate_settings(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(source_raw, str) or not source_raw.strip():
         raise ValueError("source_dir is required")
     source_dir = _normalize_path(source_raw)
+    refuse_dangerous_storage_path(source_dir, label="source_dir")
 
     categories_raw = payload.get("categories")
     if not isinstance(categories_raw, list) or not categories_raw:
@@ -113,6 +183,7 @@ def validate_settings(payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(folder_raw, str) or not folder_raw.strip():
             raise ValueError(f"category '{name}' needs a folder path")
         folder = _normalize_path(folder_raw)
+        refuse_dangerous_storage_path(folder, label=f"category '{name}' folder")
         if name in seen:
             raise ValueError(f"duplicate category name: {name}")
         seen.add(name)

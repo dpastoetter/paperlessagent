@@ -5,6 +5,7 @@ import {
   cloudDisclaimerAccepted,
   escapeHtml,
   lastProvider,
+  ollamaRemoteMode,
   refreshAuth,
   refreshCloudDisclaimer,
   refreshHealth,
@@ -57,18 +58,40 @@ async function selectCloudProvider() {
   }
 }
 
-async function selectOllamaProvider({ enable = true, pullMissing = false } = {}) {
-  setProviderUi("ollama");
+async function selectOllamaProvider({ enable = true, pullMissing = false, remote = false } = {}) {
+  setProviderUi("ollama", { remoteOllama: remote });
+  if (remote) {
+    await refreshCloudDisclaimer();
+    if (!cloudDisclaimerAccepted) {
+      document.getElementById("cloud-disclaimer-accept")?.focus();
+      toast("Approve the privacy disclaimer before using Remote Ollama", "warn");
+      return;
+    }
+  }
   try {
     if (enable) {
+      const payload = { pull_missing: pullMissing };
+      if (remote) {
+        const url = document.getElementById("ollama-base-url")?.value?.trim();
+        if (!url) {
+          toast("Enter a remote Ollama base URL", "warn");
+          document.getElementById("ollama-base-url")?.focus();
+          return;
+        }
+        payload.base_url = url;
+        payload.allow_remote = true;
+      } else {
+        payload.base_url = "http://localhost:11434";
+        payload.allow_remote = false;
+      }
       const data = await api("/api/ollama/enable", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pull_missing: pullMissing }),
+        body: JSON.stringify(payload),
       });
       renderOllamaStatus(data.ollama);
       if (data.ollama?.ready) {
-        toast("Using local Ollama", "ok");
+        toast(remote ? "Using remote Ollama" : "Using local Ollama", "ok");
       } else if (data.ollama?.reachable && data.ollama?.missing_models?.length) {
         toast("Ollama enabled — pull the required models next", "warn");
       } else if (!data.ollama?.reachable) {
@@ -340,11 +363,15 @@ export function initSettings() {
   });
 
   document.getElementById("provider-ollama")?.addEventListener("click", () => {
-    selectOllamaProvider({ enable: true, pullMissing: false });
+    selectOllamaProvider({ enable: true, pullMissing: false, remote: false });
+  });
+
+  document.getElementById("provider-ollama-remote")?.addEventListener("click", () => {
+    selectOllamaProvider({ enable: false, remote: true });
   });
 
   document.getElementById("ollama-enable")?.addEventListener("click", () => {
-    selectOllamaProvider({ enable: true, pullMissing: false });
+    selectOllamaProvider({ enable: true, pullMissing: false, remote: ollamaRemoteMode });
   });
 
   document.getElementById("ollama-start")?.addEventListener("click", async () => {
@@ -385,10 +412,22 @@ export function initSettings() {
         statusEl.dataset.tone = "warn";
       }
       // Ensure provider is ollama first, then pull whatever is still missing.
+      const payload = { pull_missing: true };
+      if (ollamaRemoteMode) {
+        const url = document.getElementById("ollama-base-url")?.value?.trim();
+        if (!url) {
+          toast("Enter a remote Ollama base URL", "warn");
+          return;
+        }
+        payload.base_url = url;
+        payload.allow_remote = true;
+      } else {
+        payload.base_url = "http://localhost:11434";
+      }
       const enabled = await api("/api/ollama/enable", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pull_missing: true }),
+        body: JSON.stringify(payload),
       });
       renderOllamaStatus(enabled.ollama);
       if (enabled.ollama?.ready) {
@@ -735,7 +774,10 @@ export function initSettings() {
     if (!armedConfirm(btn, "Really delete everything?")) return;
     btn.disabled = true;
     try {
-      const data = await api("/api/data", { method: "DELETE" });
+      const data = await api("/api/data", {
+        method: "DELETE",
+        body: { confirmation: "DELETE ALL PAPERLESSAGENT DATA" },
+      });
       setDangerStatus(data.message || "All stored data removed.", "ok");
       toast("All stored data removed", "ok");
       hooks.refreshDocs().catch(() => {});

@@ -7,6 +7,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from paperless_agent.ollama_url import (
+    allow_remote_ollama_enabled,
+    is_loopback_ollama_url,
+    require_ollama_base_url,
+)
+
 load_dotenv()
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -25,8 +31,12 @@ def _ollama_reachable_quick(url: str) -> bool:
     try:
         import httpx
 
-        with httpx.Client(timeout=0.6) as client:
-            return client.get(f"{url.rstrip('/')}/api/tags").is_success
+        # Auto-detect must never SSRF: only probe loopback unless remote is opted in.
+        if not is_loopback_ollama_url(url) and not allow_remote_ollama_enabled():
+            return False
+        safe = require_ollama_base_url(url)
+        with httpx.Client(timeout=0.6, follow_redirects=False) as client:
+            return client.get(f"{safe}/api/tags").is_success
     except Exception:  # noqa: BLE001 — auto-detect must never break startup
         return False
 
@@ -141,6 +151,15 @@ OCR_MODE = os.getenv("PAPERLESS_OCR_MODE", "balanced").strip().lower() or "balan
 OCR_CONCURRENCY = _env_int("PAPERLESS_OCR_CONCURRENCY", 4)
 OCR_CONCURRENCY_OLLAMA = _env_int("PAPERLESS_OCR_CONCURRENCY_OLLAMA", 1)
 EXTRACT_MAX_CHARS = _env_int("PAPERLESS_EXTRACT_MAX_CHARS", 48000)
+
+# Untrusted media hardening (upload + OCR).
+MEDIA_MAX_IMAGE_PIXELS = _env_int("PAPERLESS_MEDIA_MAX_IMAGE_PIXELS", 40_000_000)
+MEDIA_MAX_PDF_PAGES = _env_int("PAPERLESS_MEDIA_MAX_PDF_PAGES", OCR_SAFETY_MAX_PAGES)
+# ~200 inches at 72 pt/inch — rejects absurd MediaBox decompression bombs.
+MEDIA_MAX_PDF_PAGE_POINTS = float(os.getenv("PAPERLESS_MEDIA_MAX_PDF_PAGE_POINTS", "14400"))
+MEDIA_WORKER_TIMEOUT_S = float(os.getenv("PAPERLESS_MEDIA_WORKER_TIMEOUT_S", "90"))
+MEDIA_WORKER_MEMORY_MB = _env_int("PAPERLESS_MEDIA_WORKER_MEMORY_MB", 1024)
+MEDIA_WORKER_CPU_S = _env_int("PAPERLESS_MEDIA_WORKER_CPU_S", 60)
 
 
 def ensure_data_dirs() -> None:

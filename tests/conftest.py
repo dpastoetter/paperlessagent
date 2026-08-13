@@ -6,6 +6,9 @@ import os
 
 # Avoid auto-selecting a developer-machine Ollama during provider resolution.
 os.environ.setdefault("PAPERLESS_SKIP_OLLAMA_PROBE", "1")
+# Keep OCR/parse isolation off in the unit suite by default (spawn + coverage).
+# Dedicated tests re-enable PAPERLESS_MEDIA_WORKER=1 explicitly.
+os.environ.setdefault("PAPERLESS_MEDIA_WORKER", "0")
 
 import pytest
 from fastapi.testclient import TestClient

@@ -300,9 +300,11 @@ ok "dependencies installed"
 # --- config ------------------------------------------------------------------
 if [ ! -f .env ]; then
   cp .env.example .env
-  ok "created .env from .env.example"
+  chmod 600 .env
+  ok "created .env from .env.example (mode 600)"
 else
-  ok ".env already present — left untouched"
+  chmod 600 .env 2>/dev/null || true
+  ok ".env already present — left untouched (permissions tightened to 600)"
 fi
 mkdir -p data/inbox data/archive data/chroma
 ok "data directories ready"

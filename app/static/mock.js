@@ -172,6 +172,7 @@
     listening: true,
     can_start: false,
     binary: "/usr/local/bin/ollama",
+    is_local: true,
     base_url: "http://localhost:11434",
     version: "0.6.0",
     installed_models: ["gemma3:latest", "nomic-embed-text:latest"],
@@ -190,9 +191,15 @@
   const ROUTES = [
     [/^\/api\/health/, () => ({
       status: "ok",
+      version: "0.0.0-mock",
+    })],
+    [/^\/api\/diagnostics/, () => ({
+      status: "ok",
+      version: "0.0.0-mock",
       llm_provider: "openai",
       model: "gpt-5",
       auth: AUTH,
+      cloud_disclaimer: { version: "1", accepted: true, accepted_at: "2026-01-01T00:00:00+00:00" },
       usage: {
         requests: 12,
         chat_requests: 10,

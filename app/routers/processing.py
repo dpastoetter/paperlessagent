@@ -68,6 +68,18 @@ async def api_upload(file: UploadFile = File(...)) -> dict[str, Any]:
             raise HTTPException(status_code=413, detail=detail)
         if code == "empty":
             raise HTTPException(status_code=400, detail=detail)
+        if code in {
+            "type_mismatch",
+            "unparseable",
+            "encrypted",
+            "too_many_pages",
+            "too_many_pixels",
+            "bad_page_size",
+            "bad_image_size",
+            "unsupported",
+            "invalid_media",
+        }:
+            raise HTTPException(status_code=415, detail=detail)
         raise HTTPException(status_code=400, detail=detail)
     return saved
 

@@ -14,8 +14,34 @@ from typing import Any
 import httpx
 
 from paperless_agent import config
+from paperless_agent.env_permissions import write_secret_text
+from paperless_agent.ollama_url import (
+    ALLOW_REMOTE_OLLAMA_ENV,
+    DEFAULT_LOCAL_OLLAMA_URL,
+    allow_remote_ollama_enabled,
+    is_loopback_ollama_url,
+    require_ollama_base_url,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _ollama_client(*, timeout: float) -> httpx.Client:
+    """HTTP client for Ollama — never follow redirects (SSRF)."""
+    return httpx.Client(timeout=timeout, follow_redirects=False)
+
+
+def resolved_ollama_base_url(
+    base_url: str | None = None,
+    *,
+    allow_remote: bool = False,
+) -> str:
+    """Validate caller or configured Ollama URL before any outbound request."""
+    return require_ollama_base_url(
+        base_url or config.OLLAMA_BASE_URL or DEFAULT_LOCAL_OLLAMA_URL,
+        allow_remote=allow_remote or allow_remote_ollama_enabled(),
+    )
+
 
 DEFAULT_CHAT_MODEL = "gemma3"
 DEFAULT_EMBED_MODEL = "nomic-embed-text"
@@ -93,7 +119,10 @@ def clear_ollama_tags_cache() -> None:
 def list_installed_models(base_url: str | None = None) -> list[str]:
     """Cached list of local Ollama model tags."""
     global _tags_cache
-    url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
+    try:
+        url = resolved_ollama_base_url(base_url)
+    except ValueError:
+        return []
     now = time.monotonic()
     if _tags_cache is not None:
         expires_at, cached_url, models = _tags_cache
@@ -113,21 +142,30 @@ def resolve_runtime_model(wanted: str, *, base_url: str | None = None) -> str:
 
 def probe_ollama(base_url: str | None = None, *, timeout: float = PROBE_TIMEOUT) -> dict[str, Any]:
     """
-    Probe a local Ollama server.
+    Probe an Ollama server.
 
     Returns a status dict; never raises for connectivity failures.
     """
-    url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
     result: dict[str, Any] = {
         "reachable": False,
         "listening": False,
-        "base_url": url,
+        "base_url": (base_url or config.OLLAMA_BASE_URL or DEFAULT_LOCAL_OLLAMA_URL).rstrip("/"),
         "models": [],
         "version": None,
         "error": None,
+        "is_local": True,
     }
     try:
-        with httpx.Client(timeout=timeout) as client:
+        url = resolved_ollama_base_url(base_url)
+    except ValueError as exc:
+        result["error"] = str(exc)
+        result["is_local"] = is_loopback_ollama_url(result["base_url"])
+        return result
+
+    result["base_url"] = url
+    result["is_local"] = is_loopback_ollama_url(url)
+    try:
+        with _ollama_client(timeout=timeout) as client:
             tags_resp = client.get(f"{url}/api/tags")
             tags_resp.raise_for_status()
             payload = tags_resp.json()
@@ -219,8 +257,8 @@ def _fetch_ps_models(
     timeout: float = READY_TIMEOUT,
 ) -> list[dict[str, Any]]:
     """Return raw model entries from Ollama ``GET /api/ps``."""
-    url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
-    with httpx.Client(timeout=timeout) as client:
+    url = resolved_ollama_base_url(base_url)
+    with _ollama_client(timeout=timeout) as client:
         resp = client.get(f"{url}/api/ps")
         resp.raise_for_status()
         payload = resp.json() if resp.content else {}
@@ -266,9 +304,12 @@ def verify_model_accepts_requests(
     name = (model or "").strip()
     if not name:
         return "No Ollama model configured"
-    url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
     try:
-        with httpx.Client(timeout=timeout) as client:
+        url = resolved_ollama_base_url(base_url)
+    except ValueError as exc:
+        return str(exc)
+    try:
+        with _ollama_client(timeout=timeout) as client:
             resp = client.post(f"{url}/api/show", json={"name": name})
             if resp.status_code == 404:
                 return f"Ollama model '{name}' is not available locally. Run: ollama pull {name}"
@@ -302,7 +343,10 @@ def ensure_ollama_ready(
     if config.LLM_PROVIDER != "ollama":
         return {"skipped": True, "provider": config.LLM_PROVIDER}
 
-    url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
+    try:
+        url = resolved_ollama_base_url(base_url)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
     now = time.monotonic()
     if not force and _ready_cache is not None:
         expires_at, cached_url, cached_error, snapshot = _ready_cache
@@ -417,9 +461,8 @@ def upsert_env_values(updates: dict[str, str], path: Path | None = None) -> Path
     text = "\n".join(out)
     if text and not text.endswith("\n"):
         text += "\n"
-    tmp = target.with_suffix(".env.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    tmp.replace(target)
+    # Same 0600 posture as ~/.codex/auth.json — .env may hold PAPERLESS_API_TOKEN.
+    write_secret_text(target, text)
     return target
 
 
@@ -429,12 +472,15 @@ def apply_llm_provider(
     model: str | None = None,
     embedding_model: str | None = None,
     base_url: str | None = None,
+    allow_remote: bool = False,
     persist: bool = True,
 ) -> dict[str, Any]:
     """
     Switch the active LLM provider at runtime and optionally persist to `.env`.
 
     Updates `paperless_agent.config` globals used throughout the process.
+    Local Ollama is loopback-only; remote Ollama requires ``allow_remote`` (or
+    ``PAPERLESS_ALLOW_REMOTE_OLLAMA``) and is validated against SSRF rules.
     """
     normalized = (provider or "").strip().lower()
     aliases = {
@@ -446,9 +492,26 @@ def apply_llm_provider(
     if normalized not in {"openai", "gemini", "ollama"}:
         raise ValueError("provider must be one of: openai, gemini, ollama")
 
+    remote_enabled = False
     if normalized == "ollama":
         chat, embed = required_models(chat_model=model, embed_model=embedding_model)
-        url = (base_url or config.OLLAMA_BASE_URL or "http://localhost:11434").rstrip("/")
+        candidate = (
+            base_url
+            if base_url is not None
+            else (config.OLLAMA_BASE_URL or DEFAULT_LOCAL_OLLAMA_URL)
+        )
+        remote_requested = allow_remote or (
+            base_url is None
+            and allow_remote_ollama_enabled()
+            and not is_loopback_ollama_url(candidate)
+        )
+        url = require_ollama_base_url(candidate, allow_remote=remote_requested)
+        remote_enabled = not is_loopback_ollama_url(url)
+        if remote_enabled and not (allow_remote or allow_remote_ollama_enabled()):
+            raise ValueError(
+                "Remote Ollama requires allow_remote=true (and the privacy disclaimer) "
+                f"or {ALLOW_REMOTE_OLLAMA_ENV}=1."
+            )
     elif normalized == "openai":
         chat = (model or "gpt-5.6-luna").strip() or "gpt-5.6-luna"
         embed = (embedding_model or "text-embedding-3-small").strip() or "text-embedding-3-small"
@@ -469,6 +532,10 @@ def apply_llm_provider(
     os.environ["PAPERLESS_EMBEDDING_MODEL"] = embed
     if normalized == "ollama":
         os.environ["OLLAMA_BASE_URL"] = url
+        if remote_enabled:
+            os.environ[ALLOW_REMOTE_OLLAMA_ENV] = "1"
+        else:
+            os.environ.pop(ALLOW_REMOTE_OLLAMA_ENV, None)
         # Point OpenAI-compatible clients at Ollama for ADK OpenAILlm usage.
         os.environ["OPENAI_BASE_URL"] = f"{url}/v1"
         if not os.environ.get("OPENAI_API_KEY"):
@@ -489,6 +556,7 @@ def apply_llm_provider(
         }
         if normalized == "ollama":
             updates["OLLAMA_BASE_URL"] = url
+            updates[ALLOW_REMOTE_OLLAMA_ENV] = "1" if remote_enabled else "0"
         upsert_env_values(updates)
 
     try:
@@ -503,13 +571,45 @@ def apply_llm_provider(
         "model": chat,
         "embedding_model": embed,
         "ollama_base_url": config.OLLAMA_BASE_URL,
+        "ollama_is_local": (
+            is_loopback_ollama_url(config.OLLAMA_BASE_URL) if normalized == "ollama" else True
+        ),
         "persisted": persist,
     }
 
 
 def ollama_status(*, base_url: str | None = None) -> dict[str, Any]:
-    """Full status payload for Settings UI / health enrichment."""
-    url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
+    """Full status payload for Settings UI / diagnostics enrichment."""
+    try:
+        url = resolved_ollama_base_url(base_url)
+    except ValueError as exc:
+        chat, embed = required_models()
+        raw = (base_url or config.OLLAMA_BASE_URL or DEFAULT_LOCAL_OLLAMA_URL).rstrip("/")
+        return {
+            "active": config.LLM_PROVIDER == "ollama",
+            "ready": False,
+            "reachable": False,
+            "listening": False,
+            "can_start": False,
+            "binary": find_ollama_binary(),
+            "base_url": raw,
+            "is_local": is_loopback_ollama_url(raw),
+            "version": None,
+            "installed_models": [],
+            "chat_model": chat,
+            "embedding_model": embed,
+            "resolved_chat_model": None,
+            "resolved_embedding_model": None,
+            "missing_models": [chat, embed],
+            "pull_command": None,
+            "compute": "idle",
+            "compute_label": "idle",
+            "size_vram": 0,
+            "running_models": [],
+            "error": str(exc),
+            "install_hint": None,
+        }
+
     chat, embed = required_models()
     probe = probe_ollama(url)
     installed = list(probe.get("models") or [])
@@ -526,7 +626,7 @@ def ollama_status(*, base_url: str | None = None) -> dict[str, Any]:
     listening = bool(probe.get("listening") or probe.get("reachable"))
     ready = bool(listening and not missing and active)
     binary = find_ollama_binary()
-    can_start = binary is not None and not listening
+    can_start = binary is not None and not listening and bool(probe.get("is_local", True))
     compute = (
         summarize_compute(fetch_running_ps_models(url))
         if probe["reachable"]
@@ -540,6 +640,7 @@ def ollama_status(*, base_url: str | None = None) -> dict[str, Any]:
         "can_start": can_start,
         "binary": binary,
         "base_url": url,
+        "is_local": bool(probe.get("is_local", is_loopback_ollama_url(url))),
         "version": probe.get("version"),
         "installed_models": installed,
         "chat_model": chat,
@@ -559,7 +660,7 @@ def ollama_status(*, base_url: str | None = None) -> dict[str, Any]:
                 if binary
                 else "Install Ollama from https://ollama.com/download then run `ollama serve`."
             )
-            if not probe["reachable"]
+            if not probe["reachable"] and probe.get("is_local", True)
             else None
         ),
     }
@@ -618,7 +719,12 @@ def start_ollama(
     `ollama serve`. Only invokes the known `ollama` binary / unit — no
     caller-supplied commands.
     """
-    url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
+    url = resolved_ollama_base_url(base_url)
+    if not is_loopback_ollama_url(url):
+        raise RuntimeError(
+            "Start/restart only works for local Ollama on this machine. "
+            "Remote Ollama must be started on the remote host."
+        )
     clear_ollama_tags_cache()
     status = ollama_status(base_url=url)
     if status.get("reachable"):
@@ -670,14 +776,18 @@ def enable_ollama(
     base_url: str | None = None,
     chat_model: str | None = None,
     embedding_model: str | None = None,
+    allow_remote: bool = False,
     persist: bool = True,
 ) -> dict[str, Any]:
-    """Switch to Ollama with local defaults and return fresh status."""
+    """Switch to Ollama (local loopback by default) and return fresh status."""
     applied = apply_llm_provider(
         "ollama",
         model=chat_model or DEFAULT_CHAT_MODEL,
         embedding_model=embedding_model or DEFAULT_EMBED_MODEL,
-        base_url=base_url,
+        base_url=base_url
+        if base_url is not None
+        else (None if allow_remote else DEFAULT_LOCAL_OLLAMA_URL),
+        allow_remote=allow_remote,
         persist=persist,
     )
     status = ollama_status(base_url=applied["ollama_base_url"])
@@ -689,9 +799,9 @@ def pull_model(model: str, *, base_url: str | None = None) -> dict[str, Any]:
     name = (model or "").strip()
     if not name:
         raise ValueError("model name is required")
-    url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
+    url = resolved_ollama_base_url(base_url)
     try:
-        with httpx.Client(timeout=PULL_TIMEOUT) as client:
+        with _ollama_client(timeout=PULL_TIMEOUT) as client:
             resp = client.post(
                 f"{url}/api/pull",
                 json={"name": name, "stream": False},
@@ -715,7 +825,7 @@ def pull_model(model: str, *, base_url: str | None = None) -> dict[str, Any]:
 
 def list_running_models(base_url: str | None = None) -> dict[str, Any]:
     """Return models currently loaded in Ollama (GET /api/ps)."""
-    url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
+    url = resolved_ollama_base_url(base_url)
     try:
         models = _fetch_ps_models(url)
     except httpx.ConnectError as exc:
@@ -740,14 +850,14 @@ def unload_model(
     embedding_model: str | None = None,
 ) -> dict[str, Any]:
     """Unload chat and embedding models from VRAM (keep_alive=0)."""
-    url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
+    url = resolved_ollama_base_url(base_url)
     chat = resolve_runtime_model(model or config.MODEL_NAME, base_url=url)
     embed = resolve_runtime_model(
         embedding_model or config.EMBEDDING_MODEL,
         base_url=url,
     )
     unloaded: list[str] = []
-    with httpx.Client(timeout=OLLAMA_CHAT_TIMEOUT) as client:
+    with _ollama_client(timeout=OLLAMA_CHAT_TIMEOUT) as client:
         chat_payload = {
             "model": chat,
             "messages": [{"role": "user", "content": " "}],
@@ -831,7 +941,12 @@ def restart_ollama(
     """
     Restart the local Ollama daemon (systemd restart, or stop + start).
     """
-    url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
+    url = resolved_ollama_base_url(base_url)
+    if not is_loopback_ollama_url(url):
+        raise RuntimeError(
+            "Restart only works for local Ollama on this machine. "
+            "Remote Ollama must be restarted on the remote host."
+        )
     clear_ollama_tags_cache()
     method = _try_systemctl_restart()
     if not method:

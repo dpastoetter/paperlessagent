@@ -4,17 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PaperlessAgent</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=6" />
-  <script>
-    // Apply the theme before first paint to avoid a flash (?theme= wins over stored).
-    try {
-      var t = new URLSearchParams(location.search).get("theme") || localStorage.getItem("pa-theme");
-      if (t) document.documentElement.dataset.theme = t;
-    } catch (e) { /* private mode */ }
-  </script>
+  <script src="/static/theme-boot.js?v=1"></script>
+  <link rel="stylesheet" href="/static/styles.css?v=7" />
 </head>
 <body>
   <svg xmlns="http://www.w3.org/2000/svg" class="sprite" aria-hidden="true">
@@ -285,12 +276,23 @@
             <div class="actions provider-switch" role="group" aria-label="AI provider">
               <button id="provider-cloud" type="button" class="btn secondary" data-active="false">Cloud (ChatGPT)</button>
               <button id="provider-ollama" type="button" class="btn secondary" data-active="false">Local Ollama</button>
+              <button id="provider-ollama-remote" type="button" class="btn secondary" data-active="false">Remote Ollama</button>
             </div>
           </div>
 
           <div id="ollama-panel" class="auth-details ollama-panel hidden">
             <p id="ollama-status" class="auth-line">Checking local Ollama…</p>
             <p id="ollama-hint" class="fine"></p>
+            <div id="ollama-remote-fields" class="ollama-remote-fields hidden">
+              <label class="field">
+                <span>Ollama base URL</span>
+                <input id="ollama-base-url" type="url" placeholder="http://192.168.1.10:11434" autocomplete="off" />
+              </label>
+              <p class="fine">
+                Remote Ollama sends page images and text to that host — same privacy rules as cloud AI.
+                Approve the disclaimer below before enabling.
+              </p>
+            </div>
             <div class="actions ollama-actions">
               <button id="ollama-start" type="button" class="btn secondary" disabled>Start Ollama</button>
               <button id="ollama-enable" type="button" class="btn primary">Use Ollama</button>
@@ -315,6 +317,7 @@
                   Page images and extracted text go to ChatGPT, OpenAI, or Gemini for OCR,
                   filing, and Ask. Storage can stay local — processing does not.
                   Use <span class="disclaimer-em">Local Ollama</span> to keep AI on-device.
+                  <span class="disclaimer-em">Remote Ollama</span> also leaves this machine.
                 </p>
               </div>
               <label class="disclaimer-check">
@@ -535,7 +538,7 @@
             <div>
               <p class="section-kicker">Danger</p>
               <h2>Danger zone</h2>
-              <p class="auth-line">Delete archived files, inbox scans, metadata, and the RAG index. Setup settings are kept.</p>
+              <p class="auth-line">Delete tracked archive files (inside configured archive folders only), supported inbox scans, metadata, and the RAG index. Category folders are never wiped recursively. Setup settings are kept.</p>
             </div>
             <div class="actions">
               <button id="clear-all-data" type="button" class="btn ghost danger">
@@ -550,6 +553,19 @@
   </div>
 
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+
+  <div id="session-unlock" class="session-unlock hidden" role="dialog" aria-modal="true" aria-labelledby="session-unlock-title">
+    <form id="session-unlock-form" class="session-unlock-card">
+      <h2 id="session-unlock-title">Unlock PaperlessAgent</h2>
+      <p class="fine">This host requires <code>PAPERLESS_API_TOKEN</code>. Enter it once — the server stores a short-lived session cookie; the secret is never kept in the page.</p>
+      <label class="field">
+        <span>API token</span>
+        <input id="session-unlock-token" type="password" autocomplete="current-password" required />
+      </label>
+      <p id="session-unlock-error" class="status-line" data-tone="err" aria-live="polite"></p>
+      <button type="submit" class="btn primary">Create session</button>
+    </form>
+  </div>
 
   <script src="/static/mock.js?v=8"></script>
   <script type="module" src="/static/app.js?v=8"></script>

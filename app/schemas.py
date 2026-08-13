@@ -78,6 +78,18 @@ class ReviewRejectRequest(BaseModel):
     )
 
 
+class SessionExchangeRequest(BaseModel):
+    token: str = Field(..., min_length=8, description="PAPERLESS_API_TOKEN value")
+
+
+class ClearDataRequest(BaseModel):
+    confirmation: str = Field(
+        ...,
+        min_length=1,
+        description='Must be exactly "DELETE ALL PAPERLESSAGENT DATA".',
+    )
+
+
 class ValidatePathRequest(BaseModel):
     path: str = Field(..., min_length=1)
 
@@ -91,6 +103,7 @@ class LlmProviderRequest(BaseModel):
     model: str | None = None
     embedding_model: str | None = None
     base_url: str | None = None
+    allow_remote: bool = False
 
 
 class OllamaEnableRequest(BaseModel):
@@ -98,6 +111,7 @@ class OllamaEnableRequest(BaseModel):
     chat_model: str | None = None
     embedding_model: str | None = None
     pull_missing: bool = False
+    allow_remote: bool = False
 
 
 class OllamaPullRequest(BaseModel):

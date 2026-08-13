@@ -69,6 +69,9 @@ def test_ask_archive_uses_evidence(isolated_ask, monkeypatch):
     async def fake_complete(prompt: str, *, instructions: str) -> str:
         assert "User question" in prompt
         assert "BV CRE8" in prompt or "181" in prompt
+        assert "BEGIN_UNTRUSTED_EVIDENCE" in prompt
+        assert "END_UNTRUSTED_EVIDENCE" in prompt
+        assert "untrusted" in instructions.lower()
         assert "recent documents" not in prompt.lower()
         assert "archive assistant" in instructions.lower() or "paperless" in instructions.lower()
         return (

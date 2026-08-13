@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from app.schemas import AutostartRequest, SettingsRequest, ValidatePathRequest
+from app.schemas import AutostartRequest, ClearDataRequest, SettingsRequest, ValidatePathRequest
 from paperless_agent.settings import (
     SettingsError,
     load_settings,
@@ -14,7 +14,7 @@ from paperless_agent.settings import (
     validate_path,
 )
 from paperless_agent.system_service import autostart_status, set_autostart
-from paperless_agent.tools.storage import clear_all_stored_data
+from paperless_agent.tools.storage import CLEAR_DATA_CONFIRMATION, clear_all_stored_data
 
 router = APIRouter(tags=["settings"])
 
@@ -56,8 +56,20 @@ def api_autostart(body: AutostartRequest) -> dict[str, Any]:
 
 
 @router.delete("/api/data")
-def api_clear_all_data() -> dict[str, Any]:
-    """Delete archived files, inbox scans, SQLite metadata, and Chroma RAG data."""
+def api_clear_all_data(body: ClearDataRequest) -> dict[str, Any]:
+    """
+    Delete tracked archive files (path-confined), supported inbox scans, SQLite, and Chroma.
+
+    Requires the exact confirmation phrase — browser two-click UX is not sufficient.
+    """
+    if body.confirmation != CLEAR_DATA_CONFIRMATION:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f'confirmation must be exactly "{CLEAR_DATA_CONFIRMATION}" '
+                "(client UI confirmations are not a security boundary)"
+            ),
+        )
     try:
         return clear_all_stored_data()
     except Exception as exc:  # noqa: BLE001

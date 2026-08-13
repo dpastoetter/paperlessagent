@@ -1,4 +1,4 @@
-"""Destructive storage helpers: wipe archive files, SQLite metadata, and Chroma."""
+"""Destructive storage helpers: wipe tracked archive files, inbox scans, SQLite, Chroma."""
 
 from __future__ import annotations
 
@@ -8,7 +8,36 @@ from typing import Any
 
 from paperless_agent import config
 from paperless_agent.settings import get_source_dir, load_settings
+from paperless_agent.tools.filesystem import SUPPORTED_SUFFIXES, clear_inbox
 from paperless_agent.tools.metadata_db import init_db, list_recent
+
+# Required verbatim on DELETE /api/data — UX confirms are not a security boundary.
+CLEAR_DATA_CONFIRMATION = "DELETE ALL PAPERLESSAGENT DATA"
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        return path.resolve().is_relative_to(root.resolve())
+    except (OSError, ValueError):
+        return False
+
+
+def archive_roots_for_delete() -> list[Path]:
+    """Roots under which a tracked archive file may be unlinked."""
+    roots: list[Path] = []
+    try:
+        roots.append(Path(config.ARCHIVE_DIR).expanduser().resolve())
+    except OSError:
+        pass
+    for category in load_settings().get("categories") or []:
+        folder = category.get("folder")
+        if not folder:
+            continue
+        try:
+            roots.append(Path(folder).expanduser().resolve())
+        except OSError:
+            continue
+    return roots
 
 
 def _safe_rmtree(path: Path) -> bool:
@@ -21,88 +50,71 @@ def _safe_rmtree(path: Path) -> bool:
     return True
 
 
-def _wipe_dir_contents(path: Path) -> int:
-    """Delete everything inside a directory; recreate the empty directory."""
-    removed = 0
-    if not path.exists():
-        path.mkdir(parents=True, exist_ok=True)
-        return 0
-    for child in path.iterdir():
-        if child.is_dir():
-            shutil.rmtree(child, ignore_errors=False)
-        else:
-            child.unlink(missing_ok=True)
-        removed += 1
-    path.mkdir(parents=True, exist_ok=True)
-    return removed
-
-
-def clear_all_stored_data() -> dict[str, Any]:
+def _delete_tracked_archive_files() -> tuple[int, int, int]:
     """
-    Remove archived files, inbox scans, SQLite metadata, and the Chroma RAG store.
+    Unlink files listed in metadata only when they resolve inside an archive root.
 
-    Keeps Setup settings (settings.json) and app code. Recreates empty data dirs.
+    Never recursively wipe category or inbox directories.
     """
-    config.ensure_data_dirs()
-    settings = load_settings()
-
-    deleted_files = 0
-    missing_files = 0
-    docs = list_recent(limit=10000).get("documents") or []
+    roots = archive_roots_for_delete()
+    deleted = 0
+    missing = 0
+    refused = 0
+    docs = list_recent(limit=100_000).get("documents") or []
     for doc in docs:
         path_value = doc.get("path")
         if not path_value:
             continue
-        path = Path(path_value).expanduser()
         try:
-            path = path.resolve()
+            path = Path(path_value).expanduser().resolve()
         except OSError:
-            missing_files += 1
+            missing += 1
             continue
-        if path.is_file():
-            path.unlink(missing_ok=True)
-            deleted_files += 1
-        else:
-            missing_files += 1
+        if not path.is_file():
+            missing += 1
+            continue
+        if not any(_is_within(path, root) for root in roots):
+            refused += 1
+            continue
+        path.unlink(missing_ok=True)
+        deleted += 1
+    return deleted, missing, refused
 
-    # Wipe configured category folders + default archive tree
-    wiped_dirs: list[str] = []
-    archive_dir = Path(config.ARCHIVE_DIR).resolve()
-    _wipe_dir_contents(archive_dir)
-    wiped_dirs.append(str(archive_dir))
 
-    for cat in settings.get("categories") or []:
-        folder = Path(cat.get("folder") or "").expanduser()
-        if not str(folder):
-            continue
-        try:
-            folder = folder.resolve()
-        except OSError:
-            continue
-        if folder == archive_dir or str(folder).startswith(str(archive_dir) + "/"):
-            continue
-        _wipe_dir_contents(folder)
-        wiped_dirs.append(str(folder))
+def clear_all_stored_data() -> dict[str, Any]:
+    """
+    Remove tracked archive files (path-confined), supported inbox scans, SQLite, and Chroma.
 
-    # Clear source/inbox scans
+    Keeps Setup settings (settings.json) and app code. Does **not** recursively wipe
+    user-configured source_dir or category folders.
+    """
+    config.ensure_data_dirs()
+
+    deleted_files, missing_files, refused_files = _delete_tracked_archive_files()
+
+    inbox = clear_inbox()
+    inbox_removed = int(inbox.get("removed_count") or 0)
     source_dir = get_source_dir()
-    inbox_removed = _wipe_dir_contents(source_dir)
 
-    # Reset SQLite
-    db_path = Path(config.DB_PATH).resolve()
+    # Reset SQLite (app-owned under DATA_DIR)
+    db_path = Path(config.DB_PATH).expanduser().resolve()
+    data_dir = Path(config.DATA_DIR).expanduser().resolve()
+    if not _is_within(db_path, data_dir):
+        raise RuntimeError(f"refusing to delete database outside DATA_DIR: {db_path}")
     db_removed = False
     if db_path.exists():
         db_path.unlink(missing_ok=True)
         db_removed = True
-    # Also drop leftover journal/wal if present
     for suffix in ("-wal", "-shm", "-journal"):
         side = Path(str(db_path) + suffix)
-        if side.exists():
+        if side.exists() and _is_within(side, data_dir):
             side.unlink(missing_ok=True)
     init_db()
 
-    # Reset Chroma (clear in-process client cache so a new empty store is used)
-    chroma_dir = Path(config.CHROMA_DIR).resolve()
+    # Reset Chroma (app-owned under DATA_DIR)
+    chroma_dir = Path(config.CHROMA_DIR).expanduser().resolve()
+    if not _is_within(chroma_dir, data_dir):
+        raise RuntimeError(f"refusing to delete Chroma outside DATA_DIR: {chroma_dir}")
     try:
         import chromadb
         from chromadb.api.client import SharedSystemClient
@@ -128,10 +140,15 @@ def clear_all_stored_data() -> dict[str, Any]:
         "status": "success",
         "deleted_tracked_files": deleted_files,
         "missing_tracked_files": missing_files,
+        "refused_tracked_files": refused_files,
         "inbox_entries_removed": inbox_removed,
-        "wiped_dirs": wiped_dirs,
+        "inbox_suffixes": sorted(SUPPORTED_SUFFIXES),
         "source_dir": str(source_dir),
         "database_removed": db_removed,
         "chroma_removed": chroma_removed,
-        "message": "Cleared archived files, inbox, metadata database, and RAG index.",
+        "message": (
+            "Cleared tracked archive files (within configured archive roots), "
+            "supported inbox scans, metadata database, and RAG index. "
+            "Category folders were not recursively wiped."
+        ),
     }

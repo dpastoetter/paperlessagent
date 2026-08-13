@@ -146,6 +146,6 @@ def usage_snapshot_unlocked() -> dict[str, Any]:
 
 
 def usage_snapshot() -> dict[str, Any]:
-    """Return a copy of current process usage for /api/health."""
+    """Return a copy of current process usage for /api/diagnostics."""
     with _lock:
         return usage_snapshot_unlocked()

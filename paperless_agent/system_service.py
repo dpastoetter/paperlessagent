@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from paperless_agent import config
-from paperless_agent.local_security import assert_bind_allowed
+from paperless_agent.local_security import assert_bind_allowed, ssl_cert_paths
 
 UNIT_NAME = "paperlessagent.service"
 DEFAULT_HOST = "127.0.0.1"
@@ -140,6 +140,11 @@ def render_unit_file() -> str:
     port = service_port()
     workdir = config.PROJECT_ROOT
     env_lines = "\n".join(_extra_environment_lines())
+    ssl_paths = ssl_cert_paths()
+    ssl_args = ""
+    if ssl_paths:
+        cert, key = ssl_paths
+        ssl_args = f" --ssl-certfile {cert} --ssl-keyfile {key}"
     return f"""[Unit]
 Description=PaperlessAgent local document assistant
 After=network-online.target
@@ -149,7 +154,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory={workdir}
 {env_lines}
-ExecStart={uvicorn} app.main:app --host {host} --port {port}
+ExecStart={uvicorn} app.main:app --host {host} --port {port}{ssl_args}
 Restart=on-failure
 RestartSec=5
 

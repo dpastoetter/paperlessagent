@@ -103,7 +103,7 @@ def test_embed_texts_routes_to_ollama(monkeypatch):
         def json(self):
             return {"embeddings": [[0.1, 0.2], [0.3, 0.4]]}
 
-    def fake_post(url, *, json, timeout):
+    def fake_post(url, *, json, timeout, **_kwargs):
         posted["url"] = url
         posted["json"] = json
         return FakeResponse()
@@ -131,7 +131,11 @@ def test_embed_texts_rejects_bad_response_shape(monkeypatch):
         def json(self):
             return {"embeddings": [[0.1]]}  # one vector for two inputs
 
-    monkeypatch.setattr(rag_index.httpx, "post", lambda url, *, json, timeout: FakeResponse())
+    monkeypatch.setattr(
+        rag_index.httpx,
+        "post",
+        lambda url, *, json, timeout, **_kwargs: FakeResponse(),
+    )
 
     with pytest.raises(RuntimeError, match="Unexpected embedding response"):
         embed_texts(["a", "b"])
@@ -266,6 +270,7 @@ def test_format_http_error_suggests_pull():
 def test_upsert_env_values_preserves_comments(tmp_path):
     path = tmp_path / ".env"
     path.write_text("# keep me\nDATA_DIR=./data\nPAPERLESS_LLM_PROVIDER=openai\n")
+    path.chmod(0o644)
     upsert_env_values(
         {
             "PAPERLESS_LLM_PROVIDER": "ollama",
@@ -279,6 +284,8 @@ def test_upsert_env_values_preserves_comments(tmp_path):
     assert "PAPERLESS_LLM_PROVIDER=ollama" in text
     assert "PAPERLESS_MODEL=gemma3" in text
     assert text.count("PAPERLESS_LLM_PROVIDER=") == 1
+    mode = path.stat().st_mode & 0o777
+    assert mode == 0o600
 
 
 def test_enable_ollama_updates_runtime_and_env(tmp_path, monkeypatch):

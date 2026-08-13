@@ -11,10 +11,13 @@ from paperless_agent.local_security import (
     AUTH_HEADER,
     COOKIE_NAME,
     extract_bearer_token,
+    forwarded_client_host,
     get_api_token,
+    request_appears_https,
     token_matches,
 )
 from paperless_agent.privacy import require_cloud_disclaimer
+from paperless_agent.sessions import session_is_valid
 from paperless_agent.settings import load_settings
 
 # CSRF: browsers cannot attach custom headers to cross-site form posts without
@@ -22,26 +25,59 @@ from paperless_agent.settings import load_settings
 CSRF_HEADER_NAME = "X-Requested-With"
 CSRF_HEADER_VALUE = "PaperlessAgent"
 MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
-AUTH_EXEMPT_PATHS = frozenset({"/api/health"})
+# Health + session bootstrap must work before a cookie exists.
+AUTH_EXEMPT_PATHS = frozenset(
+    {
+        "/api/health",
+        "/api/auth/session",
+        "/api/auth/session/status",
+        "/api/auth/session/logout",
+    }
+)
 
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # generous cap for large scans
 
 
-def client_host(request: Request) -> str | None:
+def peer_host(request: Request) -> str | None:
+    """Immediate TCP peer (never taken from X-Forwarded-*)."""
     if request.client is None:
         return None
     return request.client.host
 
 
+def client_host(request: Request) -> str | None:
+    """
+    End-user client host for auth decisions.
+
+    Honors X-Forwarded-For only when the peer is listed in PAPERLESS_TRUSTED_PROXIES.
+    """
+    return forwarded_client_host(
+        peer_host=peer_host(request),
+        x_forwarded_for=request.headers.get("x-forwarded-for"),
+    )
+
+
+def request_is_https(request: Request) -> bool:
+    return request_appears_https(
+        peer_host=peer_host(request),
+        url_scheme=request.url.scheme,
+        x_forwarded_proto=request.headers.get("x-forwarded-proto"),
+    )
+
+
 def request_has_valid_token(request: Request) -> bool:
+    """
+    Authenticate via Bearer PAPERLESS_API_TOKEN (machine clients) or pa_session cookie.
+
+    The cookie must be a random session id — never the long-lived API secret.
+    """
     expected = get_api_token()
     if not expected:
         return False
     bearer = extract_bearer_token(request.headers.get(AUTH_HEADER))
     if token_matches(bearer, expected):
         return True
-    cookie = request.cookies.get(COOKIE_NAME)
-    return token_matches(cookie, expected)
+    return session_is_valid(request.cookies.get(COOKIE_NAME))
 
 
 def is_within(path: Path, root: Path) -> bool:

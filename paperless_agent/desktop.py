@@ -12,8 +12,10 @@ from pathlib import Path
 
 import httpx
 import uvicorn
+from dotenv import load_dotenv
 
-from paperless_agent.local_security import assert_bind_allowed
+from paperless_agent.env_permissions import harden_secret_file, write_secret_text
+from paperless_agent.local_security import assert_bind_allowed, ssl_cert_paths
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_WIDTH = 1280
@@ -42,10 +44,10 @@ def _prepare_environment() -> Path:
     env_file = data_dir / ".env"
     example = _project_root() / ".env.example"
     if not env_file.exists() and example.exists():
-        env_file.write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
+        write_secret_text(env_file, example.read_text(encoding="utf-8"))
+    elif env_file.exists():
+        harden_secret_file(env_file, fix=True)
     if env_file.exists():
-        from dotenv import load_dotenv
-
         load_dotenv(env_file, override=False)
     return data_dir
 
@@ -103,13 +105,19 @@ def _start_uvicorn(host: str, port: int) -> uvicorn.Server:
     # Import app only after DATA_DIR / env are prepared so config picks them up.
     from app.main import app
 
-    uv_config = uvicorn.Config(
-        app,
-        host=host,
-        port=port,
-        log_level=os.getenv("PAPERLESS_LOG_LEVEL", "warning"),
-        access_log=False,
-    )
+    ssl_paths = ssl_cert_paths()
+    uv_kwargs: dict = {
+        "app": app,
+        "host": host,
+        "port": port,
+        "log_level": os.getenv("PAPERLESS_LOG_LEVEL", "warning"),
+        "access_log": False,
+    }
+    if ssl_paths:
+        cert, key = ssl_paths
+        uv_kwargs["ssl_certfile"] = str(cert)
+        uv_kwargs["ssl_keyfile"] = str(key)
+    uv_config = uvicorn.Config(**uv_kwargs)
     server = uvicorn.Server(uv_config)
 
     def _run() -> None:

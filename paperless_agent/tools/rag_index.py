@@ -25,6 +25,7 @@ from paperless_agent.ollama_setup import (
     format_http_error,
     resolve_runtime_model,
 )
+from paperless_agent.ollama_url import require_ollama_base_url
 from paperless_agent.tools.metadata_db import (
     clear_all_indexed_at,
     get_document,
@@ -381,20 +382,20 @@ def _embed_openai(texts: list[str]) -> list[list[float]]:
 
 
 def _embed_ollama(texts: list[str], *, model: str | None = None) -> list[list[float]]:
-    """Embeddings via a local Ollama server (/api/embed, batch input)."""
+    """Embeddings via an Ollama server (/api/embed, batch input)."""
     ensure_ollama_ready()
     resolved = resolve_runtime_model(model or config.EMBEDDING_MODEL)
+    base = require_ollama_base_url(config.OLLAMA_BASE_URL)
     try:
         resp = httpx.post(
-            f"{config.OLLAMA_BASE_URL}/api/embed",
+            f"{base}/api/embed",
             json={"model": resolved, "input": texts},
             timeout=120,
+            follow_redirects=False,
         )
         resp.raise_for_status()
     except httpx.ConnectError as exc:
-        raise RuntimeError(
-            f"Cannot reach Ollama at {config.OLLAMA_BASE_URL} — is `ollama serve` running?"
-        ) from exc
+        raise RuntimeError(f"Cannot reach Ollama at {base} — is `ollama serve` running?") from exc
     except httpx.HTTPStatusError as exc:
         raise RuntimeError(format_http_error(exc, model=resolved, kind="embedding model")) from exc
     payload = resp.json()

@@ -161,6 +161,7 @@ source .venv/bin/activate
 pip install -U pip
 pip install -e . -c constraints.txt
 cp .env.example .env   # skip if .env already exists
+chmod 600 .env         # owner-only; same posture as ~/.codex/auth.json
 ```
 
 (`requirements.txt` is a thin wrapper around the same constrained install for the OS installers.)
@@ -220,7 +221,9 @@ ollama pull nomic-embed-text  # embeddings for RAG
 PAPERLESS_LLM_PROVIDER=ollama
 PAPERLESS_MODEL=gemma3
 PAPERLESS_EMBEDDING_MODEL=nomic-embed-text
-# OLLAMA_BASE_URL=http://localhost:11434   (default)
+# OLLAMA_BASE_URL=http://localhost:11434   (default; loopback only)
+# Remote Ollama (another host) needs Settings → Remote Ollama (privacy disclaimer)
+# or PAPERLESS_ALLOW_REMOTE_OLLAMA=1 with a non-loopback OLLAMA_BASE_URL.
 ```
 
 **User-local install (no sudo):** on Linux you can install the Ollama binary under `~/.local/bin` and libraries under `~/.local/lib/ollama`. If you use a user-local build, ensure `LD_LIBRARY_PATH` includes `~/.local/lib/ollama` when starting `ollama serve` (PaperlessAgent’s systemd autostart unit sets this automatically when that directory exists).
@@ -252,14 +255,81 @@ uvicorn app.main:app --host 127.0.0.1 --port 8080
 | Ollama OCR times out on CPU | Raise `PAPERLESS_OLLAMA_OCR_PAGE_TIMEOUT` (default 900s) or lower `PAPERLESS_OLLAMA_OCR_MAX_IMAGE_PX` (default 1024); see [OCR tuning](#ocr-and-long-documents) |
 | Find details fails with “invalid JSON” | Usually empty/malformed model output — retry the file; with ChatGPT OAuth confirm a Codex model is selected and you are signed in |
 
-Uvicorn should bind to `127.0.0.1` (the default). The API has no user login; mutating routes also require a custom header the UI sends (CSRF hardening). **Non-loopback binds** (`0.0.0.0`, a LAN IP, etc.) are **refused at startup** unless you set `PAPERLESS_API_TOKEN` in `.env`. With a token configured, every `/api/*` route except `/api/health` requires `Authorization: Bearer …` or the `pa_session` cookie (the UI bootstraps this on loopback, or via `http://host:8080/?token=…` once). Host headers are allowlisted (`PAPERLESS_ALLOWED_HOSTS`, defaulting to localhost / loopback) to harden against DNS rebinding.
+Uvicorn should bind to `127.0.0.1` (the default). The API has no user login; mutating routes also require a custom header the UI sends (CSRF hardening).
+
+**Local mode** (default): `PAPERLESS_HOST=127.0.0.1` / `::1` — plain HTTP is fine on loopback.
+
+**Network mode** (bind `0.0.0.0`, a LAN IP, etc.): refused unless you set **all** of:
+
+1. `PAPERLESS_ALLOW_REMOTE=1` (explicit opt-in — a token alone is not enough)
+2. `PAPERLESS_API_TOKEN=…`
+3. `PAPERLESS_SSL_CERTFILE` + `PAPERLESS_SSL_KEYFILE` pointing at existing PEM files (HTTPS on the uvicorn process)
+
+A token over plain HTTP on a LAN can be intercepted; network mode therefore requires TLS on the app itself. Prefer keeping the app on loopback and terminating TLS on a reverse proxy instead (see [Network access (TLS reverse proxy)](#network-access-tls-reverse-proxy)).
+
+With a token configured, every `/api/*` route except health/session bootstrap requires either `Authorization: Bearer <PAPERLESS_API_TOKEN>` (machine clients) or an HttpOnly `pa_session` cookie. Browser sessions are **random ids** created by `POST /api/auth/session` (or automatically on loopback); the long-lived API secret is never injected into JavaScript or reused as the cookie value. Prefer the unlock panel over `?token=` (query strings end up in logs). Host headers are allowlisted (`PAPERLESS_ALLOWED_HOSTS`, defaulting to localhost / loopback) to harden against DNS rebinding. `X-Forwarded-*` is ignored unless the peer is listed in `PAPERLESS_TRUSTED_PROXIES`.
 
 ```bash
 python -c "from paperless_agent.local_security import generate_api_token; print(generate_api_token())"
 # → put the value in .env as PAPERLESS_API_TOKEN=…
+# Optional: PAPERLESS_SESSION_TTL_SECONDS=86400  (default 24h)
 ```
 
 Open [http://localhost:8080](http://localhost:8080).
+
+### Network access (TLS reverse proxy)
+
+Recommended pattern: keep PaperlessAgent in **local mode** on loopback, and put Caddy / nginx / Traefik in front with HTTPS. The proxy speaks TLS to clients; the app still uses HTTP only on `127.0.0.1`.
+
+1. Set a token and allow the public hostname in the Host allowlist:
+
+```bash
+PAPERLESS_HOST=127.0.0.1
+PAPERLESS_PORT=8080
+PAPERLESS_API_TOKEN=…          # required so LAN clients must authenticate
+PAPERLESS_ALLOWED_HOSTS=paperless.example.com,localhost,127.0.0.1
+PAPERLESS_TRUSTED_PROXIES=127.0.0.1,::1
+```
+
+2. Example **Caddy** snippet:
+
+```caddy
+paperless.example.com {
+  reverse_proxy 127.0.0.1:8080
+}
+```
+
+3. Example **nginx** location:
+
+```nginx
+server {
+  listen 443 ssl http2;
+  server_name paperless.example.com;
+  # ssl_certificate / ssl_certificate_key …
+  location / {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}
+```
+
+4. Example **Traefik** (label-style): route HTTPS entrypoint → `http://127.0.0.1:8080`, and only then set `PAPERLESS_TRUSTED_PROXIES` to the Traefik container/host IP.
+
+Do **not** set `PAPERLESS_TRUSTED_PROXIES=0.0.0.0/0`. Only list the proxy addresses that terminate TLS.
+
+If you truly need uvicorn itself on a non-loopback address, use network mode with app-level TLS:
+
+```bash
+PAPERLESS_HOST=0.0.0.0
+PAPERLESS_ALLOW_REMOTE=1
+PAPERLESS_API_TOKEN=…
+PAPERLESS_SSL_CERTFILE=/path/to/fullchain.pem
+PAPERLESS_SSL_KEYFILE=/path/to/privkey.pem
+uvicorn app.main:app --host 0.0.0.0 --port 8443 \
+  --ssl-certfile "$PAPERLESS_SSL_CERTFILE" --ssl-keyfile "$PAPERLESS_SSL_KEYFILE"
+```
 
 ### Autostart at boot (Linux + systemd)
 
@@ -286,6 +356,8 @@ Autostart requires Linux with `systemctl --user`. It is hidden on other platform
 5. Find the filed document in **Archive**, or ask questions in **Ask**
 
 Filing rules (source folder, category → folder mapping, poll interval, review requirement) live in **Settings → Filing & scanning** and are stored in `data/settings.json`.
+
+**Danger zone → Remove all stored data** deletes only (1) files tracked in the metadata DB whose paths still lie inside a configured archive root, (2) supported inbox scan files (PDF/images), and (3) the app-owned SQLite + Chroma stores under `DATA_DIR`. It never recursively wipes a category folder or the inbox directory. The API requires the confirmation phrase `DELETE ALL PAPERLESSAGENT DATA` (UI two-click confirm is not enough). Settings also refuse dangerous roots (`/`, `$HOME`, `~/Downloads`, `~/Documents`, the project root, system paths, and `DATA_DIR` itself).
 
 ### Processing controls
 
@@ -391,8 +463,9 @@ git checkout v0.2.0
 
 ```bash
 pip install -e ".[dev]" -c constraints.txt   # pytest, pytest-cov, ruff, mypy, pip-tools
-./scripts/ci.sh           # same gate as GitHub Actions (format, lint, pip check, mypy, JS, Vitest, pytest+coverage)
-./scripts/precommit.sh    # secret guard + CI gate (also usable as a git hook)
+./scripts/ci.sh                 # quality gate (format, lint, pip check, mypy, JS, Vitest, pytest+coverage)
+./scripts/dependency-audit.sh   # pip-audit (OSV) + npm audit
+./scripts/precommit.sh          # secret guard + CI gate (also usable as a git hook)
 ```
 
 Coverage is measured with `pytest-cov` (`paperless_agent`, `app`, `query_agent`; branch coverage). CI fails if total coverage drops below the floor in `pyproject.toml` (`--cov-fail-under`). HTML report: `htmlcov/` (gitignored). Desktop GUI (`desktop.py`) and live network/Ollama/systemd are mocked or omitted — unit-test their helpers instead.
@@ -419,7 +492,7 @@ The pre-commit gate refuses commits containing `.env` files, databases, `data/` 
 
 Installers still call `pip install -r requirements.txt` / `requirements-desktop.txt`, which are thin wrappers around those constrained editable installs (not a second dependency list).
 
-Pull requests and pushes to `main` run [`.github/workflows/ci.yml`](.github/workflows/ci.yml). Tag releases run the same quality gate on the exact tagged commit before publishing assets ([`.github/workflows/release.yml`](.github/workflows/release.yml)).
+Pull requests and pushes to `main` run [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (`scripts/ci.sh`, `scripts/dependency-audit.sh` / pip-audit+OSV + npm audit, and CodeQL). Tag releases run the same quality and dependency gates on the **exact tagged commit** before publishing ([`.github/workflows/release.yml`](.github/workflows/release.yml)). Workflows pin Actions to full commit SHAs and grant `contents: write` only to the release publish job.
 
 ### ADK agents (debug)
 

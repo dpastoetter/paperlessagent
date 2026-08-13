@@ -7,12 +7,12 @@ from paperless_agent.tools import filesystem
 
 
 def test_list_and_clear_inbox(isolated_data):
+    from tests.media_fixtures import write_minimal_pdf, write_minimal_png
+
     inbox = get_source_dir()
-    pdf = inbox / "a.pdf"
-    png = inbox / "b.png"
+    pdf = write_minimal_pdf(inbox / "a.pdf")
+    png = write_minimal_png(inbox / "b.png")
     junk = inbox / "notes.txt"
-    pdf.write_bytes(b"%PDF")
-    png.write_bytes(b"\x89PNG")
     junk.write_text("ignore")
 
     listed = filesystem.list_inbox()
@@ -26,6 +26,8 @@ def test_list_and_clear_inbox(isolated_data):
     assert set(cleared["removed"]) == {"a.pdf", "b.png"}
     assert filesystem.list_inbox()["count"] == 0
     assert junk.exists()
+    assert pdf.parent == inbox
+    assert png.parent == inbox
 
 
 def test_reveal_in_explorer_missing(isolated_data):
@@ -75,8 +77,9 @@ def test_reveal_in_explorer_darwin(isolated_data, monkeypatch):
 
 
 def test_read_document_image_notes_vision(isolated_data):
-    img = isolated_data / "scan.png"
-    img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 20)
+    from tests.media_fixtures import write_minimal_png
+
+    img = write_minimal_png(get_source_dir() / "scan.png")
     result = filesystem.read_document(str(img))
     assert result["status"] == "success"
     assert result.get("suffix") == ".png" or "image" in str(result).lower()

@@ -1,19 +1,26 @@
-"""Tests for wiping archived files, SQLite, and Chroma."""
+"""Tests for wiping archived files, SQLite, and Chroma (safe deletion model)."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app
+from app.main import CSRF_HEADER_NAME, CSRF_HEADER_VALUE, app
 from paperless_agent.config import ensure_data_dirs
-from paperless_agent.settings import clear_settings_cache, load_settings, save_settings
+from paperless_agent.settings import (
+    clear_settings_cache,
+    load_settings,
+    refuse_dangerous_storage_path,
+    save_settings,
+    validate_settings,
+)
 from paperless_agent.tools import metadata_db, rag_index
-from paperless_agent.tools.storage import clear_all_stored_data
+from paperless_agent.tools.storage import CLEAR_DATA_CONFIRMATION, clear_all_stored_data
 
 
-def test_clear_all_stored_data(tmp_path, monkeypatch):
+def _isolate_data(tmp_path, monkeypatch):
     data = tmp_path / "data"
     monkeypatch.setattr("paperless_agent.config.DATA_DIR", data)
     monkeypatch.setattr("paperless_agent.config.INBOX_DIR", data / "inbox")
@@ -25,12 +32,19 @@ def test_clear_all_stored_data(tmp_path, monkeypatch):
     clear_settings_cache()
     ensure_data_dirs()
     load_settings()
+    return data
+
+
+def test_clear_all_stored_data(tmp_path, monkeypatch):
+    data = _isolate_data(tmp_path, monkeypatch)
 
     archive_file = data / "archive" / "invoice" / "2024" / "doc.pdf"
     archive_file.parent.mkdir(parents=True, exist_ok=True)
     archive_file.write_bytes(b"%PDF-1.4 stub")
     inbox_file = data / "inbox" / "scan.pdf"
     inbox_file.write_bytes(b"%PDF-1.4 stub")
+    inbox_notes = data / "inbox" / "notes.txt"
+    inbox_notes.write_text("keep me")
 
     saved = metadata_db.upsert_metadata(
         original_name="scan.pdf",
@@ -55,7 +69,6 @@ def test_clear_all_stored_data(tmp_path, monkeypatch):
     assert (data / "chroma").exists()
     assert (data / "paperless.db").exists()
 
-    # Keep settings around
     settings_before = save_settings(
         {
             "source_dir": str(data / "inbox"),
@@ -69,35 +82,113 @@ def test_clear_all_stored_data(tmp_path, monkeypatch):
 
     result = clear_all_stored_data()
     assert result["status"] == "success"
+    assert result["deleted_tracked_files"] == 1
+    assert result["refused_tracked_files"] == 0
     assert not archive_file.exists()
     assert not inbox_file.exists()
+    assert inbox_notes.exists(), "non-scan inbox files must not be deleted"
     assert metadata_db.list_recent().get("count") == 0
     assert (data / "settings.json").exists()
     assert Path(settings_before["source_dir"]).is_dir()
 
-    # Chroma collection should be empty / recreatable
     hits = rag_index.retrieve_chunks("Acme invoice", top_k=3)
     assert hits["status"] == "success"
     assert hits["count"] == 0
     clear_settings_cache()
 
 
-def test_clear_all_data_api(tmp_path, monkeypatch):
-    monkeypatch.setattr("paperless_agent.config.DATA_DIR", tmp_path)
-    monkeypatch.setattr("paperless_agent.config.INBOX_DIR", tmp_path / "inbox")
-    monkeypatch.setattr("paperless_agent.config.ARCHIVE_DIR", tmp_path / "archive")
-    monkeypatch.setattr("paperless_agent.config.DB_PATH", tmp_path / "paperless.db")
-    monkeypatch.setattr("paperless_agent.config.CHROMA_DIR", tmp_path / "chroma")
-    monkeypatch.setattr("paperless_agent.tools.metadata_db.DB_PATH", tmp_path / "paperless.db")
-    clear_settings_cache()
-    (tmp_path / "inbox").mkdir(parents=True)
-    load_settings()
+def test_clear_does_not_wipe_untracked_or_out_of_root_files(tmp_path, monkeypatch):
+    data = _isolate_data(tmp_path, monkeypatch)
+    # Simulate a misconfigured category that points at an external tree (still allowed
+    # as a *root* for tracked files, but we must not rmtree its contents).
+    external = tmp_path / "Downloads"
+    external.mkdir()
+    keep = external / "unrelated.pdf"
+    keep.write_bytes(b"%PDF keep")
+    orphan = external / "orphan-not-in-db.pdf"
+    orphan.write_bytes(b"%PDF orphan")
 
-    from app.main import CSRF_HEADER_NAME, CSRF_HEADER_VALUE
+    tracked = external / "tracked.pdf"
+    tracked.write_bytes(b"%PDF tracked")
+
+    save_settings(
+        {
+            "source_dir": str(data / "inbox"),
+            "categories": [
+                {"name": "invoice", "folder": str(external)},
+                {"name": "other", "folder": str(data / "archive" / "other")},
+            ],
+            "batch": {"poll_interval_seconds": 0},
+        }
+    )
+    metadata_db.upsert_metadata(
+        original_name="tracked.pdf",
+        filename="tracked.pdf",
+        path=str(tracked),
+        doc_type="invoice",
+    )
+
+    # Escape hatch: path in DB outside every archive root must be refused.
+    escape = tmp_path / "secret.pdf"
+    escape.write_bytes(b"%PDF secret")
+    metadata_db.upsert_metadata(
+        original_name="secret.pdf",
+        filename="secret.pdf",
+        path=str(escape),
+        doc_type="other",
+        document_id="escape-doc",
+    )
+
+    result = clear_all_stored_data()
+    assert result["status"] == "success"
+    assert result["deleted_tracked_files"] == 1
+    assert result["refused_tracked_files"] >= 1
+    assert not tracked.exists()
+    assert keep.exists()
+    assert orphan.exists(), "untracked files in category folder must survive"
+    assert escape.exists(), "paths outside archive roots must not be unlinked"
+    clear_settings_cache()
+
+
+def test_clear_all_data_api_requires_confirmation(tmp_path, monkeypatch):
+    _isolate_data(tmp_path, monkeypatch)
 
     client = TestClient(app)
     client.headers.update({CSRF_HEADER_NAME: CSRF_HEADER_VALUE})
-    response = client.delete("/api/data")
-    assert response.status_code == 200
-    assert response.json()["status"] == "success"
+
+    denied = client.request("DELETE", "/api/data", json={"confirmation": "yes"})
+    assert denied.status_code == 400
+
+    missing = client.request("DELETE", "/api/data")
+    assert missing.status_code == 422
+
+    ok = client.request(
+        "DELETE",
+        "/api/data",
+        json={"confirmation": CLEAR_DATA_CONFIRMATION},
+    )
+    assert ok.status_code == 200
+    assert ok.json()["status"] == "success"
     clear_settings_cache()
+
+
+def test_refuse_dangerous_storage_paths(tmp_path, monkeypatch):
+    _isolate_data(tmp_path, monkeypatch)
+    home = Path.home()
+    with pytest.raises(ValueError, match="home directory"):
+        refuse_dangerous_storage_path(home, label="source_dir")
+    with pytest.raises(ValueError, match="Downloads"):
+        refuse_dangerous_storage_path(home / "Downloads", label="source_dir")
+    with pytest.raises(ValueError, match="filesystem root"):
+        refuse_dangerous_storage_path(Path("/"), label="source_dir")
+
+    with pytest.raises(ValueError, match="Downloads"):
+        validate_settings(
+            {
+                "source_dir": str(tmp_path / "data" / "inbox"),
+                "categories": [
+                    {"name": "invoice", "folder": str(home / "Downloads")},
+                    {"name": "other", "folder": str(tmp_path / "data" / "archive" / "other")},
+                ],
+            }
+        )

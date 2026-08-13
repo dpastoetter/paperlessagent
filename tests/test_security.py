@@ -32,8 +32,10 @@ def test_mutating_routes_require_csrf_header(isolated_data):
         assert resp.status_code == 403, path
         assert "cross-site" in resp.json()["detail"]
 
-    # GET remains open (no state change).
-    assert bare.get("/api/health").status_code == 200
+    # GET liveness remains open and must stay privacy-minimal.
+    health = bare.get("/api/health")
+    assert health.status_code == 200
+    assert set(health.json().keys()) <= {"status", "version"}
 
 
 def test_csrf_header_allows_mutation(client):
@@ -71,9 +73,11 @@ def test_upload_rejects_unsupported_type(client):
 
 
 def test_upload_accepts_pdf(client):
+    from tests.media_fixtures import minimal_pdf_bytes
+
     resp = client.post(
         "/api/upload",
-        files={"file": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+        files={"file": ("scan.pdf", minimal_pdf_bytes(), "application/pdf")},
     )
     assert resp.status_code == 200
     assert resp.json()["filename"] == "scan.pdf"

@@ -280,6 +280,13 @@ if (-not (Test-Path $envFile)) {
 } else {
     Write-Ok ".env already present — left untouched"
 }
+# Restrict .env like OAuth credentials (owner-only); best-effort on NTFS.
+& $venvPy -c "from pathlib import Path; import sys; from paperless_agent.env_permissions import harden_secret_file; r=harden_secret_file(Path(sys.argv[1]), fix=True); raise SystemExit(0 if (not r.get('was_insecure') or r.get('fixed') or not r.get('exists')) else 1)" $envFile
+if ($LASTEXITCODE -ne 0) {
+    Write-Warn "could not fully tighten .env permissions (mode 600)"
+} else {
+    Write-Ok ".env permissions set to owner-only (0600)"
+}
 
 foreach ($dir in @("data\inbox", "data\archive", "data\chroma")) {
     $path = Join-Path $InstallDir $dir

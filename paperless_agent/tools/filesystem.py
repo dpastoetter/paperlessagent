@@ -14,12 +14,55 @@ from typing import Any
 from pypdf import PdfReader
 
 from paperless_agent.config import ensure_data_dirs
+from paperless_agent.media_validate import MediaValidationError, validate_scan_file
 from paperless_agent.settings import get_folder_for_category, get_source_dir
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp"}
 PDF_SUFFIXES = {".pdf"}
 SUPPORTED_SUFFIXES = IMAGE_SUFFIXES | PDF_SUFFIXES
 UPLOAD_CHUNK_BYTES = 1024 * 1024  # 1 MiB stream chunks
+
+
+def path_is_within(path: Path, root: Path) -> bool:
+    """True when ``path`` resolves under ``root`` (defense-in-depth helper)."""
+    try:
+        return path.resolve().is_relative_to(root.resolve())
+    except (OSError, ValueError):
+        return False
+
+
+def require_inbox_source(path: str | Path) -> Path | dict[str, Any]:
+    """
+    Resolve ``path`` and require it to be a file inside the configured inbox.
+
+    Returns the resolved ``Path`` on success, or an error dict suitable for
+    ADK tool responses. Used by read/file tools so agents cannot touch
+    arbitrary home-directory PDFs even if a debug UI is exposed.
+    """
+    ensure_data_dirs()
+    inbox = get_source_dir().resolve()
+    try:
+        file_path = Path(path).expanduser().resolve()
+    except (OSError, RuntimeError) as exc:
+        return {
+            "status": "error",
+            "error": f"invalid path: {exc}",
+            "code": "invalid_path",
+        }
+
+    if not path_is_within(file_path, inbox):
+        return {
+            "status": "error",
+            "error": (f"source path escapes inbox ({inbox}): refusing to operate on {file_path}"),
+            "code": "outside_inbox",
+        }
+    if not file_path.exists() or not file_path.is_file():
+        return {
+            "status": "error",
+            "error": f"file not found: {path}",
+            "code": "missing",
+        }
+    return file_path
 
 
 def _safe_stem(value: str) -> str:
@@ -142,13 +185,15 @@ def read_document(path: str) -> dict[str, Any]:
     """
     Read a local PDF or image for classification/extraction.
 
+    The source must resolve inside the configured inbox (``get_source_dir()``).
     For PDFs, returns extracted text when available. Scanned PDFs may have
     empty text; agents should still classify from filename/context and any
     available text. Images return metadata and note that vision OCR is needed.
     """
-    file_path = Path(path).expanduser().resolve()
-    if not file_path.exists() or not file_path.is_file():
-        return {"status": "error", "error": f"file not found: {path}"}
+    confined = require_inbox_source(path)
+    if isinstance(confined, dict):
+        return confined
+    file_path = confined
 
     suffix = file_path.suffix.lower()
     if suffix not in SUPPORTED_SUFFIXES:
@@ -172,12 +217,13 @@ def read_document(path: str) -> dict[str, Any]:
 
     if suffix in PDF_SUFFIXES:
         try:
-            reader = PdfReader(str(file_path))
+            media = validate_scan_file(file_path)
+            reader = PdfReader(str(file_path), strict=False)
             pages = []
             for i, page in enumerate(reader.pages):
                 page_text = page.extract_text() or ""
                 pages.append({"page": i + 1, "text": page_text})
-            result["page_count"] = len(pages)
+            result["page_count"] = media.get("page_count", len(pages))
             result["pages"] = pages
             result["text"] = "\n\n".join(
                 f"[Page {p['page']}]\n{p['text']}".strip() for p in pages
@@ -187,9 +233,16 @@ def read_document(path: str) -> dict[str, Any]:
                     "No extractable text layer; treat as scanned PDF and infer "
                     "from available cues / multimodal analysis."
                 )
+        except MediaValidationError as exc:
+            return {"status": "error", "error": str(exc), "code": exc.code}
         except Exception as exc:  # noqa: BLE001 - surface to agent
             return {"status": "error", "error": f"failed to read PDF: {exc}"}
     else:
+        try:
+            media = validate_scan_file(file_path)
+            result["media"] = media
+        except MediaValidationError as exc:
+            return {"status": "error", "error": str(exc), "code": exc.code}
         result["note"] = (
             "Image scan; no text layer. Use multimodal reasoning on the file "
             "path/name and any known context."
@@ -264,16 +317,17 @@ def move_to_archive(
     """
     File a document into {category_folder}/{yyyy}/ with the given filename.
 
+    The source must resolve inside the configured inbox (``get_source_dir()``).
     Category folders come from Setup settings; unknown types fall back to 'other'.
     Uses a numeric suffix if the destination already exists.
 
     With delete_source=False the file is copied instead of moved, so the caller
     can commit metadata first and only then remove the source (atomic filing).
     """
-    ensure_data_dirs()
-    src = Path(source_path).expanduser().resolve()
-    if not src.exists() or not src.is_file():
-        return {"status": "error", "error": f"source not found: {source_path}"}
+    confined = require_inbox_source(source_path)
+    if isinstance(confined, dict):
+        return confined
+    src = confined
 
     safe_type = _safe_stem(doc_type or "other").lower()
     year_part = year or "unknown"
@@ -363,6 +417,11 @@ def save_upload_to_inbox(filename: str, content: bytes) -> dict[str, Any]:
         if not partial.resolve().is_relative_to(inbox.resolve()):
             partial.unlink(missing_ok=True)
             return {"status": "error", "error": "upload path escapes inbox"}
+        try:
+            media = validate_scan_file(partial, suffix=dest.suffix)
+        except MediaValidationError as exc:
+            partial.unlink(missing_ok=True)
+            return {"status": "error", "error": str(exc), "code": exc.code}
         os.replace(str(partial), str(dest))
     except OSError as exc:
         partial.unlink(missing_ok=True)
@@ -373,6 +432,7 @@ def save_upload_to_inbox(filename: str, content: bytes) -> dict[str, Any]:
         "filename": dest.name,
         "source_dir": str(inbox),
         "bytes": len(content),
+        "media": media,
     }
 
 
@@ -441,6 +501,12 @@ async def stream_upload_to_inbox(
             partial.unlink(missing_ok=True)
             return {"status": "error", "error": "upload path escapes inbox"}
 
+        try:
+            media = validate_scan_file(partial, suffix=dest.suffix)
+        except MediaValidationError as exc:
+            partial.unlink(missing_ok=True)
+            return {"status": "error", "error": str(exc), "code": exc.code}
+
         os.replace(str(partial), str(dest))
     except OSError as exc:
         partial.unlink(missing_ok=True)
@@ -455,4 +521,5 @@ async def stream_upload_to_inbox(
         "filename": dest.name,
         "source_dir": str(inbox),
         "bytes": size,
+        "media": media,
     }

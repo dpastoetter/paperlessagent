@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 
-from app.deps import require_cloud_disclaimer_or_403
+from app.deps import client_host, request_is_https, require_cloud_disclaimer_or_403
 from app.schemas import (
     ApiKeyRequest,
     CloudDisclaimerRequest,
@@ -16,6 +16,7 @@ from app.schemas import (
     OllamaEnableRequest,
     OllamaPullRequest,
     OllamaRestartRequest,
+    SessionExchangeRequest,
 )
 from paperless_agent import config
 from paperless_agent.auth import codex_auth_status
@@ -29,6 +30,11 @@ from paperless_agent.codex_oauth import (
 from paperless_agent.inbox_worker import cancel_active_file, is_processing
 from paperless_agent.job_control import get_active_file_id
 from paperless_agent.llm import resolve_model_name
+from paperless_agent.local_security import (
+    COOKIE_NAME,
+    auth_required_for_request,
+    get_api_token,
+)
 from paperless_agent.ollama_setup import (
     apply_llm_provider,
     enable_ollama,
@@ -39,20 +45,78 @@ from paperless_agent.ollama_setup import (
     start_ollama,
     unload_model,
 )
+from paperless_agent.ollama_url import is_loopback_ollama_url, normalize_ollama_base_url
 from paperless_agent.privacy import (
     accept_cloud_disclaimer,
     cloud_disclaimer_status,
     revoke_cloud_disclaimer,
 )
+from paperless_agent.sessions import (
+    attach_session_cookie,
+    exchange_api_token,
+    revoke_session,
+    session_is_valid,
+    session_ttl_seconds,
+)
 from paperless_agent.usage import usage_snapshot
+from paperless_agent.version import get_current_version
 
 router = APIRouter(tags=["auth"])
 
 
+@router.get("/api/auth/session/status")
+def api_session_status(request: Request) -> dict[str, Any]:
+    """Whether API auth is required and whether this browser already has a session."""
+    peer = client_host(request)
+    required = auth_required_for_request(client_host=peer) and bool(get_api_token())
+    cookie = request.cookies.get(COOKIE_NAME)
+    return {
+        "status": "success",
+        "auth_required": required,
+        "authenticated": session_is_valid(cookie) if required else True,
+        "session_ttl_seconds": session_ttl_seconds(),
+    }
+
+
+@router.post("/api/auth/session")
+def api_session_exchange(
+    request: Request, body: SessionExchangeRequest, response: Response
+) -> dict[str, Any]:
+    """Exchange PAPERLESS_API_TOKEN for an HttpOnly session cookie (secret never stored in JS)."""
+    if not get_api_token():
+        raise HTTPException(status_code=400, detail="PAPERLESS_API_TOKEN is not configured")
+    raw = exchange_api_token(body.token)
+    if not raw:
+        raise HTTPException(status_code=401, detail="invalid API token")
+    attach_session_cookie(response, raw, secure=request_is_https(request))
+    return {
+        "status": "success",
+        "authenticated": True,
+        "session_ttl_seconds": session_ttl_seconds(),
+    }
+
+
+@router.post("/api/auth/session/logout")
+def api_session_logout(request: Request, response: Response) -> dict[str, Any]:
+    """Revoke the current browser session and clear the cookie."""
+    raw = request.cookies.get(COOKIE_NAME)
+    revoked = revoke_session(raw)
+    response.delete_cookie(key=COOKIE_NAME, path="/")
+    return {"status": "success", "revoked": revoked}
+
+
 @router.get("/api/health")
 def health() -> dict[str, Any]:
+    """Unauthenticated liveness probe — no models, auth, usage, or paths."""
+    return {"status": "ok", "version": get_current_version()}
+
+
+@router.get("/api/diagnostics")
+def diagnostics() -> dict[str, Any]:
+    """Authenticated status for the UI: models, usage, auth, Ollama, disclaimer."""
     payload: dict[str, Any] = {
         "status": "ok",
+        "version": get_current_version(),
         "llm_provider": config.LLM_PROVIDER,
         "model": resolve_model_name(),
         "configured_model": config.MODEL_NAME,
@@ -138,11 +202,26 @@ def api_ollama_status() -> dict[str, Any]:
 
 @router.post("/api/ollama/enable")
 def api_ollama_enable(body: OllamaEnableRequest) -> dict[str, Any]:
+    candidate = normalize_ollama_base_url(body.base_url) if body.base_url else None
+    remote = bool(body.allow_remote) or (
+        candidate is not None and not is_loopback_ollama_url(candidate)
+    )
+    if remote:
+        if not body.allow_remote:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Non-loopback Ollama URLs require allow_remote=true and the privacy "
+                    "disclaimer (documents leave this machine)."
+                ),
+            )
+        require_cloud_disclaimer_or_403()
     try:
         result = enable_ollama(
             base_url=body.base_url,
             chat_model=body.chat_model,
             embedding_model=body.embedding_model,
+            allow_remote=body.allow_remote,
             persist=True,
         )
     except ValueError as exc:
@@ -152,10 +231,10 @@ def api_ollama_enable(body: OllamaEnableRequest) -> dict[str, Any]:
     if body.pull_missing:
         for name in list(result.get("ollama", {}).get("missing_models") or []):
             try:
-                pulled.append(pull_model(name, base_url=body.base_url))
+                pulled.append(pull_model(name, base_url=result["applied"]["ollama_base_url"]))
             except Exception as exc:  # noqa: BLE001
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
-        result["ollama"] = ollama_status(base_url=body.base_url)
+        result["ollama"] = ollama_status(base_url=result["applied"]["ollama_base_url"])
         result["pulled"] = pulled
     return result
 
@@ -183,19 +262,34 @@ def api_llm_provider(body: LlmProviderRequest) -> dict[str, Any]:
     provider = (body.provider or "").strip().lower()
     if provider in {"openai", "codex", "gemini", "google"}:
         require_cloud_disclaimer_or_403()
+    candidate = normalize_ollama_base_url(body.base_url) if body.base_url else None
+    remote_ollama = provider in {"ollama", "local"} and (
+        bool(body.allow_remote) or (candidate is not None and not is_loopback_ollama_url(candidate))
+    )
+    if remote_ollama:
+        if not body.allow_remote:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Non-loopback Ollama URLs require allow_remote=true and the privacy "
+                    "disclaimer (documents leave this machine)."
+                ),
+            )
+        require_cloud_disclaimer_or_403()
     try:
         applied = apply_llm_provider(
             body.provider,
             model=body.model,
             embedding_model=body.embedding_model,
             base_url=body.base_url,
+            allow_remote=body.allow_remote,
             persist=True,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     payload: dict[str, Any] = {"status": "success", "applied": applied}
     if applied["provider"] == "ollama":
-        payload["ollama"] = ollama_status(base_url=body.base_url)
+        payload["ollama"] = ollama_status(base_url=applied["ollama_base_url"])
     return payload
 
 
