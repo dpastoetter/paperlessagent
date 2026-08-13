@@ -9,7 +9,57 @@ permissions:
   contents: write
 
 jobs:
+  quality:
+    name: Quality gate (tagged commit)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+
+      - name: Verify tag points at checked-out commit
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          CHECKOUT="$(git rev-parse HEAD)"
+          TAGGED="$(git rev-parse "${TAG}^{commit}")"
+          echo "checkout=${CHECKOUT}"
+          echo "tag=${TAG} → ${TAGGED}"
+          if [ "$CHECKOUT" != "$TAGGED" ]; then
+            echo "Checked-out commit does not match tag ${TAG}" >&2
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Set up Node (JS syntax + Vitest)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install -U pip
+          pip install -e ".[dev]" -c constraints.txt
+          npm ci
+
+      - name: Run quality gate
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci.sh
+          ./scripts/ci.sh
+
   release:
+    name: Publish release
+    needs: quality
     runs-on: ubuntu-latest
     steps:
       - name: Checkout tag

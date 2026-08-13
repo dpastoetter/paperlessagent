@@ -1,0 +1,315 @@
+:root {
+  --bg: #0e1317;
+  --bg-deep: #0a0e12;
+  --panel: #151c22;
+  --ink: #dbe4ea;
+  --muted: #93a3af;
+  --soft: #64747f;
+  --accent: #3cbfd4;
+  --accent-deep: #1f8fa1;
+  --accent-dim: rgba(60, 191, 212, 0.13);
+  --accent-glow: rgba(60, 191, 212, 0.28);
+  --line: rgba(148, 170, 186, 0.13);
+  --font: "Space Grotesk", "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg-deep);
+  color: var(--ink);
+  font-family: var(--font);
+  overflow: hidden;
+}
+
+.deck {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  background: var(--bg);
+}
+
+.slide {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  opacity: 0;
+  transition: opacity 0.45s var(--ease);
+}
+
+.slide.active {
+  display: flex;
+  opacity: 1;
+  animation: fade-in 0.5s var(--ease);
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* —— Title —— */
+.slide-title {
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 4rem 2rem;
+  background:
+    radial-gradient(ellipse 80% 55% at 50% 35%, rgba(60, 191, 212, 0.16), transparent 55%),
+    radial-gradient(ellipse 60% 40% at 80% 90%, rgba(31, 143, 161, 0.1), transparent 50%),
+    linear-gradient(165deg, #0a0e12 0%, #0e1317 45%, #121a20 100%);
+}
+
+.brand {
+  margin: 0;
+  font-size: clamp(2.8rem, 8vw, 5.5rem);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  color: var(--ink);
+}
+
+.brand span {
+  color: var(--accent);
+}
+
+.tagline {
+  margin: 1.4rem 0 0;
+  max-width: 34rem;
+  font-size: clamp(1.05rem, 2.2vw, 1.35rem);
+  font-weight: 400;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.subline {
+  margin: 1.75rem 0 0;
+  font-family: var(--mono);
+  font-size: clamp(0.7rem, 1.2vw, 0.82rem);
+  letter-spacing: 0.04em;
+  color: var(--soft);
+}
+
+/* —— What it does —— */
+.slide-about {
+  justify-content: center;
+  padding: clamp(2rem, 5vh, 4rem) clamp(1.5rem, 6vw, 5rem);
+  background:
+    radial-gradient(ellipse 50% 40% at 10% 20%, rgba(60, 191, 212, 0.08), transparent 50%),
+    var(--bg);
+}
+
+.slide-about h2 {
+  margin: 0 0 1.75rem;
+  font-size: clamp(1.5rem, 3.5vw, 2.2rem);
+  font-weight: 560;
+  letter-spacing: -0.02em;
+}
+
+.pipeline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.35rem;
+  margin-bottom: 2.25rem;
+}
+
+.pipeline .step {
+  padding: 0.45rem 0.75rem;
+  border-radius: 8px;
+  background: var(--accent-dim);
+  border: 1px solid rgba(60, 191, 212, 0.22);
+  font-size: clamp(0.72rem, 1.4vw, 0.88rem);
+  font-weight: 500;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.pipeline .arrow {
+  color: var(--soft);
+  font-size: 0.85rem;
+  user-select: none;
+}
+
+.points {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 40rem;
+}
+
+.points li {
+  position: relative;
+  padding-left: 1.35rem;
+  font-size: clamp(1rem, 2vw, 1.2rem);
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.points li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.55em;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.points strong {
+  color: var(--ink);
+  font-weight: 550;
+}
+
+/* —— UX screenshot slides —— */
+.slide-ux {
+  padding: 0;
+  background: var(--bg-deep);
+}
+
+.caption-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem clamp(1rem, 3vw, 1.75rem);
+  border-bottom: 1px solid var(--line);
+  background: rgba(10, 14, 18, 0.92);
+  backdrop-filter: blur(8px);
+  z-index: 2;
+}
+
+.caption-bar h2 {
+  margin: 0;
+  font-size: clamp(1rem, 2vw, 1.25rem);
+  font-weight: 550;
+  letter-spacing: -0.01em;
+}
+
+.caption-bar p {
+  margin: 0.15rem 0 0;
+  font-size: clamp(0.78rem, 1.3vw, 0.92rem);
+  color: var(--muted);
+}
+
+.caption-main {
+  min-width: 0;
+}
+
+.mock-note {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+  color: var(--soft);
+  white-space: nowrap;
+}
+
+.shot {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #06090c;
+  padding: 0;
+}
+
+.shot img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center top;
+  display: block;
+  image-rendering: auto;
+}
+
+/* —— Chrome —— */
+.progress {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: rgba(148, 170, 186, 0.12);
+  z-index: 20;
+}
+
+.progress-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent-deep), var(--accent));
+  transition: width 0.35s var(--ease);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.chrome {
+  position: fixed;
+  bottom: 0.85rem;
+  right: 1rem;
+  z-index: 21;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--soft);
+  pointer-events: none;
+}
+
+.chrome kbd {
+  display: inline-block;
+  padding: 0.15rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 0.65rem;
+}
+
+@media (max-width: 700px) {
+  .caption-bar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.35rem;
+  }
+
+  .chrome {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slide.active {
+    animation: none;
+  }
+
+  .slide,
+  .progress-bar {
+    transition: none;
+  }
+}

@@ -6,7 +6,11 @@ import asyncio
 
 import pytest
 
-from paperless_agent.job_control import FileCancelledError, bind_file_cancel, request_cancel_file
+from paperless_agent.job_control import (
+    FileCancelledError,
+    bind_file_cancel,
+    request_cancel_file,
+)
 from paperless_agent.llm import _ollama_request, run_cancellable
 
 

@@ -31,9 +31,7 @@ def isolated_data(tmp_path, monkeypatch):
     monkeypatch.setattr("paperless_agent.config.DB_PATH", data / "paperless.db")
     monkeypatch.setattr("paperless_agent.config.CHROMA_DIR", data / "chroma")
     # metadata_db froze DB_PATH at import time; patch its module-level copy too.
-    monkeypatch.setattr(
-        "paperless_agent.tools.metadata_db.DB_PATH", data / "paperless.db"
-    )
+    monkeypatch.setattr("paperless_agent.tools.metadata_db.DB_PATH", data / "paperless.db")
     clear_settings_cache()
     ensure_data_dirs()
     load_settings()
@@ -55,9 +53,7 @@ def test_checksum_and_content_hash(tmp_path):
     f2.write_bytes(b"same bytes")
     assert file_checksum(f1) == file_checksum(f2)
 
-    assert content_hash("Invoice  #42 from ACME") == content_hash(
-        "invoice #42 FROM acme\n"
-    )
+    assert content_hash("Invoice  #42 from ACME") == content_hash("invoice #42 FROM acme\n")
     assert content_hash("") is None
 
 
@@ -84,6 +80,40 @@ def test_find_duplicates_exact_and_content(isolated_data):
     assert by_content and by_content[0]["kind"] == "content"
 
     assert find_duplicates("nomatch", "entirely different text here") == []
+
+
+def test_find_duplicates_exact_not_limited_to_recent(isolated_data, monkeypatch):
+    """Exact checksum/content-hash must search the whole DB, not only recent N."""
+    from paperless_agent import dedup
+
+    monkeypatch.setattr(dedup, "MAX_CANDIDATES", 3)
+
+    old = upsert_metadata(
+        original_name="old.pdf",
+        filename="old_invoice.pdf",
+        path=str(isolated_data / "archive" / "old.pdf"),
+        checksum="old-checksum",
+        content_hash=content_hash("unique ancient invoice body"),
+        summary="unique ancient invoice body",
+    )
+    # Push the old row out of the fuzzy candidate window with newer docs.
+    for i in range(5):
+        upsert_metadata(
+            original_name=f"new{i}.pdf",
+            filename=f"new_{i}.pdf",
+            path=str(isolated_data / "archive" / f"new_{i}.pdf"),
+            checksum=f"new-checksum-{i}",
+            content_hash=content_hash(f"unrelated document number {i}"),
+            summary=f"unrelated document number {i}",
+        )
+
+    exact = find_duplicates("old-checksum", None)
+    assert exact and exact[0]["kind"] == "exact"
+    assert exact[0]["document_id"] == old["document_id"]
+
+    by_content = find_duplicates("fresh-bytes", "Unique Ancient Invoice Body!!!")
+    assert by_content and by_content[0]["kind"] == "content"
+    assert by_content[0]["document_id"] == old["document_id"]
 
 
 def test_review_queue_and_approve(isolated_data, monkeypatch):

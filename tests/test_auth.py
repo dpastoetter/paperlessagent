@@ -34,14 +34,18 @@ def test_chatgpt_tokens_enable_oauth_mode(monkeypatch, tmp_path):
     # Minimal JWT with chatgpt_account_id claim
     import base64
 
-    payload = base64.urlsafe_b64encode(
-        json.dumps(
-            {
-                "https://api.openai.com/auth": {"chatgpt_account_id": "acct_1"},
-                "https://api.openai.com/profile": {"email": "a@b.c"},
-            }
-        ).encode()
-    ).rstrip(b"=").decode()
+    payload = (
+        base64.urlsafe_b64encode(
+            json.dumps(
+                {
+                    "https://api.openai.com/auth": {"chatgpt_account_id": "acct_1"},
+                    "https://api.openai.com/profile": {"email": "a@b.c"},
+                }
+            ).encode()
+        )
+        .rstrip(b"=")
+        .decode()
+    )
     access = f"eyJhbGciOiJub25lIn0.{payload}.sig"
     (tmp_path / "auth.json").write_text(
         json.dumps(

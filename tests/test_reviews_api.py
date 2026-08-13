@@ -22,9 +22,7 @@ def _queue_scan(name: str = "scan.pdf", **proposal_overrides) -> tuple[str, str]
         "full_text": "test invoice text",
         **proposal_overrides,
     }
-    queued = create_review(
-        source_path=str(scan), original_name=name, proposal=proposal
-    )
+    queued = create_review(source_path=str(scan), original_name=name, proposal=proposal)
     return queued["review_id"], str(scan)
 
 
@@ -75,9 +73,7 @@ def test_approve_with_overrides_files_document(client, stub_rag_index):
 def test_reject_removes_scan(client):
     review_id, scan_path = _queue_scan("dupe.pdf")
 
-    resp = client.post(
-        f"/api/reviews/{review_id}/reject", json={"delete_file": True}
-    )
+    resp = client.post(f"/api/reviews/{review_id}/reject", json={"delete_file": True})
     assert resp.status_code == 200
     assert resp.json()["file_removed"] is True
 

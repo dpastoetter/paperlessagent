@@ -40,13 +40,9 @@ def _write_minimal_pdf(path: Path, text: str = "Invoice Acme EUR 120") -> None:
         b"/Contents 4 0 R /Resources<< /Font<< /F1 5 0 R >> >> >>endobj\n"
     )
     objects.append(
-        f"4 0 obj<< /Length {len(stream)} >>stream\n".encode()
-        + stream
-        + b"\nendstream\nendobj\n"
+        f"4 0 obj<< /Length {len(stream)} >>stream\n".encode() + stream + b"\nendstream\nendobj\n"
     )
-    objects.append(
-        b"5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n"
-    )
+    objects.append(b"5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n")
     pdf = bytearray(b"%PDF-1.4\n")
     offsets = [0]
     for obj in objects:
@@ -112,6 +108,35 @@ def test_search_metadata_includes_subject(isolated_data):
     found = metadata_db.search_metadata(query="enrollment")
     assert found["count"] >= 1
     assert any(d["id"] == saved["document_id"] for d in found["documents"])
+
+
+def test_search_metadata_fts_matches_tokens_in_question(isolated_data):
+    saved = metadata_db.upsert_metadata(
+        original_name="scan.pdf",
+        filename="2022-09-05_Invoice_BV_CRE8_EUR181p50.pdf",
+        path=str(isolated_data / "archive" / "invoice" / "2022" / "doc.pdf"),
+        doc_type="invoice",
+        doc_date="2022-09-05",
+        counterparties="BV CRE8",
+        summary="Invoice FA2022-0001 from BV CRE8 for €181.50.",
+        extracted_json='{"reference_ids":["FA2022-0001"]}',
+    )
+    found = metadata_db.search_metadata(
+        query="What is the amount on invoice FA2022-0001 from CRE8?"
+    )
+    assert found["search"] == "fts"
+    assert found["count"] >= 1
+    assert any(d["id"] == saved["document_id"] for d in found["documents"])
+
+
+def test_build_fts_match_query_drops_stopwords():
+    match = metadata_db.build_fts_match_query("What invoices do I have from Acme for FA2022-0001?")
+    assert match is not None
+    assert "invoices" in match.lower() or "invoice" in match.lower()
+    assert "Acme" in match or "acme" in match.lower()
+    assert "FA2022-0001" in match
+    assert '"what"' not in match.lower()
+    assert '"have"' not in match.lower()
 
 
 def test_move_and_metadata(isolated_data):

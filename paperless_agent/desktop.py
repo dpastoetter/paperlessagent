@@ -13,6 +13,8 @@ from pathlib import Path
 import httpx
 import uvicorn
 
+from paperless_agent.local_security import assert_bind_allowed
+
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_WIDTH = 1280
 DEFAULT_HEIGHT = 840
@@ -147,6 +149,8 @@ def run_desktop(
         env_port = os.getenv("PAPERLESS_PORT", "").strip()
         preferred = int(env_port) if env_port.isdigit() else None
 
+    assert_bind_allowed(host)
+
     # Prefer an already-running local instance (e.g. systemd --user service).
     reuse_port = preferred or 8080
     owned_server: uvicorn.Server | None = None
@@ -167,9 +171,10 @@ def run_desktop(
     except ImportError as exc:
         raise SystemExit(
             "pywebview is required for the desktop window. "
-            "Install with: pip install -r requirements-desktop.txt "
-            "(Debian package includes it; also needs WebKitGTK: "
-            "gir1.2-webkit2-4.1 or gir1.2-webkit2-4.0)"
+            "Install with: pip install -e '.[desktop]' -c constraints.txt "
+            "(or: pip install -r requirements-desktop.txt). "
+            "Also needs WebKitGTK on Linux "
+            "(gir1.2-webkit2-4.1 or gir1.2-webkit2-4.0)."
         ) from exc
 
     url = f"http://{host}:{active_port}/"

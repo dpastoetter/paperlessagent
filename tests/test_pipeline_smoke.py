@@ -34,11 +34,13 @@ def test_codex_oauth_falls_back_from_gpt41(monkeypatch, tmp_path):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("CODEX_API_KEY", raising=False)
     monkeypatch.setenv("CODEX_HOME", str(tmp_path))
-    payload = base64.urlsafe_b64encode(
-        json.dumps(
-            {"https://api.openai.com/auth": {"chatgpt_account_id": "acct_1"}}
-        ).encode()
-    ).rstrip(b"=").decode()
+    payload = (
+        base64.urlsafe_b64encode(
+            json.dumps({"https://api.openai.com/auth": {"chatgpt_account_id": "acct_1"}}).encode()
+        )
+        .rstrip(b"=")
+        .decode()
+    )
     access = f"eyJhbGciOiJub25lIn0.{payload}.sig"
     (tmp_path / "auth.json").write_text(
         json.dumps(

@@ -59,6 +59,7 @@ def _resolve_provider() -> str:
 
     return "gemini"
 
+
 # gemini | openai | ollama  (openai can use OPENAI_API_KEY or Codex API-key login)
 LLM_PROVIDER = _resolve_provider()
 
@@ -82,6 +83,9 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 CHUNK_SIZE_CHARS = 3200  # ~800 tokens rough estimate
 CHUNK_OVERLAP_CHARS = 400
 RETRIEVE_TOP_K = 6
+# Cosine distance ceiling for Ask grounding (Chroma cosine space: 0 = identical).
+# Chunks farther than this are treated as irrelevant and dropped.
+ASK_MAX_CHUNK_DISTANCE = float(os.getenv("PAPERLESS_ASK_MAX_CHUNK_DISTANCE", "0.55"))
 
 DOC_TYPES = (
     "invoice",
@@ -102,9 +106,7 @@ DOC_TYPES = (
 )
 
 # Categories where amount/currency metadata is meaningful.
-FINANCIAL_DOC_TYPES = frozenset(
-    {"invoice", "receipt", "bank", "tax", "utility", "insurance"}
-)
+FINANCIAL_DOC_TYPES = frozenset({"invoice", "receipt", "bank", "tax", "utility", "insurance"})
 
 
 def is_financial_doc_type(doc_type: str | None) -> bool:
@@ -133,6 +135,11 @@ OLLAMA_VISION_NUM_CTX = _env_int("PAPERLESS_OLLAMA_VISION_NUM_CTX", 8192)
 OLLAMA_VISION_NUM_PREDICT = _env_int("PAPERLESS_OLLAMA_VISION_NUM_PREDICT", 8192)
 OLLAMA_OCR_NUM_CTX = _env_int("PAPERLESS_OLLAMA_OCR_NUM_CTX", 4096)
 OLLAMA_OCR_NUM_PREDICT = _env_int("PAPERLESS_OLLAMA_OCR_NUM_PREDICT", 4096)
+# Adaptive OCR: fast | balanced | maximum (settings.json can override).
+OCR_MODE = os.getenv("PAPERLESS_OCR_MODE", "balanced").strip().lower() or "balanced"
+# Parallel vision pages for cloud providers; Ollama stays serial by default.
+OCR_CONCURRENCY = _env_int("PAPERLESS_OCR_CONCURRENCY", 4)
+OCR_CONCURRENCY_OLLAMA = _env_int("PAPERLESS_OCR_CONCURRENCY_OLLAMA", 1)
 EXTRACT_MAX_CHARS = _env_int("PAPERLESS_EXTRACT_MAX_CHARS", 48000)
 
 

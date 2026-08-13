@@ -13,7 +13,7 @@ from paperless_agent.tools.metadata_db import _connect, init_db
 
 # Word-set Jaccard similarity above this counts as a near-duplicate.
 SIMILARITY_THRESHOLD = 0.82
-# Only compare against this many most recent documents.
+# Fuzzy (similar) comparisons only — exact checksum/content-hash use indexed lookups.
 MAX_CANDIDATES = 400
 
 
@@ -67,6 +67,15 @@ def _document_text(row: sqlite3.Row) -> str:
     return row["summary"] or ""
 
 
+def _match(kind: str, row: sqlite3.Row, score: float) -> dict[str, Any]:
+    return {
+        "kind": kind,
+        "document_id": row["id"],
+        "filename": row["filename"],
+        "score": score,
+    }
+
+
 def find_duplicates(
     checksum: str,
     text: str | None,
@@ -77,9 +86,9 @@ def find_duplicates(
     Find likely duplicates of a new document among archived documents.
 
     Returns matches ordered strongest first:
-    - kind "exact": identical file bytes (checksum match)
-    - kind "content": identical normalized text (content hash match)
-    - kind "similar": word-set similarity >= threshold
+    - kind "exact": identical file bytes (checksum match) — whole DB via index
+    - kind "content": identical normalized text (content hash match) — whole DB via index
+    - kind "similar": word-set similarity >= threshold — limited to recent candidates
     """
     init_db()
     new_content = content_hash(text)
@@ -87,54 +96,40 @@ def find_duplicates(
     seen_ids: set[str] = set()
 
     with _connect() as conn:
-        rows = conn.execute(
-            "SELECT id, filename, path, checksum, content_hash, extracted_json, summary "
-            "FROM documents ORDER BY created_at DESC LIMIT ?",
-            (MAX_CANDIDATES,),
-        ).fetchall()
-
-    for row in rows:
-        if row["checksum"] and row["checksum"] == checksum:
-            matches.append(
-                {
-                    "kind": "exact",
-                    "document_id": row["id"],
-                    "filename": row["filename"],
-                    "score": 1.0,
-                }
-            )
-            seen_ids.add(row["id"])
-
-    if new_content:
-        for row in rows:
-            if row["id"] in seen_ids:
-                continue
-            if row["content_hash"] and row["content_hash"] == new_content:
-                matches.append(
-                    {
-                        "kind": "content",
-                        "document_id": row["id"],
-                        "filename": row["filename"],
-                        "score": 1.0,
-                    }
-                )
+        # Exact byte matches: indexed lookup over the full archive.
+        if checksum:
+            for row in conn.execute(
+                "SELECT id, filename FROM documents WHERE checksum = ?",
+                (checksum,),
+            ):
+                matches.append(_match("exact", row, 1.0))
                 seen_ids.add(row["id"])
 
-    if text and normalize_text(text):
-        for row in rows:
-            if row["id"] in seen_ids:
-                continue
-            score = text_similarity(text, _document_text(row))
-            if score >= threshold:
-                matches.append(
-                    {
-                        "kind": "similar",
-                        "document_id": row["id"],
-                        "filename": row["filename"],
-                        "score": round(score, 3),
-                    }
-                )
+        # Exact normalized-text matches: also indexed, full archive.
+        if new_content:
+            for row in conn.execute(
+                "SELECT id, filename FROM documents WHERE content_hash = ?",
+                (new_content,),
+            ):
+                if row["id"] in seen_ids:
+                    continue
+                matches.append(_match("content", row, 1.0))
                 seen_ids.add(row["id"])
+
+        # Fuzzy similarity: only the most recent N documents (expensive).
+        if text and normalize_text(text):
+            rows = conn.execute(
+                "SELECT id, filename, extracted_json, summary "
+                "FROM documents ORDER BY created_at DESC LIMIT ?",
+                (MAX_CANDIDATES,),
+            ).fetchall()
+            for row in rows:
+                if row["id"] in seen_ids:
+                    continue
+                score = text_similarity(text, _document_text(row))
+                if score >= threshold:
+                    matches.append(_match("similar", row, round(score, 3)))
+                    seen_ids.add(row["id"])
 
     matches.sort(key=lambda m: ({"exact": 0, "content": 1, "similar": 2}[m["kind"]], -m["score"]))
     return matches

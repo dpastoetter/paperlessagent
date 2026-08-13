@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
@@ -13,6 +14,8 @@ from typing import Any
 import httpx
 
 from paperless_agent import config
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_CHAT_MODEL = "gemma3"
 DEFAULT_EMBED_MODEL = "nomic-embed-text"
@@ -221,7 +224,9 @@ def _fetch_ps_models(
         resp = client.get(f"{url}/api/ps")
         resp.raise_for_status()
         payload = resp.json() if resp.content else {}
-    models = payload.get("models") if isinstance(payload, dict) else []
+    models = payload.get("models") if isinstance(payload, dict) else None
+    if not isinstance(models, list):
+        return []
     return [model for model in models if isinstance(model, dict)]
 
 
@@ -266,10 +271,7 @@ def verify_model_accepts_requests(
         with httpx.Client(timeout=timeout) as client:
             resp = client.post(f"{url}/api/show", json={"name": name})
             if resp.status_code == 404:
-                return (
-                    f"Ollama model '{name}' is not available locally. "
-                    f"Run: ollama pull {name}"
-                )
+                return f"Ollama model '{name}' is not available locally. Run: ollama pull {name}"
             resp.raise_for_status()
     except httpx.ConnectError:
         return f"Cannot reach Ollama at {url} — is `ollama serve` running?"
@@ -312,16 +314,12 @@ def ensure_ollama_ready(
     status = ollama_status(base_url=url)
     error: str | None = None
     if not status.get("reachable") or not status.get("listening"):
-        error = (
-            status.get("error")
-            or f"Cannot reach Ollama at {url} — is `ollama serve` running?"
-        )
+        error = status.get("error") or f"Cannot reach Ollama at {url} — is `ollama serve` running?"
     elif require_models and status.get("missing_models"):
         missing = status["missing_models"]
         hint = status.get("pull_command") or pull_hint(missing)
         error = (
-            "Ollama is running but required models are missing: "
-            f"{', '.join(missing)}. {hint}"
+            f"Ollama is running but required models are missing: {', '.join(missing)}. {hint}"
         ).strip()
     elif verify_chat:
         chat = status.get("resolved_chat_model") or status.get("chat_model") or ""
@@ -333,8 +331,7 @@ def ensure_ollama_ready(
         "listening": bool(status.get("listening")),
         "base_url": url,
         "chat_model": status.get("resolved_chat_model") or status.get("chat_model"),
-        "embedding_model": status.get("resolved_embedding_model")
-        or status.get("embedding_model"),
+        "embedding_model": status.get("resolved_embedding_model") or status.get("embedding_model"),
         "version": status.get("version"),
         "error": error,
     }
@@ -376,16 +373,14 @@ def pull_hint(models: list[str]) -> str:
     return " && ".join(f"ollama pull {name}" for name in models)
 
 
-def format_http_error(exc: Exception, *, model: str, kind: str = "model") -> str:
+def format_http_error(exc: Exception, *, model: str | None = None, kind: str = "model") -> str:
     """Turn Ollama HTTP failures into actionable pull / serve hints."""
     text = str(exc)
     lower = text.lower()
+    label = model or "ollama"
     if "not found" in lower or "404" in lower or "pull" in lower:
-        return (
-            f"Ollama {kind} '{model}' is not available locally. "
-            f"Run: ollama pull {model}"
-        )
-    return f"Ollama request failed for {kind} '{model}': {text}"
+        return f"Ollama {kind} '{label}' is not available locally. Run: ollama pull {label}"
+    return f"Ollama request failed for {kind} '{label}': {text}"
 
 
 def upsert_env_values(updates: dict[str, str], path: Path | None = None) -> Path:
@@ -398,7 +393,11 @@ def upsert_env_values(updates: dict[str, str], path: Path | None = None) -> Path
     remaining = dict(updates)
     out: list[str] = []
     for line in lines:
-        match = _ENV_KEY_RE.match(line.strip()) if line.strip() and not line.lstrip().startswith("#") else None
+        match = (
+            _ENV_KEY_RE.match(line.strip())
+            if line.strip() and not line.lstrip().startswith("#")
+            else None
+        )
         if not match:
             out.append(line)
             continue
@@ -492,6 +491,13 @@ def apply_llm_provider(
             updates["OLLAMA_BASE_URL"] = url
         upsert_env_values(updates)
 
+    try:
+        from paperless_agent.tools.rag_index import mark_index_stale
+
+        mark_index_stale(f"LLM provider switched to {normalized} (embed model {embed})")
+    except Exception:  # noqa: BLE001 — never block provider switch on index meta
+        logger.exception("Could not mark RAG index stale after provider switch")
+
     return {
         "provider": normalized,
         "model": chat,
@@ -511,7 +517,9 @@ def ollama_status(*, base_url: str | None = None) -> dict[str, Any]:
     global _tags_cache
     if probe.get("reachable"):
         _tags_cache = (time.monotonic() + _TAGS_CACHE_TTL, url, installed)
-    missing = missing_models(installed, chat=chat, embed=embed) if probe["reachable"] else [chat, embed]
+    missing = (
+        missing_models(installed, chat=chat, embed=embed) if probe["reachable"] else [chat, embed]
+    )
     resolved_chat = resolve_installed_model(chat, installed)
     resolved_embed = resolve_installed_model(embed, installed)
     active = config.LLM_PROVIDER == "ollama"
@@ -691,9 +699,7 @@ def pull_model(model: str, *, base_url: str | None = None) -> dict[str, Any]:
             resp.raise_for_status()
             payload = resp.json() if resp.content else {}
     except httpx.ConnectError as exc:
-        raise RuntimeError(
-            f"Cannot reach Ollama at {url} — is `ollama serve` running?"
-        ) from exc
+        raise RuntimeError(f"Cannot reach Ollama at {url} — is `ollama serve` running?") from exc
     except httpx.HTTPError as exc:
         raise RuntimeError(format_http_error(exc, model=name, kind="pull")) from exc
 
@@ -713,9 +719,7 @@ def list_running_models(base_url: str | None = None) -> dict[str, Any]:
     try:
         models = _fetch_ps_models(url)
     except httpx.ConnectError as exc:
-        raise RuntimeError(
-            f"Cannot reach Ollama at {url} — is `ollama serve` running?"
-        ) from exc
+        raise RuntimeError(f"Cannot reach Ollama at {url} — is `ollama serve` running?") from exc
     except httpx.HTTPError as exc:
         raise RuntimeError(format_http_error(exc, kind="ps")) from exc
     compute = summarize_compute(models)

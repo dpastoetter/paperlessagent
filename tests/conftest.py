@@ -26,9 +26,7 @@ def isolated_data(tmp_path, monkeypatch):
     monkeypatch.setattr("paperless_agent.config.DB_PATH", data / "paperless.db")
     monkeypatch.setattr("paperless_agent.config.CHROMA_DIR", data / "chroma")
     # metadata_db froze DB_PATH at import time; patch its module copy too.
-    monkeypatch.setattr(
-        "paperless_agent.tools.metadata_db.DB_PATH", data / "paperless.db"
-    )
+    monkeypatch.setattr("paperless_agent.tools.metadata_db.DB_PATH", data / "paperless.db")
     clear_settings_cache()
     clear_privacy_cache()
     ensure_data_dirs()

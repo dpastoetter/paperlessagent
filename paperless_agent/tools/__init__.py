@@ -6,7 +6,11 @@ from paperless_agent.tools.filesystem import (
     propose_filename,
     read_document,
 )
-from paperless_agent.tools.metadata_db import get_document, search_metadata, upsert_metadata
+from paperless_agent.tools.metadata_db import (
+    get_document,
+    search_metadata,
+    upsert_metadata,
+)
 from paperless_agent.tools.rag_index import index_document, retrieve_chunks
 
 __all__ = [

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from paperless_agent.config import ensure_data_dirs
 from paperless_agent.settings import (
+    SettingsError,
     clear_settings_cache,
     get_folder_for_category,
     get_source_dir,
@@ -70,7 +72,10 @@ def test_move_to_archive_uses_category_folder(isolated_settings):
             "source_dir": str(isolated_settings / "inbox"),
             "categories": [
                 {"name": "invoice", "folder": str(custom)},
-                {"name": "other", "folder": str(isolated_settings / "archive" / "other")},
+                {
+                    "name": "other",
+                    "folder": str(isolated_settings / "archive" / "other"),
+                },
             ],
             "batch": {"poll_interval_seconds": 30},
         }
@@ -104,7 +109,10 @@ def test_settings_api_poll_interval_and_process_all(isolated_settings, monkeypat
         json={
             "source_dir": str(custom_inbox),
             "categories": [
-                {"name": "other", "folder": str(isolated_settings / "archive" / "other")},
+                {
+                    "name": "other",
+                    "folder": str(isolated_settings / "archive" / "other"),
+                },
             ],
             "batch": {"poll_interval_seconds": 15},
         },
@@ -128,8 +136,35 @@ def test_settings_requires_other(isolated_settings):
             {
                 "source_dir": str(isolated_settings / "inbox"),
                 "categories": [
-                    {"name": "invoice", "folder": str(isolated_settings / "archive" / "invoice")},
+                    {
+                        "name": "invoice",
+                        "folder": str(isolated_settings / "archive" / "invoice"),
+                    },
                 ],
                 "batch": {},
             }
         )
+
+
+def test_malformed_settings_are_not_replaced_with_defaults(isolated_settings):
+    path = isolated_settings / "settings.json"
+    path.write_text("{not-json", encoding="utf-8")
+    clear_settings_cache()
+    with pytest.raises(SettingsError, match="not valid JSON"):
+        load_settings()
+    # Corrupt file must remain so operators can recover archive paths.
+    assert path.read_text(encoding="utf-8") == "{not-json"
+
+
+def test_invalid_settings_are_not_replaced_with_defaults(isolated_settings):
+    path = isolated_settings / "settings.json"
+    bad = {
+        "source_dir": str(isolated_settings / "inbox"),
+        "categories": [{"name": "invoice", "folder": "/tmp/x"}],
+        "batch": {},
+    }
+    path.write_text(json.dumps(bad), encoding="utf-8")
+    clear_settings_cache()
+    with pytest.raises(SettingsError, match="other"):
+        load_settings()
+    assert json.loads(path.read_text(encoding="utf-8")) == bad

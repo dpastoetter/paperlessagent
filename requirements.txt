@@ -1,14 +1,8 @@
-google-adk>=2.0
-google-genai
-openai
-fastapi
-uvicorn[standard]
-chromadb
-pypdf
-python-dotenv
-watchdog
-pillow
-pdf2image
-httpx
-python-multipart
-pytest
+# Runtime install entrypoint for installers and fresh clones.
+#
+# Source of truth for *which* packages: pyproject.toml
+# Source of truth for *exact* versions: constraints.txt (./scripts/lock-deps.sh)
+#
+# Do not list packages here — edit pyproject.toml and re-run scripts/lock-deps.sh.
+--constraint constraints.txt
+-e .

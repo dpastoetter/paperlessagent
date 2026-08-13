@@ -98,7 +98,7 @@ def test_set_autostart_disable_calls_systemctl(tmp_path, monkeypatch):
 
 def test_autostart_api(client, monkeypatch):
     monkeypatch.setattr(
-        "app.main.autostart_status",
+        "app.routers.settings.autostart_status",
         lambda: {
             "supported": True,
             "enabled": True,
@@ -114,7 +114,7 @@ def test_autostart_api(client, monkeypatch):
 
 def test_autostart_toggle_api(client, monkeypatch):
     monkeypatch.setattr(
-        "app.main.set_autostart",
+        "app.routers.settings.set_autostart",
         lambda enabled: {
             "status": "success",
             "autostart": {"supported": True, "enabled": enabled, "active": enabled},

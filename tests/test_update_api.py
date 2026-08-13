@@ -44,9 +44,7 @@ def test_update_status_check_reports_newer(client, monkeypatch):
 
 
 def test_update_status_check_handles_no_releases(client, monkeypatch):
-    monkeypatch.setattr(
-        "paperless_agent.updater._fetch_latest_release", lambda: None
-    )
+    monkeypatch.setattr("paperless_agent.updater._fetch_latest_release", lambda: None)
     body = client.get("/api/update/status?check=true").json()
     assert body["status"] == "success"
     assert body["update_available"] is False
@@ -74,7 +72,7 @@ def test_update_restart_endpoint_schedules(client, monkeypatch):
     """Restart must not actually exec during tests."""
     calls: list[bool] = []
     monkeypatch.setattr(
-        "app.main.schedule_restart",
+        "app.routers.updates.schedule_restart",
         lambda: calls.append(True) or {"status": "success", "message": "Restarting..."},
     )
     resp = client.post("/api/update/restart")

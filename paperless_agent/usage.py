@@ -57,17 +57,14 @@ def normalize_openai_usage(usage: Any) -> tuple[int, int, int]:
         return 0, 0, 0
     if isinstance(usage, dict):
         prompt = _as_int(usage.get("prompt_tokens") or usage.get("input_tokens"))
-        completion = _as_int(
-            usage.get("completion_tokens") or usage.get("output_tokens")
-        )
+        completion = _as_int(usage.get("completion_tokens") or usage.get("output_tokens"))
         total = _as_int(usage.get("total_tokens"))
     else:
         prompt = _as_int(
             getattr(usage, "prompt_tokens", None) or getattr(usage, "input_tokens", None)
         )
         completion = _as_int(
-            getattr(usage, "completion_tokens", None)
-            or getattr(usage, "output_tokens", None)
+            getattr(usage, "completion_tokens", None) or getattr(usage, "output_tokens", None)
         )
         total = _as_int(getattr(usage, "total_tokens", None))
     if total <= 0:

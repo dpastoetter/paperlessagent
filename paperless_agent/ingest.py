@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any
-
 from pathlib import Path
+from typing import Any
 
 from paperless_agent import config
 from paperless_agent.dedup import content_hash, file_checksum, find_duplicates
@@ -65,12 +64,7 @@ def _text_for_extract_prompt(text: str, max_chars: int) -> str:
         f"(Document is {len(cleaned)} characters; "
         f"middle {omitted} chars omitted for extraction prompt.)\n\n"
     )
-    return (
-        note
-        + cleaned[:head_len]
-        + "\n\n[... middle omitted ...]\n\n"
-        + cleaned[-tail_len:]
-    )
+    return note + cleaned[:head_len] + "\n\n[... middle omitted ...]\n\n" + cleaned[-tail_len:]
 
 
 def _resolve_doc_type(raw: dict[str, Any]) -> str:
@@ -329,9 +323,7 @@ async def ingest_document(source_path: str) -> dict[str, Any]:
     )
 
     extracted_for_db = {
-        k: v
-        for k, v in extracted.items()
-        if not k.startswith("_") and k != "status"
+        k: v for k, v in extracted.items() if not k.startswith("_") and k != "status"
     }
 
     # Duplicate check + human-in-the-loop gate before any filesystem writes.
@@ -345,9 +337,7 @@ async def ingest_document(source_path: str) -> dict[str, Any]:
     )
     checksum = file_checksum(source_path)
     text_hash = content_hash(full_text if isinstance(full_text, str) else None)
-    duplicates = find_duplicates(
-        checksum, full_text if isinstance(full_text, str) else None
-    )
+    duplicates = find_duplicates(checksum, full_text if isinstance(full_text, str) else None)
     if checksum in pending_checksums():
         duplicates.insert(
             0,

@@ -1,0 +1,119 @@
+"""Document archive list/search/file serving and Ask routes."""
+
+from __future__ import annotations
+
+import mimetypes
+from pathlib import Path
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse
+
+from app.deps import archive_roots, is_within
+from app.schemas import AskRequest
+from paperless_agent.runner import run_query
+from paperless_agent.tools.filesystem import reveal_in_explorer
+from paperless_agent.tools.metadata_db import get_document, list_recent, search_metadata
+from paperless_agent.tools.rag_index import retrieve_chunks
+
+router = APIRouter(tags=["documents"])
+
+
+@router.get("/api/documents")
+def api_documents(
+    q: str | None = None,
+    doc_type: str | None = None,
+    counterparty: str | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+) -> dict[str, Any]:
+    if q or doc_type or counterparty:
+        return search_metadata(
+            query=q,
+            doc_type=doc_type,
+            counterparty=counterparty,
+            limit=limit,
+        )
+    return list_recent(limit=limit)
+
+
+@router.get("/api/documents/{document_id}")
+def api_document(document_id: str) -> dict[str, Any]:
+    result = get_document(document_id)
+    if result.get("status") != "success":
+        raise HTTPException(status_code=404, detail=result.get("error", "not found"))
+    return result
+
+
+@router.post("/api/documents/{document_id}/reveal")
+def api_reveal_document(document_id: str) -> dict[str, Any]:
+    """Reveal an archived document in the system file manager."""
+    result = get_document(document_id)
+    if result.get("status") != "success":
+        raise HTTPException(status_code=404, detail=result.get("error", "not found"))
+    path = (result.get("document") or {}).get("path")
+    if not path:
+        raise HTTPException(status_code=404, detail="document has no path")
+    revealed = reveal_in_explorer(path)
+    if revealed.get("status") != "success":
+        raise HTTPException(status_code=500, detail=revealed.get("error", "reveal failed"))
+    return revealed
+
+
+@router.get("/api/documents/{document_id}/file")
+@router.head("/api/documents/{document_id}/file")
+def api_document_file(document_id: str) -> FileResponse:
+    """Serve an archived document file for in-browser viewing."""
+    result = get_document(document_id)
+    if result.get("status") != "success":
+        raise HTTPException(status_code=404, detail=result.get("error", "not found"))
+    document = result.get("document") or {}
+    path_value = document.get("path")
+    if not path_value:
+        raise HTTPException(status_code=404, detail="document has no path")
+    path = Path(path_value).expanduser().resolve()
+    if not any(is_within(path, root) for root in archive_roots()):
+        raise HTTPException(status_code=403, detail="file is outside the archive")
+    if not path.exists() or not path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "File is missing on disk. It may have been deleted or filed to a "
+                "temporary path. Re-process the scan, or use Remove all stored data "
+                "and ingest again."
+            ),
+        )
+    guessed, _ = mimetypes.guess_type(str(path))
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        media_type = "application/pdf"
+    elif guessed:
+        media_type = guessed
+    else:
+        media_type = "application/octet-stream"
+    safe_filename = "".join(
+        ch for ch in (document.get("filename") or path.name) if ch.isprintable()
+    ).replace('"', "")
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=safe_filename or path.name,
+        content_disposition_type="inline",
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
+
+
+@router.get("/api/retrieve")
+def api_retrieve(
+    q: str = Query(..., min_length=1),
+    top_k: int = Query(default=6, ge=1, le=20),
+    doc_type: str | None = None,
+) -> dict[str, Any]:
+    return retrieve_chunks(query=q, top_k=top_k, doc_type=doc_type)
+
+
+@router.post("/api/ask")
+async def api_ask(body: AskRequest) -> dict[str, Any]:
+    try:
+        return await run_query(body.question)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

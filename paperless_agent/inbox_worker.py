@@ -204,9 +204,7 @@ async def _process_one_file(
             raw_error = result.get("reply") or result.get("result", {}).get(
                 "error", "ingest failed"
             )
-            entry["error"] = (
-                raw_error if isinstance(raw_error, str) else str(raw_error)
-            )
+            entry["error"] = raw_error if isinstance(raw_error, str) else str(raw_error)
         if entry.get("status") != "cancelled":
             if entry.get("error"):
                 file_status = "error"
@@ -291,9 +289,7 @@ async def process_inbox(min_age_seconds: float | None = None) -> dict[str, Any]:
 
         if not files:
             if held_for_review:
-                message = (
-                    f"{held_for_review} file(s) awaiting review — nothing new to process"
-                )
+                message = f"{held_for_review} file(s) awaiting review — nothing new to process"
             else:
                 message = "Inbox is empty — upload a scan first"
             await publish(
@@ -362,9 +358,7 @@ async def process_inbox(min_age_seconds: float | None = None) -> dict[str, Any]:
                 )
                 results.append(entry)
 
-            errors = sum(
-                1 for r in results if r.get("error") and r.get("status") != "cancelled"
-            )
+            errors = sum(1 for r in results if r.get("error") and r.get("status") != "cancelled")
             cancelled = sum(1 for r in results if r.get("status") == "cancelled")
             status = "success" if errors == 0 else "partial"
             await publish(

@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import asyncio
 
 from fastapi.testclient import TestClient
 
-from app.main import CSRF_HEADER_NAME, CSRF_HEADER_VALUE, app
+from app.main import app
 from paperless_agent.pipeline.agents import file_and_persist
 from paperless_agent.review import create_review
 from paperless_agent.settings import get_source_dir
+from paperless_agent.tools import filesystem
 from paperless_agent.tools.metadata_db import get_document, list_recent
 
 
@@ -79,9 +80,63 @@ def test_upload_accepts_pdf(client):
     assert (get_source_dir() / "scan.pdf").exists()
 
 
-def test_file_and_persist_is_atomic_on_metadata_failure(
-    isolated_data, stub_rag_index, monkeypatch
-):
+def test_upload_rejects_oversize_without_leaving_partial(client, monkeypatch):
+    monkeypatch.setattr("app.deps.MAX_UPLOAD_BYTES", 64)
+    monkeypatch.setattr(
+        "paperless_agent.tools.filesystem.UPLOAD_CHUNK_BYTES",
+        16,
+    )
+    # processing router reads MAX_UPLOAD_BYTES at call time via deps import binding
+    monkeypatch.setattr("app.routers.processing.MAX_UPLOAD_BYTES", 64)
+    payload = b"%PDF-" + (b"x" * 200)
+    resp = client.post(
+        "/api/upload",
+        files={"file": ("huge.pdf", payload, "application/pdf")},
+    )
+    assert resp.status_code == 413
+    assert "too large" in resp.json()["detail"].lower()
+    inbox = get_source_dir()
+    assert not (inbox / "huge.pdf").exists()
+    leftovers = [p for p in inbox.iterdir() if p.name.endswith(".part") or "huge" in p.name]
+    assert leftovers == []
+
+
+def test_stream_upload_aborts_as_soon_as_limit_exceeded(isolated_data):
+    class FakeUpload:
+        def __init__(self, data: bytes, chunk: int = 8):
+            self._data = data
+            self._offset = 0
+            self._chunk = chunk
+            self.reads = 0
+
+        async def read(self, size: int = -1) -> bytes:
+            self.reads += 1
+            if self._offset >= len(self._data):
+                return b""
+            take = self._chunk if size < 0 else min(size, self._chunk)
+            piece = self._data[self._offset : self._offset + take]
+            self._offset += len(piece)
+            return piece
+
+    upload = FakeUpload(b"abcdefghijklmnop", chunk=4)  # 16 bytes
+    result = asyncio.run(
+        filesystem.stream_upload_to_inbox(
+            "cap.pdf",
+            upload,
+            max_bytes=10,
+            chunk_size=4,
+        )
+    )
+    assert result["status"] == "error"
+    assert result["code"] == "too_large"
+    # Stopped after the chunk that crossed the limit (3×4 = 12 > 10).
+    assert result["bytes_received"] == 12
+    assert upload.reads == 3
+    assert list(get_source_dir().glob("*.part")) == []
+    assert not (get_source_dir() / "cap.pdf").exists()
+
+
+def test_file_and_persist_is_atomic_on_metadata_failure(isolated_data, stub_rag_index, monkeypatch):
     inbox = get_source_dir()
     scan = inbox / "keep_me.pdf"
     scan.write_bytes(b"%PDF keep")
@@ -89,9 +144,7 @@ def test_file_and_persist_is_atomic_on_metadata_failure(
     def boom(**_kw):
         raise RuntimeError("db down")
 
-    monkeypatch.setattr(
-        "paperless_agent.pipeline.agents.upsert_metadata", boom
-    )
+    monkeypatch.setattr("paperless_agent.pipeline.agents.upsert_metadata", boom)
     result = file_and_persist(
         source_path=str(scan),
         filename="2024-01-01_Invoice_Test.pdf",

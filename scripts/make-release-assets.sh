@@ -125,11 +125,21 @@ fi
 # Required paths that must always ship (guards against accidental export-ignore / sparse packs).
 REQUIRED_PATHS=(
   "pyproject.toml"
+  "constraints.txt"
+  "requirements.txt"
   "README.md"
   ".env.example"
   "app/main.py"
   "app/static/app.js"
-  "app/static/common.js"
+  "app/static/api.js"
+  "app/static/state.js"
+  "app/static/router.js"
+  "app/static/inbox.js"
+  "app/static/review.js"
+  "app/static/documents.js"
+  "app/static/ask.js"
+  "app/static/events.js"
+  "app/static/settings.js"
   "app/static/index.html"
   "paperless_agent/ingest.py"
   "paperless_agent/llm.py"
@@ -138,6 +148,7 @@ REQUIRED_PATHS=(
   "paperless_agent/updater.py"
   "scripts/install.sh"
   "scripts/install.ps1"
+  "scripts/lock-deps.sh"
   "scripts/make-release-assets.sh"
 )
 for path in "${REQUIRED_PATHS[@]}"; do

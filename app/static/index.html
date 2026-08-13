@@ -399,6 +399,22 @@
             </div>
 
             <div class="setup-batch">
+              <h3>OCR accuracy</h3>
+              <p class="fine">
+                How aggressively to reuse a PDF’s embedded text versus calling AI vision OCR.
+                Scanned pages without a usable text layer still use vision in every mode.
+              </p>
+              <label class="field">
+                <span>Mode</span>
+                <select id="setup-ocr-mode">
+                  <option value="fast">Fast — use embedded text when present; vision only if nearly empty</option>
+                  <option value="balanced" selected>Balanced — use good embedded text; vision for weak/garbled pages</option>
+                  <option value="maximum">Maximum — always vision OCR every page</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="setup-batch">
               <h3>Human review</h3>
               <label class="check-field">
                 <input type="checkbox" id="setup-require-approval" checked />
@@ -535,8 +551,7 @@
 
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/mock.js?v=6"></script>
-  <script src="/static/common.js?v=6"></script>
-  <script src="/static/app.js?v=6"></script>
+  <script src="/static/mock.js?v=8"></script>
+  <script type="module" src="/static/app.js?v=8"></script>
 </body>
 </html>

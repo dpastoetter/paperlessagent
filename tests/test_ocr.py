@@ -1,4 +1,4 @@
-"""Tests for OCR quality gate and AI-first text recovery."""
+"""Tests for adaptive OCR quality gate and text recovery."""
 
 from __future__ import annotations
 
@@ -11,51 +11,16 @@ from PIL import Image, ImageDraw
 from paperless_agent import config
 from paperless_agent.ocr import (
     assess_text_quality,
+    page_uses_text_layer,
     recover_document_text,
+    resolve_ocr_concurrency,
+    resolve_ocr_mode,
     resolve_ocr_page_limit,
 )
 
 
-def test_assess_text_quality_rejects_short_garbage():
-    bad = assess_text_quality("@@@ ###")
-    assert bad.ok is False
-    assert "too_short" in bad.reason or "too_few_words" in bad.reason
-
-    good = assess_text_quality(
-        "Invoice FA2022-0001 from BV CRE8 dated 2022-09-05. "
-        "Total including VAT is EUR 181.50 for the comanage business package."
-    )
-    assert good.ok is True
-    assert good.reason == "ok"
-
-
-def test_recover_always_uses_ai_ocr(tmp_path: Path, monkeypatch):
-    img_path = tmp_path / "scan.png"
-    image = Image.new("RGB", (200, 60), "white")
-    draw = ImageDraw.Draw(image)
-    draw.text((8, 20), "x", fill="black")
-    image.save(img_path)
-
-    async def fake_pages(path, *, page_count, text_layer_hint="", filename=""):
-        return (
-            "[Page 1]\n"
-            "Invoice FA2022-0001 from BV CRE8 dated 2022-09-05. "
-            "Total including VAT is EUR 181.50 for the comanage business package."
-        )
-
-    monkeypatch.setattr("paperless_agent.ocr._ai_vision_transcribe_pages", fake_pages)
-
-    result = asyncio.run(recover_document_text(img_path))
-    assert result["status"] == "success"
-    assert result["method"] == "ai_vision"
-    assert result["used_ai_ocr"] is True
-    assert "181.50" in result["text"]
-    assert "[Page 1]" in result["text"]
-
-
-def test_recover_falls_back_to_text_layer_when_ai_fails(tmp_path: Path, monkeypatch):
-    # Minimal PDF with a text operator
-    content = "BT /F1 12 Tf 100 700 Td (Invoice Acme EUR 120 paid in full today) Tj ET"
+def _minimal_text_pdf(path: Path, line: str) -> None:
+    content = f"BT /F1 12 Tf 100 700 Td ({line}) Tj ET"
     stream = content.encode("latin-1", errors="replace")
     objects = [
         b"1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj\n",
@@ -64,9 +29,7 @@ def test_recover_falls_back_to_text_layer_when_ai_fails(tmp_path: Path, monkeypa
             b"3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
             b"/Contents 4 0 R /Resources<< /Font<< /F1 5 0 R >> >> >>endobj\n"
         ),
-        f"4 0 obj<< /Length {len(stream)} >>stream\n".encode()
-        + stream
-        + b"\nendstream\nendobj\n",
+        f"4 0 obj<< /Length {len(stream)} >>stream\n".encode() + stream + b"\nendstream\nendobj\n",
         b"5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n",
     ]
     pdf = bytearray(b"%PDF-1.4\n")
@@ -82,13 +45,121 @@ def test_recover_falls_back_to_text_layer_when_ai_fails(tmp_path: Path, monkeypa
     pdf.extend(
         f"trailer<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF\n".encode()
     )
-    path = tmp_path / "invoice.pdf"
     path.write_bytes(pdf)
 
-    async def failing_pages(path, *, page_count, text_layer_hint="", filename=""):
+
+def test_assess_text_quality_rejects_short_garbage():
+    bad = assess_text_quality("@@@ ###")
+    assert bad.ok is False
+    assert "too_short" in bad.reason or "too_few_words" in bad.reason
+
+    good = assess_text_quality(
+        "Invoice FA2022-0001 from BV CRE8 dated 2022-09-05. "
+        "Total including VAT is EUR 181.50 for the comanage business package."
+    )
+    assert good.ok is True
+    assert good.reason == "ok"
+
+
+def test_page_uses_text_layer_modes():
+    good = (
+        "Invoice FA2022-0001 from BV CRE8 dated 2022-09-05. "
+        "Total including VAT is EUR 181.50 for the comanage business package."
+    )
+    assert page_uses_text_layer(good, "balanced") is True
+    assert page_uses_text_layer(good, "fast") is True
+    assert page_uses_text_layer(good, "maximum") is False
+    assert page_uses_text_layer("", "balanced") is False
+    assert page_uses_text_layer("hi", "fast") is False
+
+
+def test_recover_image_uses_ai_ocr(tmp_path: Path, monkeypatch):
+    img_path = tmp_path / "scan.png"
+    image = Image.new("RGB", (200, 60), "white")
+    draw = ImageDraw.Draw(image)
+    draw.text((8, 20), "x", fill="black")
+    image.save(img_path)
+
+    async def fake_indices(path, page_indices, **_kwargs):
+        return {
+            i: (
+                "Invoice FA2022-0001 from BV CRE8 dated 2022-09-05. "
+                "Total including VAT is EUR 181.50 for the comanage business package."
+            )
+            for i in page_indices
+        }
+
+    monkeypatch.setattr("paperless_agent.ocr._ai_vision_transcribe_indices", fake_indices)
+    monkeypatch.setenv("PAPERLESS_OCR_MODE", "balanced")
+
+    result = asyncio.run(recover_document_text(img_path))
+    assert result["status"] == "success"
+    assert result["method"] == "ai_vision"
+    assert result["used_ai_ocr"] is True
+    assert "181.50" in result["text"]
+
+
+def test_balanced_skips_vision_when_text_layer_good(tmp_path: Path, monkeypatch):
+    path = tmp_path / "invoice.pdf"
+    _minimal_text_pdf(
+        path,
+        "Invoice Acme Corp EUR 120 paid in full today for consulting services May",
+    )
+
+    async def boom(*_a, **_k):
+        raise AssertionError("vision should not run for good text layer")
+
+    monkeypatch.setattr("paperless_agent.ocr._ai_vision_transcribe_indices", boom)
+    monkeypatch.setenv("PAPERLESS_OCR_MODE", "balanced")
+    monkeypatch.setattr(
+        "paperless_agent.ocr.resolve_ocr_page_limit",
+        lambda *_args, **_kwargs: 1,
+    )
+
+    result = asyncio.run(recover_document_text(path))
+    assert result["status"] == "success"
+    assert result["method"] == "pdf_text_layer"
+    assert result["used_ai_ocr"] is False
+    assert result["pages_from_text_layer"] == 1
+    assert result["pages_from_vision"] == 0
+    assert "Invoice" in result["text"]
+
+
+def test_maximum_always_calls_vision(tmp_path: Path, monkeypatch):
+    path = tmp_path / "invoice.pdf"
+    _minimal_text_pdf(
+        path,
+        "Invoice Acme Corp EUR 120 paid in full today for consulting services May",
+    )
+    calls: list[int] = []
+
+    async def fake_indices(path, page_indices, **_kwargs):
+        calls.extend(page_indices)
+        return {i: f"vision-{i}" for i in page_indices}
+
+    monkeypatch.setattr("paperless_agent.ocr._ai_vision_transcribe_indices", fake_indices)
+    monkeypatch.setenv("PAPERLESS_OCR_MODE", "maximum")
+    monkeypatch.setattr(
+        "paperless_agent.ocr.resolve_ocr_page_limit",
+        lambda *_args, **_kwargs: 1,
+    )
+
+    result = asyncio.run(recover_document_text(path))
+    assert calls == [1]
+    assert result["method"] == "ai_vision"
+    assert result["used_ai_ocr"] is True
+    assert "vision-1" in result["text"]
+
+
+def test_recover_falls_back_to_text_layer_when_ai_fails(tmp_path: Path, monkeypatch):
+    path = tmp_path / "invoice.pdf"
+    _minimal_text_pdf(path, "Invoice Acme EUR 120 paid in full today")
+
+    async def failing_indices(*_a, **_k):
         raise RuntimeError("vision unavailable")
 
-    monkeypatch.setattr("paperless_agent.ocr._ai_vision_transcribe_pages", failing_pages)
+    monkeypatch.setattr("paperless_agent.ocr._ai_vision_transcribe_indices", failing_indices)
+    monkeypatch.setenv("PAPERLESS_OCR_MODE", "maximum")
     monkeypatch.setattr(
         "paperless_agent.ocr.resolve_ocr_page_limit",
         lambda *_args, **_kwargs: 1,
@@ -105,18 +176,16 @@ def test_per_page_ocr_concatenates_pages(tmp_path: Path, monkeypatch):
     Image.new("RGB", (40, 20), "white").save(img_path)
     calls: list[int] = []
 
-    async def fake_pages(path, *, page_count, text_layer_hint="", filename=""):
-        parts = []
-        for i in range(1, page_count + 1):
-            calls.append(i)
-            parts.append(f"[Page {i}]\ncontent-{i}")
-        return "\n\n".join(parts)
+    async def fake_indices(path, page_indices, **_kwargs):
+        calls.extend(page_indices)
+        return {i: f"content-{i}" for i in page_indices}
 
-    monkeypatch.setattr("paperless_agent.ocr._ai_vision_transcribe_pages", fake_pages)
+    monkeypatch.setattr("paperless_agent.ocr._ai_vision_transcribe_indices", fake_indices)
     monkeypatch.setattr(
         "paperless_agent.ocr.resolve_ocr_page_limit",
         lambda *_args, **_kwargs: 3,
     )
+    monkeypatch.setenv("PAPERLESS_OCR_MODE", "maximum")
 
     result = asyncio.run(recover_document_text(img_path))
     assert result["status"] == "success"
@@ -158,6 +227,22 @@ def test_resolve_ocr_page_timeout_longer_for_ollama(monkeypatch):
     assert resolve_ocr_page_timeout() == 180.0
     monkeypatch.setattr(config, "LLM_PROVIDER", "ollama")
     assert resolve_ocr_page_timeout() == 600.0
+
+
+def test_resolve_ocr_concurrency_serial_for_ollama(monkeypatch):
+    monkeypatch.setattr(config, "LLM_PROVIDER", "openai")
+    monkeypatch.setattr(config, "OCR_CONCURRENCY", 4)
+    monkeypatch.setattr(config, "OCR_CONCURRENCY_OLLAMA", 1)
+    assert resolve_ocr_concurrency() == 4
+    monkeypatch.setattr(config, "LLM_PROVIDER", "ollama")
+    assert resolve_ocr_concurrency() == 1
+
+
+def test_resolve_ocr_mode_env_overrides(monkeypatch):
+    monkeypatch.setenv("PAPERLESS_OCR_MODE", "fast")
+    assert resolve_ocr_mode() == "fast"
+    monkeypatch.setenv("PAPERLESS_OCR_MODE", "maximum")
+    assert resolve_ocr_mode() == "maximum"
 
 
 def test_prepare_page_image_for_vision_downscales_and_jpeg_for_ollama(monkeypatch):

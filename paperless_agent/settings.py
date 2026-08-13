@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from copy import deepcopy
 from pathlib import Path
@@ -12,8 +13,18 @@ from paperless_agent import config
 
 SETTINGS_FILENAME = "settings.json"
 
+logger = logging.getLogger(__name__)
+
 _lock = threading.RLock()
 _cache: dict[str, Any] | None = None
+
+
+class SettingsError(Exception):
+    """Raised when settings.json exists but cannot be loaded or validated."""
+
+    def __init__(self, message: str, *, path: Path | None = None):
+        super().__init__(message)
+        self.path = path
 
 
 def settings_path() -> Path:
@@ -35,6 +46,10 @@ def default_settings() -> dict[str, Any]:
         "review": {
             # Hold every proposed filing for human approval before writing.
             "require_approval": True,
+        },
+        "ocr": {
+            # fast | balanced | maximum — see paperless_agent.ocr.resolve_ocr_mode
+            "mode": "balanced",
         },
     }
 
@@ -112,6 +127,8 @@ def validate_settings(payload: dict[str, Any]) -> dict[str, Any]:
 
     # Prefer poll_interval_seconds; migrate older delay_seconds if present.
     raw_interval = batch_raw.get("poll_interval_seconds", batch_raw.get("delay_seconds", 30))
+    if raw_interval is None:
+        raise ValueError("batch.poll_interval_seconds must be a number")
     try:
         poll_interval_seconds = float(raw_interval)
     except (TypeError, ValueError) as exc:
@@ -124,6 +141,13 @@ def validate_settings(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("review must be an object")
     require_approval = bool(review_raw.get("require_approval", True))
 
+    ocr_raw = payload.get("ocr") or {}
+    if not isinstance(ocr_raw, dict):
+        raise ValueError("ocr must be an object")
+    mode = str(ocr_raw.get("mode") or "balanced").strip().lower()
+    if mode not in {"fast", "balanced", "maximum"}:
+        raise ValueError("ocr.mode must be one of: fast, balanced, maximum")
+
     return {
         "source_dir": str(source_dir),
         "categories": categories,
@@ -132,6 +156,9 @@ def validate_settings(payload: dict[str, Any]) -> dict[str, Any]:
         },
         "review": {
             "require_approval": require_approval,
+        },
+        "ocr": {
+            "mode": mode,
         },
     }
 
@@ -143,16 +170,27 @@ def ensure_settings_dirs(settings: dict[str, Any]) -> None:
         Path(cat["folder"]).mkdir(parents=True, exist_ok=True)
 
 
-def _read_file() -> dict[str, Any] | None:
-    path = settings_path()
-    if not path.exists():
-        return None
+def _read_existing_file(path: Path) -> dict[str, Any]:
+    """Parse an existing settings.json; raise SettingsError on corruption."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise SettingsError(
+            f"could not read settings file: {exc}",
+            path=path,
+        ) from exc
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise SettingsError(
+            f"settings.json is not valid JSON ({exc.msg} at line {exc.lineno})",
+            path=path,
+        ) from exc
     if not isinstance(data, dict):
-        return None
+        raise SettingsError(
+            "settings.json must contain a JSON object",
+            path=path,
+        )
     return data
 
 
@@ -166,26 +204,35 @@ def _write_file(settings: dict[str, Any]) -> None:
 
 
 def load_settings(*, reload: bool = False) -> dict[str, Any]:
-    """Load settings from disk (cached), creating defaults if missing/invalid."""
+    """
+    Load settings from disk (cached).
+
+    Missing ``settings.json`` (first run) seeds defaults. A present but
+    unreadable or invalid file raises ``SettingsError`` — it is never replaced
+    with defaults, because that would silently retarget archive locations.
+    """
     global _cache
     with _lock:
         if _cache is not None and not reload:
             return deepcopy(_cache)
 
-        raw = _read_file()
-        if raw is None:
+        path = settings_path()
+        if not path.exists():
             settings = default_settings()
             ensure_settings_dirs(settings)
             _write_file(settings)
             _cache = settings
+            logger.info("Created default settings at %s", path)
             return deepcopy(_cache)
 
+        raw = _read_existing_file(path)
         try:
             settings = validate_settings(raw)
-        except ValueError:
-            settings = default_settings()
-            ensure_settings_dirs(settings)
-            _write_file(settings)
+        except ValueError as exc:
+            raise SettingsError(
+                f"settings.json is invalid: {exc}",
+                path=path,
+            ) from exc
 
         ensure_settings_dirs(settings)
         _cache = settings

@@ -112,10 +112,10 @@ async def subscribe(*, replay: bool = True) -> AsyncIterator[dict[str, Any]]:
         for item in snapshot:
             yield item
         while True:
-            item = await queue.get()
-            if item is None:
+            event = await queue.get()
+            if event is None:
                 break
-            yield item
+            yield event
     finally:
         async with _lock:
             _subscribers.discard(queue)

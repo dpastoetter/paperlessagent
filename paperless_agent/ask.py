@@ -4,16 +4,25 @@ from __future__ import annotations
 
 from typing import Any
 
+from paperless_agent import config
 from paperless_agent.llm import complete_text
-from paperless_agent.tools.metadata_db import list_recent, search_metadata
+from paperless_agent.tools.metadata_db import search_metadata
 from paperless_agent.tools.rag_index import retrieve_chunks
 
 _ASK_INSTRUCTIONS = (
     "You are a local paperless archive assistant. "
     "Answer using ONLY the provided evidence from retrieved chunks and metadata. "
     "Cite filename and document_id for each factual claim. "
-    "If evidence is missing or weak, say so clearly. "
+    "If evidence is missing, weak, or unrelated to the question, say clearly that "
+    "there is not enough evidence in the archive. "
+    "Never invent documents, amounts, dates, or identifiers. "
     "Prefer a concise answer, then a short Sources section."
+)
+
+_INSUFFICIENT_EVIDENCE_REPLY = (
+    "I don't have enough evidence in your archive to answer that. "
+    "Nothing sufficiently relevant was retrieved from semantic search or "
+    "metadata/keyword search."
 )
 
 
@@ -97,16 +106,60 @@ def _collect_sources(
     return sources
 
 
+def filter_confident_chunks(
+    chunks: list[dict[str, Any]],
+    *,
+    max_distance: float | None = None,
+) -> list[dict[str, Any]]:
+    """Keep only chunks within the cosine-distance confidence ceiling."""
+    ceiling = float(config.ASK_MAX_CHUNK_DISTANCE) if max_distance is None else float(max_distance)
+    confident: list[dict[str, Any]] = []
+    for chunk in chunks:
+        distance = chunk.get("distance")
+        if distance is None:
+            continue
+        try:
+            if float(distance) <= ceiling:
+                confident.append(chunk)
+        except (TypeError, ValueError):
+            continue
+    return confident
+
+
+def _insufficient_evidence(
+    *,
+    retrieved: dict[str, Any],
+    raw_chunk_count: int,
+    rejected_chunk_count: int,
+) -> dict[str, Any]:
+    return {
+        "status": "success",
+        "reply": _INSUFFICIENT_EVIDENCE_REPLY,
+        "sources": [],
+        "retrieval_count": 0,
+        "metadata_count": 0,
+        "grounded": False,
+        "retrieval": retrieved,
+        "raw_retrieval_count": raw_chunk_count,
+        "rejected_chunk_count": rejected_chunk_count,
+    }
+
+
 async def ask_archive(question: str) -> dict[str, Any]:
     """
     Answer a natural-language question over the local archive.
 
-    Uses Chroma retrieval + metadata search for evidence, then a direct LLM
+    Uses Chroma retrieval + metadata/FTS search for evidence, then a direct LLM
     completion (no ADK tool loop) so ChatGPT OAuth/Codex returns usable text.
+    Does not pad empty retrieval with recent unrelated documents.
     """
     q = (question or "").strip()
     if not q:
-        return {"status": "error", "reply": "Question is empty.", "error": "empty question"}
+        return {
+            "status": "error",
+            "reply": "Question is empty.",
+            "error": "empty question",
+        }
 
     retrieved = retrieve_chunks(q)
     if retrieved.get("status") != "success":
@@ -117,20 +170,24 @@ async def ask_archive(question: str) -> dict[str, Any]:
             "retrieval": retrieved,
         }
 
-    chunks = retrieved.get("chunks") or []
+    raw_chunks = retrieved.get("chunks") or []
+    chunks = filter_confident_chunks(raw_chunks)
     meta = search_metadata(query=q, limit=10)
     documents = meta.get("documents") or []
 
-    # Broad questions / weak local embeddings: always include recent docs as context.
-    if not documents:
-        recent = list_recent(limit=8)
-        documents = recent.get("documents") or []
+    if not chunks and not documents:
+        return _insufficient_evidence(
+            retrieved=retrieved,
+            raw_chunk_count=len(raw_chunks),
+            rejected_chunk_count=len(raw_chunks),
+        )
 
     prompt = (
         f"User question:\n{q}\n\n"
-        f"Retrieved chunks:\n{_format_chunks(chunks)}\n\n"
-        f"Metadata matches / recent documents:\n{_format_documents(documents)}\n\n"
-        "Write the answer now."
+        f"Retrieved chunks (distance ≤ {config.ASK_MAX_CHUNK_DISTANCE}):\n"
+        f"{_format_chunks(chunks)}\n\n"
+        f"Metadata / keyword matches:\n{_format_documents(documents)}\n\n"
+        "Write the answer now. Use only the evidence above."
     )
 
     try:
@@ -142,6 +199,7 @@ async def ask_archive(question: str) -> dict[str, Any]:
             "error": str(exc),
             "retrieval": retrieved,
             "metadata_count": len(documents),
+            "grounded": True,
         }
 
     if not reply:
@@ -154,6 +212,7 @@ async def ask_archive(question: str) -> dict[str, Any]:
             "error": "empty model reply",
             "retrieval": retrieved,
             "metadata_count": len(documents),
+            "grounded": True,
         }
 
     sources = _collect_sources(chunks, documents)
@@ -163,4 +222,7 @@ async def ask_archive(question: str) -> dict[str, Any]:
         "sources": sources,
         "retrieval_count": len(chunks),
         "metadata_count": len(documents),
+        "grounded": True,
+        "raw_retrieval_count": len(raw_chunks),
+        "rejected_chunk_count": max(0, len(raw_chunks) - len(chunks)),
     }

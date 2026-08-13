@@ -22,7 +22,6 @@ from paperless_agent.ollama_setup import (
     model_name_matches,
     ollama_status,
     resolve_installed_model,
-    resolve_runtime_model,
     start_ollama,
     summarize_compute,
     upsert_env_values,
@@ -84,9 +83,7 @@ def test_complete_with_images_sends_base64_pages(ollama_provider):
     assert result == "transcribed text"
 
     message = ollama_provider[0]["messages"][1]
-    assert message["images"] == [
-        base64.b64encode(raw).decode("ascii") for raw in pages
-    ]
+    assert message["images"] == [base64.b64encode(raw).decode("ascii") for raw in pages]
 
 
 def test_embed_texts_routes_to_ollama(monkeypatch):
@@ -134,9 +131,7 @@ def test_embed_texts_rejects_bad_response_shape(monkeypatch):
         def json(self):
             return {"embeddings": [[0.1]]}  # one vector for two inputs
 
-    monkeypatch.setattr(
-        rag_index.httpx, "post", lambda url, *, json, timeout: FakeResponse()
-    )
+    monkeypatch.setattr(rag_index.httpx, "post", lambda url, *, json, timeout: FakeResponse())
 
     with pytest.raises(RuntimeError, match="Unexpected embedding response"):
         embed_texts(["a", "b"])
@@ -220,13 +215,9 @@ def test_model_name_matching():
 
 def test_resolve_installed_model_prefers_size_tag():
     assert (
-        resolve_installed_model("gemma3", ["gemma3:4b", "nomic-embed-text:latest"])
-        == "gemma3:4b"
+        resolve_installed_model("gemma3", ["gemma3:4b", "nomic-embed-text:latest"]) == "gemma3:4b"
     )
-    assert (
-        resolve_installed_model("gemma3", ["gemma3:12b", "gemma3:latest"])
-        == "gemma3:latest"
-    )
+    assert resolve_installed_model("gemma3", ["gemma3:12b", "gemma3:latest"]) == "gemma3:latest"
     assert resolve_installed_model("gemma3", ["llama3.2:latest"]) is None
 
 
@@ -320,7 +311,7 @@ def test_apply_llm_provider_rejects_unknown():
 
 def test_ollama_status_api(client, monkeypatch):
     monkeypatch.setattr(
-        "app.main.ollama_status",
+        "app.routers.auth.ollama_status",
         lambda **_k: {
             "active": False,
             "ready": False,
@@ -470,7 +461,7 @@ def test_start_ollama_requires_binary(monkeypatch):
 
 def test_ollama_start_api(client, monkeypatch):
     monkeypatch.setattr(
-        "app.main.start_ollama",
+        "app.routers.auth.start_ollama",
         lambda **_k: {
             "status": "success",
             "started": True,
@@ -552,4 +543,3 @@ def test_current_compute_label_idle(monkeypatch):
         lambda *_a, **_k: [],
     )
     assert current_compute_label() is None
-

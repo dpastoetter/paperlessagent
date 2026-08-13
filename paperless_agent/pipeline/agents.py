@@ -9,11 +9,15 @@ from typing import Any
 
 from google.adk.agents import Agent
 
-from paperless_agent.llm import get_model
 from paperless_agent.job_control import raise_if_cancelled
+from paperless_agent.llm import get_model
 from paperless_agent.progress import emit_step_sync, llm_busy_detail, step_label
 from paperless_agent.settings import get_category_names
-from paperless_agent.tools.filesystem import move_to_archive, propose_filename, read_document
+from paperless_agent.tools.filesystem import (
+    move_to_archive,
+    propose_filename,
+    read_document,
+)
 from paperless_agent.tools.metadata_db import upsert_metadata
 from paperless_agent.tools.rag_index import index_document
 

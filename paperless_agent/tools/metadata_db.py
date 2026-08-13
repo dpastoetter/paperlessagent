@@ -3,12 +3,91 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
 from paperless_agent.config import DB_PATH, ensure_data_dirs
+
+logger = logging.getLogger(__name__)
+
+# Explicit schema revision stored in SQLite PRAGMA user_version.
+# Bump when adding migrations in _apply_migrations().
+SCHEMA_VERSION = 2
+
+# Common NL words that should not drive keyword / FTS matches for Ask.
+_FTS_STOPWORDS = frozenset(
+    {
+        "a",
+        "about",
+        "all",
+        "an",
+        "and",
+        "any",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "can",
+        "could",
+        "did",
+        "do",
+        "does",
+        "for",
+        "from",
+        "get",
+        "got",
+        "had",
+        "has",
+        "have",
+        "how",
+        "i",
+        "if",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "me",
+        "my",
+        "of",
+        "on",
+        "or",
+        "our",
+        "please",
+        "show",
+        "tell",
+        "than",
+        "that",
+        "the",
+        "their",
+        "them",
+        "there",
+        "these",
+        "this",
+        "those",
+        "to",
+        "was",
+        "we",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "whom",
+        "why",
+        "will",
+        "with",
+        "would",
+        "you",
+        "your",
+    }
+)
 
 
 def _connect() -> sqlite3.Connection:
@@ -23,8 +102,138 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _ensure_fts(conn: sqlite3.Connection) -> None:
+    """Create the FTS5 index and backfill when documents outpace it."""
+    conn.execute(
+        """
+        CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
+            document_id UNINDEXED,
+            filename,
+            original_name,
+            subject,
+            counterparties,
+            summary,
+            extracted_json,
+            tokenize = 'porter unicode61'
+        )
+        """
+    )
+    doc_count = int(conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0])
+    fts_count = int(conn.execute("SELECT COUNT(*) FROM documents_fts").fetchone()[0])
+    if doc_count and fts_count != doc_count:
+        _rebuild_fts(conn)
+
+
+def _rebuild_fts(conn: sqlite3.Connection) -> None:
+    conn.execute("DELETE FROM documents_fts")
+    rows = conn.execute("SELECT * FROM documents").fetchall()
+    for row in rows:
+        _upsert_fts_row(conn, row)
+
+
+def _upsert_fts_row(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    doc_id = row["id"]
+    conn.execute("DELETE FROM documents_fts WHERE document_id = ?", (doc_id,))
+    conn.execute(
+        """
+        INSERT INTO documents_fts(
+            document_id, filename, original_name, subject,
+            counterparties, summary, extracted_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            doc_id,
+            row["filename"] or "",
+            row["original_name"] or "",
+            row["subject"] or "",
+            row["counterparties"] or "",
+            row["summary"] or "",
+            row["extracted_json"] or "",
+        ),
+    )
+
+
+def build_fts_match_query(text: str) -> str | None:
+    """
+    Turn a natural-language string into an FTS5 OR-query of meaningful tokens.
+
+    Keeps invoice numbers, names, dates, and other identifiers that embeddings
+    often miss; drops common question stopwords.
+    """
+    tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9._+/-]*", text or "")
+    terms: list[str] = []
+    seen: set[str] = set()
+    for raw in tokens:
+        lowered = raw.lower()
+        if lowered in _FTS_STOPWORDS:
+            continue
+        if len(raw) < 2 and not raw.isdigit():
+            continue
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        safe = raw.replace('"', '""')
+        terms.append(f'"{safe}"')
+        if len(terms) >= 24:
+            break
+    if not terms:
+        return None
+    return " OR ".join(terms)
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return {str(row[1]) for row in rows}
+
+
+def _is_duplicate_column_error(exc: sqlite3.OperationalError) -> bool:
+    msg = str(exc).lower()
+    return "duplicate column" in msg
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:
+    """Add a column only when missing; re-raise unexpected ALTER failures."""
+    if column in _table_columns(conn, table):
+        return
+    try:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+    except sqlite3.OperationalError as exc:
+        if _is_duplicate_column_error(exc):
+            return
+        raise
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    """
+    Bring the documents schema up to SCHEMA_VERSION.
+
+    Existing databases may already have later columns while user_version is still
+    0; column presence checks keep migrations idempotent before bumping the
+    pragma.
+    """
+    current = int(conn.execute("PRAGMA user_version").fetchone()[0])
+
+    # v2: duplicate-detection + subject metadata columns (+ indexes).
+    if current < 2:
+        _ensure_column(conn, "documents", "checksum", "TEXT")
+        _ensure_column(conn, "documents", "content_hash", "TEXT")
+        _ensure_column(conn, "documents", "subject", "TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_checksum ON documents(checksum)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_documents_content_hash ON documents(content_hash)"
+        )
+
+    if current < SCHEMA_VERSION:
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        logger.info(
+            "SQLite schema migrated from user_version=%s to %s",
+            current,
+            SCHEMA_VERSION,
+        )
+
+
 def init_db() -> None:
-    """Create the documents table if it does not exist."""
+    """Create the documents table if it does not exist, then apply migrations."""
     with _connect() as conn:
         conn.execute(
             """
@@ -45,25 +254,10 @@ def init_db() -> None:
             )
             """
         )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_documents_doc_type ON documents(doc_type)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_documents_doc_date ON documents(doc_date)"
-        )
-        # Duplicate-detection columns (migration for pre-existing databases).
-        for ddl in (
-            "ALTER TABLE documents ADD COLUMN checksum TEXT",
-            "ALTER TABLE documents ADD COLUMN content_hash TEXT",
-            "ALTER TABLE documents ADD COLUMN subject TEXT",
-        ):
-            try:
-                conn.execute(ddl)
-            except sqlite3.OperationalError:
-                pass
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_documents_checksum ON documents(checksum)"
-        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_doc_type ON documents(doc_type)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_doc_date ON documents(doc_date)")
+        _apply_migrations(conn)
+        _ensure_fts(conn)
         conn.commit()
 
 
@@ -101,6 +295,7 @@ def upsert_metadata(
     now = datetime.now(timezone.utc).isoformat()
 
     with _connect() as conn:
+        _ensure_fts(conn)
         existing = conn.execute(
             "SELECT id, created_at FROM documents WHERE id = ?", (doc_id,)
         ).fetchone()
@@ -167,10 +362,10 @@ def upsert_metadata(
                     now,
                 ),
             )
+        row = conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
+        if row is not None:
+            _upsert_fts_row(conn, row)
         conn.commit()
-        row = conn.execute(
-            "SELECT * FROM documents WHERE id = ?", (doc_id,)
-        ).fetchone()
 
     return {
         "status": "success",
@@ -189,9 +384,7 @@ def mark_indexed(document_id: str) -> dict[str, Any]:
             (now, document_id),
         )
         conn.commit()
-        row = conn.execute(
-            "SELECT * FROM documents WHERE id = ?", (document_id,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM documents WHERE id = ?", (document_id,)).fetchone()
     if row is None:
         return {"status": "error", "error": f"document_id not found: {document_id}"}
     return {"status": "success", "document": _row_to_dict(row)}
@@ -201,9 +394,7 @@ def get_document(document_id: str) -> dict[str, Any]:
     """Fetch a single document by id."""
     init_db()
     with _connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM documents WHERE id = ?", (document_id,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM documents WHERE id = ?", (document_id,)).fetchone()
     if row is None:
         return {"status": "error", "error": f"document_id not found: {document_id}"}
     return {"status": "success", "document": _row_to_dict(row)}
@@ -217,49 +408,113 @@ def search_metadata(
     date_to: str | None = None,
     limit: int = 20,
 ) -> dict[str, Any]:
-    """Search document metadata with optional filters."""
+    """
+    Search document metadata with optional filters.
+
+    Free-text ``query`` uses SQLite FTS5 (token OR) so invoice numbers, names,
+    and dates match even inside longer Ask questions. Falls back to LIKE when
+    FTS cannot run or returns nothing for a short exact substring.
+    """
     init_db()
-    clauses: list[str] = []
-    params: list[Any] = []
+    capped = max(1, min(limit, 100))
+    fts_match = build_fts_match_query(query) if query else None
 
-    if query:
-        clauses.append(
-            "(filename LIKE ? OR summary LIKE ? OR subject LIKE ? "
-            "OR counterparties LIKE ? OR extracted_json LIKE ? OR original_name LIKE ?)"
-        )
-        like = f"%{query}%"
-        params.extend([like, like, like, like, like, like])
+    filter_clauses: list[str] = []
+    filter_params: list[Any] = []
     if doc_type:
-        clauses.append("doc_type = ?")
-        params.append(doc_type)
+        filter_clauses.append("doc_type = ?")
+        filter_params.append(doc_type)
     if counterparty:
-        clauses.append("(counterparties LIKE ? OR subject LIKE ?)")
+        filter_clauses.append("(counterparties LIKE ? OR subject LIKE ?)")
         like = f"%{counterparty}%"
-        params.extend([like, like])
+        filter_params.extend([like, like])
     if date_from:
-        clauses.append("doc_date >= ?")
-        params.append(date_from)
+        filter_clauses.append("doc_date >= ?")
+        filter_params.append(date_from)
     if date_to:
-        clauses.append("doc_date <= ?")
-        params.append(date_to)
+        filter_clauses.append("doc_date <= ?")
+        filter_params.append(date_to)
 
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    sql = (
-        f"SELECT * FROM documents {where} "
-        "ORDER BY COALESCE(doc_date, created_at) DESC LIMIT ?"
-    )
-    params.append(max(1, min(limit, 100)))
+    def _run(where_sql: str, where_params: list[Any]) -> list[sqlite3.Row]:
+        parts = [c for c in [where_sql, *filter_clauses] if c]
+        where = f"WHERE {' AND '.join(parts)}" if parts else ""
+        sql = (
+            f"SELECT * FROM documents {where} ORDER BY COALESCE(doc_date, created_at) DESC LIMIT ?"
+        )
+        with _connect() as conn:
+            _ensure_fts(conn)
+            return list(conn.execute(sql, [*where_params, *filter_params, capped]).fetchall())
 
-    with _connect() as conn:
-        rows = conn.execute(sql, params).fetchall()
+    used = "filter"
+    rows: list[sqlite3.Row] = []
+
+    if query and fts_match:
+        used = "fts"
+        try:
+            rows = _run(
+                "id IN (SELECT document_id FROM documents_fts WHERE documents_fts MATCH ?)",
+                [fts_match],
+            )
+        except sqlite3.OperationalError as exc:
+            logger.warning("FTS metadata search failed (%s); using LIKE", exc)
+            used = "like"
+            like = f"%{query}%"
+            rows = _run(
+                "(filename LIKE ? OR summary LIKE ? OR subject LIKE ? "
+                "OR counterparties LIKE ? OR extracted_json LIKE ? OR original_name LIKE ?)",
+                [like, like, like, like, like, like],
+            )
+        if not rows and len(query.strip()) <= 64:
+            like = f"%{query.strip()}%"
+            like_rows = _run(
+                "(filename LIKE ? OR summary LIKE ? OR subject LIKE ? "
+                "OR counterparties LIKE ? OR extracted_json LIKE ? OR original_name LIKE ?)",
+                [like, like, like, like, like, like],
+            )
+            if like_rows:
+                rows = like_rows
+                used = "like"
+    elif query:
+        used = "like"
+        like = f"%{query}%"
+        rows = _run(
+            "(filename LIKE ? OR summary LIKE ? OR subject LIKE ? "
+            "OR counterparties LIKE ? OR extracted_json LIKE ? OR original_name LIKE ?)",
+            [like, like, like, like, like, like],
+        )
+    else:
+        rows = _run("", [])
 
     return {
         "status": "success",
         "count": len(rows),
         "documents": [_row_to_dict(r) for r in rows],
+        "search": used,
     }
 
 
 def list_recent(limit: int = 50) -> dict[str, Any]:
     """Return recently created documents."""
     return search_metadata(limit=limit)
+
+
+def list_all_documents() -> list[dict[str, Any]]:
+    """Return every document row (for RAG rebuild)."""
+    init_db()
+    with _connect() as conn:
+        rows = conn.execute("SELECT * FROM documents ORDER BY created_at ASC").fetchall()
+    docs: list[dict[str, Any]] = []
+    for row in rows:
+        item = _row_to_dict(row)
+        if item is not None:
+            docs.append(item)
+    return docs
+
+
+def clear_all_indexed_at() -> int:
+    """Clear indexed_at on every document (index is about to be rebuilt)."""
+    init_db()
+    with _connect() as conn:
+        cur = conn.execute("UPDATE documents SET indexed_at = NULL")
+        conn.commit()
+        return int(cur.rowcount or 0)

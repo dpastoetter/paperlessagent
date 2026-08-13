@@ -48,9 +48,7 @@ def _init_reviews_table() -> None:
             )
             """
         )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_reviews_status ON reviews(status)"
-        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_reviews_status ON reviews(status)")
         conn.commit()
 
 
@@ -126,9 +124,7 @@ def pending_source_paths() -> set[str]:
     """Source paths currently awaiting review (skipped by inbox processing)."""
     _init_reviews_table()
     with _connect() as conn:
-        rows = conn.execute(
-            "SELECT source_path FROM reviews WHERE status = 'pending'"
-        ).fetchall()
+        rows = conn.execute("SELECT source_path FROM reviews WHERE status = 'pending'").fetchall()
     return {row["source_path"] for row in rows}
 
 
@@ -163,8 +159,7 @@ def _claim_pending(review_id: str) -> dict[str, Any] | None:
     _init_reviews_table()
     with _connect() as conn:
         cursor = conn.execute(
-            "UPDATE reviews SET status = 'processing' "
-            "WHERE id = ? AND status = 'pending'",
+            "UPDATE reviews SET status = 'processing' WHERE id = ? AND status = 'pending'",
             (review_id,),
         )
         conn.commit()
@@ -178,8 +173,7 @@ def _release_claim(review_id: str) -> None:
     """Return a claimed review to 'pending' after a failed resolve attempt."""
     with _connect() as conn:
         conn.execute(
-            "UPDATE reviews SET status = 'pending' "
-            "WHERE id = ? AND status = 'processing'",
+            "UPDATE reviews SET status = 'pending' WHERE id = ? AND status = 'processing'",
             (review_id,),
         )
         conn.commit()
@@ -194,9 +188,7 @@ def recover_stale_processing() -> int:
     """
     _init_reviews_table()
     with _connect() as conn:
-        cursor = conn.execute(
-            "UPDATE reviews SET status = 'pending' WHERE status = 'processing'"
-        )
+        cursor = conn.execute("UPDATE reviews SET status = 'pending' WHERE status = 'processing'")
         conn.commit()
     return cursor.rowcount
 
@@ -218,11 +210,7 @@ def approve_review(review_id: str, overrides: dict[str, Any] | None = None) -> d
     try:
         inbox = get_source_dir().resolve()
         # Filing moves files; never act on a source outside the inbox.
-        source_ok = (
-            source.exists()
-            and source.is_file()
-            and source.resolve().is_relative_to(inbox)
-        )
+        source_ok = source.exists() and source.is_file() and source.resolve().is_relative_to(inbox)
     except OSError:
         source_ok = False
     if not source_ok:

@@ -9,17 +9,20 @@ import tarfile
 import httpx
 import pytest
 
+import paperless_agent
+from app.main import app
 from paperless_agent.updater import (
+    _github_get,
     apply_tarball,
     apply_update,
-    get_current_version,
     is_newer,
     parse_sha256sums,
     parse_version,
     sha256_hex,
     verify_sha256,
-    _github_get,
 )
+from paperless_agent.version import clear_version_cache
+from paperless_agent.version import get_current_version as read_version
 
 
 def test_parse_and_compare_versions():
@@ -34,8 +37,12 @@ def test_parse_and_compare_versions():
 
 
 def test_get_current_version_reads_pyproject():
-    version = get_current_version()
+    clear_version_cache()
+    version = read_version()
     assert parse_version(version) > (0,) or version == "0.1.0"
+    # FastAPI OpenAPI metadata must track the same version resolution path.
+    assert app.version == version
+    assert paperless_agent.__version__ == version
 
 
 def test_parse_sha256sums_indexes_basename():
@@ -250,9 +257,7 @@ def test_apply_update_refuses_checksum_mismatch(isolated_root, monkeypatch):
             "artifact_name": "paperlessagent-9.9.9.tar.gz",
         },
     )
-    monkeypatch.setattr(
-        "paperless_agent.updater._download_bytes", lambda _url: tarball
-    )
+    monkeypatch.setattr("paperless_agent.updater._download_bytes", lambda _url: tarball)
     result = apply_update()
     assert result["status"] == "error"
     assert "mismatch" in result["error"].lower()
@@ -284,9 +289,7 @@ def test_apply_update_installs_verified_release(isolated_root, monkeypatch):
             "commit_sha": "a" * 40,
         },
     )
-    monkeypatch.setattr(
-        "paperless_agent.updater._download_bytes", lambda _url: tarball
-    )
+    monkeypatch.setattr("paperless_agent.updater._download_bytes", lambda _url: tarball)
     result = apply_update()
     assert result["status"] == "success"
     assert result["restart_required"] is True

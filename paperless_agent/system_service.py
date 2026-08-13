@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from paperless_agent import config
+from paperless_agent.local_security import assert_bind_allowed
 
 UNIT_NAME = "paperlessagent.service"
 DEFAULT_HOST = "127.0.0.1"
@@ -101,7 +102,9 @@ def _linger_enabled() -> bool:
     if not shutil.which("loginctl"):
         return False
     try:
-        completed = _loginctl("show-user", os.getenv("USER") or "", "--property=Linger", timeout=5.0)
+        completed = _loginctl(
+            "show-user", os.getenv("USER") or "", "--property=Linger", timeout=5.0
+        )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return False
     if completed.returncode != 0:
@@ -224,7 +227,7 @@ def autostart_status() -> dict[str, Any]:
         )
         status["install_hint"] = (
             f"From {config.PROJECT_ROOT}: python3 -m venv .venv && "
-            ".venv/bin/pip install -r requirements.txt"
+            ".venv/bin/pip install -e . -c constraints.txt"
         )
         return status
     status["enabled"] = _unit_enabled()
@@ -236,11 +239,14 @@ def set_autostart(enabled: bool) -> dict[str, Any]:
     """Enable or disable the systemd user service for PaperlessAgent."""
     status = autostart_status()
     if not status["supported"]:
-        raise RuntimeError(status.get("install_hint") or "Autostart is not supported on this system.")
+        raise RuntimeError(
+            status.get("install_hint") or "Autostart is not supported on this system."
+        )
     if status.get("error"):
         raise RuntimeError(str(status["error"]))
 
     if enabled:
+        assert_bind_allowed(service_host())
         _install_unit()
         _daemon_reload()
         completed = _systemctl("enable", UNIT_NAME)

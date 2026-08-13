@@ -7,6 +7,7 @@ import platform
 import re
 import shutil
 import subprocess
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ from paperless_agent.settings import get_folder_for_category, get_source_dir
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp"}
 PDF_SUFFIXES = {".pdf"}
 SUPPORTED_SUFFIXES = IMAGE_SUFFIXES | PDF_SUFFIXES
+UPLOAD_CHUNK_BYTES = 1024 * 1024  # 1 MiB stream chunks
 
 
 def _safe_stem(value: str) -> str:
@@ -45,7 +47,7 @@ def list_inbox() -> dict[str, Any]:
                 "mtime": stat.st_mtime,
             }
         )
-    files = sorted(entries, key=lambda item: item["name"])
+    files = sorted(entries, key=lambda item: str(item["name"]))
     return {
         "status": "success",
         "count": len(files),
@@ -323,8 +325,23 @@ def move_to_archive(
     }
 
 
+def _unique_inbox_destination(inbox: Path, safe_name: str) -> Path:
+    """Pick inbox/safe_name, or inbox/stem_N.suffix if that name is taken."""
+    dest = inbox / safe_name
+    if not dest.exists():
+        return dest
+    stem = dest.stem
+    suffix = dest.suffix
+    n = 2
+    while True:
+        candidate = inbox / f"{stem}_{n}{suffix}"
+        if not candidate.exists():
+            return candidate
+        n += 1
+
+
 def save_upload_to_inbox(filename: str, content: bytes) -> dict[str, Any]:
-    """Persist an uploaded file into the configured source folder."""
+    """Persist an already-buffered upload into the configured source folder."""
     ensure_data_dirs()
     inbox = get_source_dir()
     inbox.mkdir(parents=True, exist_ok=True)
@@ -337,27 +354,105 @@ def save_upload_to_inbox(filename: str, content: bytes) -> dict[str, Any]:
             "error": f"unsupported file type: {Path(safe_name).suffix.lower() or 'none'}",
             "supported": sorted(SUPPORTED_SUFFIXES),
         }
-    dest = inbox / safe_name
-    # Final path must stay inside the inbox even after resolve (symlink parents).
+    dest = _unique_inbox_destination(inbox, safe_name)
     if not dest.resolve().is_relative_to(inbox.resolve()):
         return {"status": "error", "error": "upload path escapes inbox"}
-    if dest.exists():
-        stem = dest.stem
-        suffix = dest.suffix
-        n = 2
-        while True:
-            candidate = inbox / f"{stem}_{n}{suffix}"
-            if not candidate.exists():
-                dest = candidate
-                break
-            n += 1
+    partial = inbox / f".{dest.name}.{uuid.uuid4().hex}.part"
     try:
-        dest.write_bytes(content)
+        partial.write_bytes(content)
+        if not partial.resolve().is_relative_to(inbox.resolve()):
+            partial.unlink(missing_ok=True)
+            return {"status": "error", "error": "upload path escapes inbox"}
+        os.replace(str(partial), str(dest))
     except OSError as exc:
+        partial.unlink(missing_ok=True)
         return {"status": "error", "error": f"could not save file: {exc}"}
     return {
         "status": "success",
         "path": str(dest.resolve()),
         "filename": dest.name,
         "source_dir": str(inbox),
+        "bytes": len(content),
+    }
+
+
+async def stream_upload_to_inbox(
+    filename: str,
+    upload: Any,
+    *,
+    max_bytes: int,
+    chunk_size: int = UPLOAD_CHUNK_BYTES,
+) -> dict[str, Any]:
+    """
+    Stream an UploadFile-like object into the inbox without buffering it in RAM.
+
+    Writes chunks to a temporary ``.part`` file, aborts as soon as ``max_bytes``
+    is exceeded, then atomically renames into place on success.
+    ``upload`` must provide ``async def read(size: int) -> bytes``.
+    """
+    ensure_data_dirs()
+    inbox = get_source_dir()
+    inbox.mkdir(parents=True, exist_ok=True)
+    safe_name = Path(filename).name
+    if not safe_name or safe_name in {".", ".."}:
+        return {"status": "error", "error": "invalid filename"}
+    if Path(safe_name).suffix.lower() not in SUPPORTED_SUFFIXES:
+        return {
+            "status": "error",
+            "error": f"unsupported file type: {Path(safe_name).suffix.lower() or 'none'}",
+            "supported": sorted(SUPPORTED_SUFFIXES),
+        }
+    if max_bytes <= 0:
+        return {"status": "error", "error": "invalid max_bytes", "code": "too_large"}
+
+    dest = _unique_inbox_destination(inbox, safe_name)
+    if not dest.resolve().is_relative_to(inbox.resolve()):
+        return {"status": "error", "error": "upload path escapes inbox"}
+
+    partial = inbox / f".{dest.name}.{uuid.uuid4().hex}.part"
+    size = 0
+    exceeded = False
+    try:
+        with partial.open("wb") as out:
+            while True:
+                chunk = await upload.read(chunk_size)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > max_bytes:
+                    exceeded = True
+                    break
+                out.write(chunk)
+
+        if exceeded:
+            partial.unlink(missing_ok=True)
+            return {
+                "status": "error",
+                "error": (f"file too large (max {max_bytes // (1024 * 1024)} MB)"),
+                "code": "too_large",
+                "bytes_received": size,
+            }
+
+        if size == 0:
+            partial.unlink(missing_ok=True)
+            return {"status": "error", "error": "empty file", "code": "empty"}
+
+        if not partial.resolve().is_relative_to(inbox.resolve()):
+            partial.unlink(missing_ok=True)
+            return {"status": "error", "error": "upload path escapes inbox"}
+
+        os.replace(str(partial), str(dest))
+    except OSError as exc:
+        partial.unlink(missing_ok=True)
+        return {"status": "error", "error": f"could not save file: {exc}"}
+    except Exception:
+        partial.unlink(missing_ok=True)
+        raise
+
+    return {
+        "status": "success",
+        "path": str(dest.resolve()),
+        "filename": dest.name,
+        "source_dir": str(inbox),
+        "bytes": size,
     }

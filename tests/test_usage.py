@@ -41,12 +41,20 @@ def test_record_usage_aggregates():
 
 
 def test_normalize_helpers():
-    assert normalize_openai_usage({"prompt_tokens": 3, "completion_tokens": 2}) == (3, 2, 5)
+    assert normalize_openai_usage({"prompt_tokens": 3, "completion_tokens": 2}) == (
+        3,
+        2,
+        5,
+    )
     assert normalize_openai_usage({"input_tokens": 4, "output_tokens": 1}) == (4, 1, 5)
     assert normalize_gemini_usage(
         {"prompt_token_count": 7, "candidates_token_count": 3, "total_token_count": 10}
     ) == (7, 3, 10)
-    assert normalize_ollama_usage({"prompt_eval_count": 11, "eval_count": 9}) == (11, 9, 20)
+    assert normalize_ollama_usage({"prompt_eval_count": 11, "eval_count": 9}) == (
+        11,
+        9,
+        20,
+    )
 
 
 def test_complete_ollama_records_usage(monkeypatch):

@@ -1,10 +1,12 @@
-"""Document text recovery: optional PDF text layer, then always AI vision OCR."""
+"""Adaptive document text recovery: PDF text layer when good, vision OCR when needed."""
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import logging
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,15 +16,21 @@ from PIL import Image
 from pypdf import PdfReader
 
 from paperless_agent import config
-from paperless_agent.progress import emit_step, llm_busy_detail, step_label
 from paperless_agent.job_control import (
     FileCancelledError,
     get_file_cancel_event,
     raise_if_cancelled,
 )
-from paperless_agent.tools.filesystem import IMAGE_SUFFIXES, PDF_SUFFIXES, SUPPORTED_SUFFIXES
+from paperless_agent.progress import emit_step, llm_busy_detail, step_label
+from paperless_agent.tools.filesystem import (
+    IMAGE_SUFFIXES,
+    PDF_SUFFIXES,
+    SUPPORTED_SUFFIXES,
+)
 
 logger = logging.getLogger(__name__)
+
+OCR_MODES = frozenset({"fast", "balanced", "maximum"})
 
 
 def _exc_detail(exc: BaseException) -> str:
@@ -32,10 +40,15 @@ def _exc_detail(exc: BaseException) -> str:
         return msg
     return f"{type(exc).__name__}"
 
+
 MIN_CHARS = 40
 MIN_WORDS = 8
 MIN_ALNUM_RATIO = 0.45
 MIN_AVG_CONFIDENCE = 0.45
+# Fast mode: accept thinner embedded text before calling vision.
+FAST_MIN_CHARS = 20
+FAST_MIN_WORDS = 3
+FAST_MIN_ALNUM_RATIO = 0.30
 
 
 @dataclass
@@ -51,6 +64,10 @@ class TextQuality:
 def assess_text_quality(
     text: str,
     confidences: list[float] | None = None,
+    *,
+    min_chars: int = MIN_CHARS,
+    min_words: int = MIN_WORDS,
+    min_alnum_ratio: float = MIN_ALNUM_RATIO,
 ) -> TextQuality:
     """Heuristic quality summary for recovered text."""
     cleaned = re.sub(r"\s+", " ", (text or "").strip())
@@ -65,12 +82,12 @@ def assess_text_quality(
             avg_conf = sum(usable) / len(usable)
 
     reasons: list[str] = []
-    if chars < MIN_CHARS:
-        reasons.append(f"too_short<{MIN_CHARS}")
-    if words < MIN_WORDS:
-        reasons.append(f"too_few_words<{MIN_WORDS}")
-    if alnum_ratio < MIN_ALNUM_RATIO:
-        reasons.append(f"low_alnum<{MIN_ALNUM_RATIO}")
+    if chars < min_chars:
+        reasons.append(f"too_short<{min_chars}")
+    if words < min_words:
+        reasons.append(f"too_few_words<{min_words}")
+    if alnum_ratio < min_alnum_ratio:
+        reasons.append(f"low_alnum<{min_alnum_ratio}")
     if avg_conf is not None and avg_conf < MIN_AVG_CONFIDENCE:
         reasons.append(f"low_confidence<{MIN_AVG_CONFIDENCE}")
 
@@ -85,14 +102,52 @@ def assess_text_quality(
     )
 
 
-def _extract_pdf_text_layer(path: Path) -> tuple[str, int | None]:
+def resolve_ocr_mode() -> str:
+    """Active OCR mode: explicit PAPERLESS_OCR_MODE overrides settings.json."""
+    explicit = os.getenv("PAPERLESS_OCR_MODE", "").strip().lower()
+    if explicit in OCR_MODES:
+        return explicit
+    try:
+        from paperless_agent.settings import load_settings
+
+        mode = str((load_settings().get("ocr") or {}).get("mode") or "balanced")
+    except Exception:  # noqa: BLE001
+        mode = (config.OCR_MODE or "balanced").strip().lower()
+    mode = mode.strip().lower()
+    return mode if mode in OCR_MODES else "balanced"
+
+
+def resolve_ocr_concurrency() -> int:
+    """Max parallel vision page calls (Ollama defaults to 1)."""
+    if config.LLM_PROVIDER == "ollama":
+        return max(1, int(config.OCR_CONCURRENCY_OLLAMA))
+    return max(1, int(config.OCR_CONCURRENCY))
+
+
+def page_uses_text_layer(page_text: str, mode: str) -> bool:
+    """True when this page's embedded text is good enough for the active mode."""
+    if mode == "maximum":
+        return False
+    if mode == "fast":
+        q = assess_text_quality(
+            page_text,
+            min_chars=FAST_MIN_CHARS,
+            min_words=FAST_MIN_WORDS,
+            min_alnum_ratio=FAST_MIN_ALNUM_RATIO,
+        )
+        return q.ok
+    return assess_text_quality(page_text).ok
+
+
+def _extract_pdf_page_texts(path: Path) -> list[str]:
     reader = PdfReader(str(path))
-    pages: list[str] = []
-    for i, page in enumerate(reader.pages):
-        page_text = (page.extract_text() or "").strip()
-        if page_text:
-            pages.append(f"[Page {i + 1}]\n{page_text}")
-    return "\n\n".join(pages).strip(), len(reader.pages)
+    return [(page.extract_text() or "").strip() for page in reader.pages]
+
+
+def _extract_pdf_text_layer(path: Path) -> tuple[str, int | None]:
+    pages = _extract_pdf_page_texts(path)
+    joined = "\n\n".join(f"[Page {i + 1}]\n{text}" for i, text in enumerate(pages) if text).strip()
+    return joined, len(pages)
 
 
 def pdf_page_count(path: Path) -> int:
@@ -215,6 +270,95 @@ def prepare_page_image_for_vision(image: Image.Image) -> tuple[bytes, str]:
     return buf.getvalue(), "image/png"
 
 
+_VISION_INSTRUCTIONS = (
+    "You are a careful OCR transcription engine for scanned paper documents. "
+    "Transcribe all readable text from the page image. Preserve reading order, "
+    "line breaks, amounts, dates, and IDs. Return plain text only — no markdown, "
+    "no commentary."
+)
+
+
+async def _ai_vision_one_page(
+    path: Path,
+    page_index: int,
+    *,
+    hint: str = "",
+) -> str:
+    """Transcribe a single page with a multimodal LLM call."""
+    from paperless_agent.llm import complete_with_images
+
+    raise_if_cancelled()
+    img = render_document_page(path, page_index)
+    image_bytes, mime_type = prepare_page_image_for_vision(img)
+    prompt = "Transcribe this document page image. Output plain text only."
+    if hint.strip():
+        prompt += (
+            "\n\nEmbedded PDF text (may be incomplete or wrong; prefer the image):\n"
+            f"{hint.strip()[:2000]}"
+        )
+    page_text = await complete_with_images(
+        prompt,
+        images=[image_bytes],
+        instructions=_VISION_INSTRUCTIONS,
+        mime_type=mime_type,
+        cancel_event=get_file_cancel_event(),
+        timeout=resolve_ocr_page_timeout(),
+        ollama_options=_ollama_vision_options() if config.LLM_PROVIDER == "ollama" else None,
+    )
+    return page_text.strip()
+
+
+async def _ai_vision_transcribe_indices(
+    path: Path,
+    page_indices: list[int],
+    *,
+    page_hints: dict[int, str] | None = None,
+    filename: str = "",
+    total_pages: int | None = None,
+) -> dict[int, str]:
+    """Vision-OCR selected pages with bounded concurrency for cloud providers."""
+    if not page_indices:
+        return {}
+    hints = page_hints or {}
+    total = total_pages or max(page_indices)
+    concurrency = resolve_ocr_concurrency()
+    sem = asyncio.Semaphore(concurrency)
+    done = 0
+    lock = asyncio.Lock()
+    results: dict[int, str] = {}
+
+    async def one(page_index: int) -> None:
+        nonlocal done
+        async with sem:
+            raise_if_cancelled()
+            async with lock:
+                await emit_step(
+                    "ai_ocr",
+                    label=step_label("ai_ocr"),
+                    status="running",
+                    detail=llm_busy_detail(
+                        f"Vision OCR page {page_index}/{total} ({done}/{len(page_indices)} done)…"
+                    ),
+                    filename=filename,
+                )
+            text = await _ai_vision_one_page(path, page_index, hint=hints.get(page_index, ""))
+            async with lock:
+                results[page_index] = text
+                done += 1
+                await emit_step(
+                    "ai_ocr",
+                    label=step_label("ai_ocr"),
+                    status="running",
+                    detail=(
+                        f"Vision OCR {done}/{len(page_indices)} pages (page {page_index}/{total})"
+                    ),
+                    filename=filename,
+                )
+
+    await asyncio.gather(*(one(i) for i in page_indices))
+    return results
+
+
 async def _ai_vision_transcribe_pages(
     path: Path,
     *,
@@ -222,57 +366,26 @@ async def _ai_vision_transcribe_pages(
     text_layer_hint: str = "",
     filename: str = "",
 ) -> str:
-    """Transcribe each page with a separate multimodal LLM call."""
-    from paperless_agent.llm import complete_with_images
-
-    instructions = (
-        "You are a careful OCR transcription engine for scanned paper documents. "
-        "Transcribe all readable text from the page image. Preserve reading order, "
-        "line breaks, amounts, dates, and IDs. Return plain text only — no markdown, "
-        "no commentary."
+    """Vision-OCR every page (maximum mode / tests)."""
+    indices = list(range(1, page_count + 1))
+    page_map = await _ai_vision_transcribe_indices(
+        path,
+        indices,
+        page_hints={1: text_layer_hint} if text_layer_hint else {},
+        filename=filename,
+        total_pages=page_count,
     )
-    ollama_options = _ollama_vision_options()
-    parts: list[str] = []
-    for page_index in range(1, page_count + 1):
-        raise_if_cancelled()
-        await emit_step(
-            "ai_ocr",
-            label=step_label("ai_ocr"),
-            status="running",
-            detail=llm_busy_detail(f"Reading page {page_index}/{page_count}…"),
-            filename=filename,
-        )
-        img = render_document_page(path, page_index)
-        image_bytes, mime_type = prepare_page_image_for_vision(img)
-        hint = ""
-        if page_index == 1 and text_layer_hint.strip():
-            hint = (
-                "\n\nEmbedded PDF text (may be incomplete or wrong; prefer the image):\n"
-                f"{text_layer_hint.strip()[:4000]}"
-            )
-        prompt = (
-            "Transcribe this document page image. Output plain text only."
-            f"{hint}"
-        )
-        page_text = await complete_with_images(
-            prompt,
-            images=[image_bytes],
-            instructions=instructions,
-            mime_type=mime_type,
-            cancel_event=get_file_cancel_event(),
-            timeout=resolve_ocr_page_timeout(),
-            ollama_options=ollama_options if config.LLM_PROVIDER == "ollama" else None,
-        )
-        parts.append(f"[Page {page_index}]\n{page_text.strip()}")
+    parts = [f"[Page {i}]\n{page_map[i]}" for i in indices if page_map.get(i)]
     return "\n\n".join(parts)
 
 
 async def recover_document_text(path: str | Path) -> dict[str, Any]:
     """
-    Recover plain text for ingest.
+    Recover plain text for ingest (adaptive).
 
-    1. Optionally read a PDF embedded text layer (for workflow + AI hint)
-    2. Always run AI vision OCR on page images
+    For each PDF page: use the embedded text layer when quality is good for the
+    active mode (fast / balanced); otherwise run AI vision OCR. Image files always
+    use vision. Cloud providers run vision pages with bounded concurrency.
     """
     file_path = Path(path).expanduser().resolve()
     if not file_path.exists() or not file_path.is_file():
@@ -287,9 +400,10 @@ async def recover_document_text(path: str | Path) -> dict[str, Any]:
         }
 
     steps: list[dict[str, Any]] = []
-    text_layer = ""
+    page_layer_texts: list[str] = []
     page_count: int | None = None
     filename = file_path.name
+    mode = resolve_ocr_mode()
 
     raise_if_cancelled()
     if suffix in PDF_SUFFIXES:
@@ -301,21 +415,26 @@ async def recover_document_text(path: str | Path) -> dict[str, Any]:
             filename=filename,
         )
         try:
-            text_layer, page_count = _extract_pdf_text_layer(file_path)
-            layer_quality = assess_text_quality(text_layer)
+            page_layer_texts = _extract_pdf_page_texts(file_path)
+            page_count = len(page_layer_texts)
+            joined = "\n\n".join(
+                f"[Page {i + 1}]\n{t}" for i, t in enumerate(page_layer_texts) if t
+            )
+            layer_quality = assess_text_quality(joined)
             steps.append(
                 {
                     "method": "pdf_text_layer",
                     "quality": layer_quality.__dict__,
                     "chars": layer_quality.chars,
+                    "pages": page_count,
                 }
             )
-            pages_note = f"{page_count} page{'s' if page_count != 1 else ''}" if page_count else "PDF"
+            pages_note = f"{page_count} page{'s' if page_count != 1 else ''}"
             await emit_step(
                 "read",
                 label=step_label("read"),
                 status="done",
-                detail=f"{pages_note} · {layer_quality.chars} chars in text layer",
+                detail=(f"{pages_note} · {layer_quality.chars} chars in text layer · mode={mode}"),
                 filename=filename,
             )
         except Exception as exc:  # noqa: BLE001
@@ -337,70 +456,125 @@ async def recover_document_text(path: str | Path) -> dict[str, Any]:
             filename=filename,
         )
 
-    text = ""
-    method = "none"
-    quality = assess_text_quality("")
+    page_limit = resolve_ocr_page_limit(file_path, total_pages=page_count)
+    if page_count is None:
+        page_count = page_limit
 
-    await emit_step(
-        "ai_ocr",
-        label=step_label("ai_ocr"),
-        status="running",
-        detail="Preparing page images…",
-        filename=filename,
-    )
+    page_parts: dict[int, str] = {}
+    pages_from_layer: list[int] = []
+    pages_need_vision: list[int] = []
+
+    for page_index in range(1, page_limit + 1):
+        layer = page_layer_texts[page_index - 1] if page_index - 1 < len(page_layer_texts) else ""
+        if suffix in PDF_SUFFIXES and page_uses_text_layer(layer, mode):
+            page_parts[page_index] = layer
+            pages_from_layer.append(page_index)
+        else:
+            pages_need_vision.append(page_index)
+
     raise_if_cancelled()
-    try:
-        page_limit = resolve_ocr_page_limit(file_path, total_pages=page_count)
-        if page_limit <= 0:
-            raise RuntimeError("no page images available for AI OCR")
-        if page_count is None:
-            page_count = page_limit
-        page_n = page_limit
-        ai_text = (
-            await _ai_vision_transcribe_pages(
-                file_path,
-                page_count=page_n,
-                text_layer_hint=text_layer,
-                filename=filename,
-            )
-        ).strip()
-        ai_quality = assess_text_quality(ai_text)
-        steps.append(
-            {
-                "method": "ai_vision",
-                "quality": ai_quality.__dict__,
-                "chars": ai_quality.chars,
-                "pages_ocrd": page_n,
+    vision_errors: list[str] = []
+    vision_succeeded = 0
+    if not pages_need_vision:
+        await emit_step(
+            "ai_ocr",
+            label=step_label("ai_ocr"),
+            status="skipped",
+            detail=(
+                f"Mode {mode}: all {len(pages_from_layer)} page(s) from text layer (no vision)"
+            ),
+            filename=filename,
+        )
+    else:
+        await emit_step(
+            "ai_ocr",
+            label=step_label("ai_ocr"),
+            status="running",
+            detail=(
+                f"Mode {mode}: {len(pages_from_layer)} page(s) from text layer, "
+                f"{len(pages_need_vision)} need vision"
+            ),
+            filename=filename,
+        )
+        try:
+            hints = {
+                i: page_layer_texts[i - 1]
+                for i in pages_need_vision
+                if i - 1 < len(page_layer_texts) and page_layer_texts[i - 1]
             }
-        )
-        text = ai_text
-        quality = ai_quality
+            vision_map = await _ai_vision_transcribe_indices(
+                file_path,
+                pages_need_vision,
+                page_hints=hints,
+                filename=filename,
+                total_pages=page_count,
+            )
+            for page_index in pages_need_vision:
+                text = (vision_map.get(page_index) or "").strip()
+                if text:
+                    page_parts[page_index] = text
+                    vision_succeeded += 1
+                elif page_index - 1 < len(page_layer_texts) and page_layer_texts[page_index - 1]:
+                    page_parts[page_index] = page_layer_texts[page_index - 1]
+            steps.append(
+                {
+                    "method": "ai_vision",
+                    "pages_ocrd": len(pages_need_vision),
+                    "pages_with_text": vision_succeeded,
+                    "chars": sum(len(vision_map.get(i) or "") for i in pages_need_vision),
+                    "concurrency": resolve_ocr_concurrency(),
+                }
+            )
+        except FileCancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            detail = _exc_detail(exc)
+            logger.warning("AI vision OCR failed for %s: %s", file_path, detail)
+            vision_errors.append(detail)
+            steps.append({"method": "ai_vision", "error": detail})
+            for page_index in pages_need_vision:
+                if page_index in page_parts:
+                    continue
+                if page_index - 1 < len(page_layer_texts) and page_layer_texts[page_index - 1]:
+                    page_parts[page_index] = page_layer_texts[page_index - 1]
+
+    ordered = [
+        f"[Page {i}]\n{page_parts[i]}" for i in range(1, page_limit + 1) if page_parts.get(i)
+    ]
+    text = "\n\n".join(ordered).strip()
+    quality = assess_text_quality(text)
+
+    if pages_from_layer and not pages_need_vision:
+        method = "pdf_text_layer"
+        used_ai = False
+    elif pages_need_vision and not pages_from_layer and not vision_errors:
         method = "ai_vision"
+        used_ai = True
+    elif pages_from_layer and pages_need_vision and not vision_errors:
+        method = "adaptive"
+        used_ai = True
+    elif text and vision_errors:
+        method = "pdf_text_layer_fallback"
+        used_ai = False
+    elif text:
+        method = "adaptive"
+        used_ai = vision_succeeded > 0
+    else:
+        method = "none"
+        used_ai = False
+
+    detail = (
+        f"{page_limit} page{'s' if page_limit != 1 else ''} · {quality.chars} chars · "
+        f"layer {len(pages_from_layer)} / vision {len(pages_need_vision)} · {mode}"
+    )
+    if pages_need_vision:
         await emit_step(
             "ai_ocr",
             label=step_label("ai_ocr"),
-            status="done" if ai_text else "error",
-            detail=f"{page_n} page{'s' if page_n != 1 else ''} · {ai_quality.chars} chars",
+            status="done" if text else "error",
+            detail=detail if not vision_errors else f"{detail} · vision error: {vision_errors[0]}",
             filename=filename,
         )
-    except FileCancelledError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        detail = _exc_detail(exc)
-        logger.warning("AI vision OCR failed for %s: %s", file_path, detail)
-        steps.append({"method": "ai_vision", "error": detail})
-        await emit_step(
-            "ai_ocr",
-            label=step_label("ai_ocr"),
-            status="error",
-            detail=detail,
-            filename=filename,
-        )
-        # Last resort: keep any embedded PDF text if AI OCR failed.
-        if text_layer.strip():
-            text = text_layer
-            quality = assess_text_quality(text)
-            method = "pdf_text_layer_fallback"
 
     return {
         "status": "success" if text.strip() else "partial",
@@ -411,11 +585,12 @@ async def recover_document_text(path: str | Path) -> dict[str, Any]:
         "method": method,
         "quality": quality.__dict__,
         "page_count": page_count,
+        "ocr_mode": mode,
+        "pages_from_text_layer": len(pages_from_layer),
+        "pages_from_vision": len(pages_need_vision),
         "steps": steps,
-        "used_ai_ocr": method == "ai_vision",
-        "note": None
-        if text.strip()
-        else "No usable text recovered from AI OCR (or PDF text fallback).",
+        "used_ai_ocr": used_ai,
+        "note": None if text.strip() else "No usable text recovered from text layer or AI OCR.",
     }
 
 

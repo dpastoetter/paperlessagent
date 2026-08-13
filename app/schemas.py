@@ -1,0 +1,120 @@
+"""Pydantic request/response models for the FastAPI surface."""
+
+from __future__ import annotations
+
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+
+class AskRequest(BaseModel):
+    question: str = Field(..., min_length=1)
+
+
+class ProcessRequest(BaseModel):
+    path: str = Field(..., min_length=1)
+
+
+class ApiKeyRequest(BaseModel):
+    api_key: str = Field(..., min_length=8)
+
+
+class OAuthCompleteRequest(BaseModel):
+    state: str = Field(..., min_length=8)
+    callback: str = Field(..., min_length=1)
+
+
+class CategorySetting(BaseModel):
+    name: str = Field(..., min_length=1)
+    folder: str = Field(..., min_length=1)
+
+
+class BatchSetting(BaseModel):
+    poll_interval_seconds: float = Field(
+        default=30,
+        ge=0,
+        description="How often to scan the inbox for new files. 0 disables auto-scan.",
+    )
+
+
+class ReviewSetting(BaseModel):
+    require_approval: bool = Field(
+        default=True,
+        description="Hold proposed filings for human approval before writing.",
+    )
+
+
+class OcrSetting(BaseModel):
+    mode: Literal["fast", "balanced", "maximum"] = Field(
+        default="balanced",
+        description="OCR accuracy mode: fast | balanced | maximum.",
+    )
+
+
+class SettingsRequest(BaseModel):
+    source_dir: str = Field(..., min_length=1)
+    categories: list[CategorySetting] = Field(..., min_length=1)
+    batch: BatchSetting = Field(default_factory=BatchSetting)
+    review: ReviewSetting = Field(default_factory=ReviewSetting)
+    ocr: OcrSetting = Field(default_factory=OcrSetting)
+
+
+class ReviewApproveRequest(BaseModel):
+    filename: str | None = None
+    doc_type: str | None = None
+    doc_date: str | None = None
+    subject: str | None = None
+    counterparties: str | None = None
+    reference_ids: list[str] | None = None
+    amount: float | None = None
+    currency: str | None = None
+    summary: str | None = None
+
+
+class ReviewRejectRequest(BaseModel):
+    delete_file: bool = Field(
+        default=True,
+        description="Also remove the scan from the inbox so it is not reprocessed.",
+    )
+
+
+class ValidatePathRequest(BaseModel):
+    path: str = Field(..., min_length=1)
+
+
+class AutostartRequest(BaseModel):
+    enabled: bool
+
+
+class LlmProviderRequest(BaseModel):
+    provider: str = Field(..., min_length=3)
+    model: str | None = None
+    embedding_model: str | None = None
+    base_url: str | None = None
+
+
+class OllamaEnableRequest(BaseModel):
+    base_url: str | None = None
+    chat_model: str | None = None
+    embedding_model: str | None = None
+    pull_missing: bool = False
+
+
+class OllamaPullRequest(BaseModel):
+    model: str = Field(..., min_length=1)
+
+
+class ProcessCancelRequest(BaseModel):
+    file_id: str = Field(..., min_length=1)
+
+
+class ProcessRetryRequest(BaseModel):
+    path: str = Field(..., min_length=1)
+
+
+class OllamaRestartRequest(BaseModel):
+    force: bool = False
+
+
+class CloudDisclaimerRequest(BaseModel):
+    accepted: bool = True

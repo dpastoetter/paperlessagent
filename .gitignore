@@ -16,4 +16,5 @@ dist/
 build/
 .coverage
 htmlcov/
+node_modules/
 .cursor/

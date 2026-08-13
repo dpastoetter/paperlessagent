@@ -20,14 +20,13 @@ from typing import Any
 import httpx
 
 from paperless_agent import config
+from paperless_agent.version import get_current_version
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_UPDATE_REPO = "dpastoetter/paperlessagent"
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-_SHA256_LINE_RE = re.compile(
-    r"^\s*([A-Fa-f0-9]{64})\s+\*?(.+?)\s*$"
-)
+_SHA256_LINE_RE = re.compile(r"^\s*([A-Fa-f0-9]{64})\s+\*?(.+?)\s*$")
 _DIGEST_RE = re.compile(r"^sha256:([A-Fa-f0-9]{64})$", re.IGNORECASE)
 _SUMS_NAMES = frozenset({"SHA256SUMS", "SHA256SUMS.txt", "checksums.txt"})
 
@@ -62,17 +61,6 @@ _RETRYABLE_EXCEPTIONS = (
 # Never overwritten by an update: user data, credentials, environments.
 # Matched case-insensitively so a tarball cannot sneak past with Data/ or .ENV.
 PROTECTED_TOP_LEVEL = {"data", ".env", ".venv", "venv", ".git", "node_modules"}
-
-
-def get_current_version() -> str:
-    """Read the installed version from pyproject.toml."""
-    pyproject = Path(config.PROJECT_ROOT) / "pyproject.toml"
-    try:
-        text = pyproject.read_text(encoding="utf-8")
-    except OSError:
-        return "0.0.0"
-    match = re.search(r'^version\s*=\s*"([^"]+)"', text, flags=re.MULTILINE)
-    return match.group(1) if match else "0.0.0"
 
 
 def parse_version(value: str) -> tuple[int, ...]:
@@ -186,11 +174,7 @@ def _pick_archive_asset(assets: list[dict[str, Any]]) -> dict[str, Any] | None:
     ]
     if not archives:
         return None
-    preferred = [
-        asset
-        for asset in archives
-        if asset["name"].lower().startswith("paperlessagent-")
-    ]
+    preferred = [asset for asset in archives if asset["name"].lower().startswith("paperlessagent-")]
     return preferred[0] if preferred else archives[0]
 
 
@@ -415,11 +399,7 @@ def _read_release_file_list(path: Path) -> set[str]:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
         return set()
-    return {
-        line.strip()
-        for line in lines
-        if line.strip() and not line.strip().startswith("#")
-    }
+    return {line.strip() for line in lines if line.strip() and not line.strip().startswith("#")}
 
 
 def apply_tarball(
@@ -479,9 +459,7 @@ def apply_tarball(
             try:
                 resolved = dest.resolve()
                 if not resolved.is_relative_to(root):
-                    logger.warning(
-                        "Skipping path that escapes project root: %s", relative
-                    )
+                    logger.warning("Skipping path that escapes project root: %s", relative)
                     continue
             except OSError:
                 continue
@@ -539,8 +517,10 @@ def apply_update() -> dict[str, Any]:
             "status": "error",
             "error": f"Already up to date (v{info['current_version']}).",
         }
-    if not info.get("verifiable") or not info.get("expected_sha256") or not info.get(
-        "download_url"
+    if (
+        not info.get("verifiable")
+        or not info.get("expected_sha256")
+        or not info.get("download_url")
     ):
         return {
             "status": "error",

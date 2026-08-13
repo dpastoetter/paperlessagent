@@ -1,2 +1,6 @@
-# Optional desktop window shell (Debian package / python -m paperless_agent.desktop)
-pywebview>=5.0
+# Optional desktop window shell (python -m paperless_agent / paperless_agent.desktop).
+#
+# Source of truth: pyproject.toml [project.optional-dependencies] desktop
+# Pins: constraints.txt (./scripts/lock-deps.sh)
+--constraint constraints.txt
+-e .[desktop]

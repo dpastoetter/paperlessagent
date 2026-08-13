@@ -17,12 +17,12 @@ from openai import AsyncOpenAI
 
 from paperless_agent import config
 from paperless_agent.auth import resolve_auth_mode, resolve_openai_api_key
-from paperless_agent.job_control import FileCancelledError
 from paperless_agent.codex_oauth import (
     CODEX_RESPONSES_BASE_URL,
     ORIGINATOR,
     get_valid_chatgpt_tokens,
 )
+from paperless_agent.job_control import FileCancelledError
 from paperless_agent.ollama_setup import (
     ensure_ollama_ready,
     format_http_error,
@@ -122,8 +122,7 @@ class CodexResponsesLlm(OpenAIResponsesLlm):
         kwargs["stream"] = True
         if not kwargs.get("instructions"):
             kwargs["instructions"] = (
-                "You are PaperlessAgent, a document classification and "
-                "extraction assistant."
+                "You are PaperlessAgent, a document classification and extraction assistant."
             )
         for key in ("temperature", "top_p", "max_output_tokens", "service_tier"):
             kwargs.pop(key, None)
@@ -238,7 +237,7 @@ def _record_gemini_response(model_name: str, response: Any) -> None:
     )
 
 
-async def complete_text(
+async def complete_text_via_backend(
     prompt: str,
     *,
     instructions: str,
@@ -246,7 +245,7 @@ async def complete_text(
     json_mode: bool = False,
 ) -> str:
     """
-    Non-ADK text completion for the active provider.
+    Non-ADK text completion for the active provider backend.
 
     Prefer this over ADK tool agents when using ChatGPT OAuth / Codex streaming,
     which often yields empty final text parts through the ADK Runner.
@@ -283,9 +282,25 @@ async def complete_text(
     try:
         return await run_cancellable(coro, cancel_event=cancel_event, timeout=timeout)
     except TimeoutError as exc:
-        raise RuntimeError(
-            f"LLM text completion timed out after {timeout:.0f}s"
-        ) from exc
+        raise RuntimeError(f"LLM text completion timed out after {timeout:.0f}s") from exc
+
+
+async def complete_text(
+    prompt: str,
+    *,
+    instructions: str,
+    cancel_event: asyncio.Event | None = None,
+    json_mode: bool = False,
+) -> str:
+    """Public text completion entrypoint (routes through the provider interface)."""
+    from paperless_agent.providers import get_llm_provider
+
+    return await get_llm_provider().complete_text(
+        prompt,
+        instructions=instructions,
+        cancel_event=cancel_event,
+        json_mode=json_mode,
+    )
 
 
 async def _collect_codex_stream(stream: Any, model_name: str) -> str:
@@ -379,9 +394,7 @@ async def _ollama_request(
             f"Cannot reach Ollama at {config.OLLAMA_BASE_URL} — is `ollama serve` running?"
         ) from exc
     except httpx.TimeoutException as exc:
-        raise RuntimeError(
-            f"Ollama request timed out after {request_timeout:.0f}s"
-        ) from exc
+        raise RuntimeError(f"Ollama request timed out after {request_timeout:.0f}s") from exc
     except httpx.HTTPStatusError as exc:
         raise RuntimeError(format_http_error(exc, model=model, kind="model")) from exc
     finally:
@@ -405,9 +418,7 @@ async def _complete_ollama(
     resolved = resolve_runtime_model(model_name)
     user_message: dict[str, Any] = {"role": "user", "content": prompt}
     if images:
-        user_message["images"] = [
-            base64.b64encode(raw).decode("ascii") for raw in images
-        ]
+        user_message["images"] = [base64.b64encode(raw).decode("ascii") for raw in images]
     ollama_opts: dict[str, Any] = {"temperature": 0.2}
     if options:
         ollama_opts.update(options)
@@ -481,7 +492,7 @@ async def _complete_gemini(prompt: str, *, instructions: str, model_name: str) -
     return await asyncio.to_thread(_call)
 
 
-async def complete_with_images(
+async def complete_with_images_via_backend(
     prompt: str,
     *,
     images: list[bytes],
@@ -542,13 +553,35 @@ async def complete_with_images(
         )
         effective_timeout = timeout if timeout is not None else LLM_VISION_TIMEOUT
     try:
-        return await run_cancellable(
-            coro, cancel_event=cancel_event, timeout=effective_timeout
-        )
+        return await run_cancellable(coro, cancel_event=cancel_event, timeout=effective_timeout)
     except TimeoutError as exc:
         raise RuntimeError(
             f"LLM vision completion timed out after {effective_timeout:.0f}s"
         ) from exc
+
+
+async def complete_with_images(
+    prompt: str,
+    *,
+    images: list[bytes],
+    instructions: str,
+    mime_type: str = "image/png",
+    cancel_event: asyncio.Event | None = None,
+    timeout: float | None = None,
+    ollama_options: dict[str, Any] | None = None,
+) -> str:
+    """Public vision completion entrypoint (routes through the provider interface)."""
+    from paperless_agent.providers import get_llm_provider
+
+    return await get_llm_provider().complete_vision(
+        prompt,
+        images=images,
+        instructions=instructions,
+        mime_type=mime_type,
+        cancel_event=cancel_event,
+        timeout=timeout,
+        ollama_options=ollama_options,
+    )
 
 
 async def _complete_codex_images(

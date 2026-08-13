@@ -293,6 +293,7 @@ ok "venv at $INSTALL_DIR/.venv"
 
 bold "Installing Python packages"
 "$VENV_PY" -m pip install -U pip >/dev/null
+# requirements.txt → editable install constrained by constraints.txt
 "$VENV_PY" -m pip install -r requirements.txt
 ok "dependencies installed"
 

@@ -9,29 +9,34 @@ Built with [Google ADK](https://adk.dev/) (Python) + FastAPI. Works with **OpenA
 ## Features
 
 - **Ingest pipeline**: Open file → Transcribe → Find details → Name file → Review → Save → Make searchable, with a live workflow strip (Server-Sent Events) and hover descriptions on each step
+- **Adaptive OCR**: per-page text-layer vs AI vision (`fast` / `balanced` / `maximum`); cloud providers run vision pages concurrently
 - **Per-file cancel & retry**: stop a stuck or slow file mid-pipeline; retry failed or cancelled items from the inbox queue (readable error toasts for API failures)
 - **Human-in-the-loop review**: every proposed filing waits in a review queue where you can correct filename, category, date, parties, reference IDs, amount (financial docs only), and summary before approving — nothing touches your filesystem until you say so (optional; can be switched to fully automatic)
 - **Smart metadata extraction**: category-aware fields — `subject`, `parties`, and `reference_ids` for all document types; amount/currency only for invoices, receipts, bank/tax/utility/insurance documents. Missing `doc_type` defaults to `other`; common aliases (`document_type`, `category`) are accepted
 - **Duplicate detection**: SHA-256 file checksums, normalized content hashes, and text-similarity matching flag re-scans and near-duplicates before they are filed
-- **Ask your archive**: RAG-backed natural-language questions with source citations
-- **Local storage**: configurable inbox and per-category archive folders, `data/paperless.db` (SQLite), `data/chroma/` (vectors)
+- **Ask your archive**: grounded RAG + FTS5 keyword search with source citations (no “recent docs” padding when retrieval misses)
+- **Local storage**: configurable inbox and per-category archive folders, `data/paperless.db` (SQLite + FTS5), `data/chroma/` (vectors)
 - **Inbox polling**: automatic processing of new scans on a configurable interval
 - **Local Ollama tooling**: start the daemon, pull models, show CPU/GPU usage for loaded models, unload or restart Ollama from Settings
 - **Boot autostart (Linux)**: optional systemd user service so the web UI comes up after login or reboot
-- **Web app**: single-page UI with four theme presets (dark/light), toast notifications, and a mockup mode for clean screenshots
+- **Web app**: modular ES-module UI with four theme presets (dark/light), toast notifications, and a mockup mode for clean screenshots
 - **Self-update**: check and install new releases from GitHub directly from Settings
-
+- **CI & coverage**: `./scripts/ci.sh` runs format, lint, mypy, Vitest, and pytest with a coverage floor
 ## Screenshots
 
 All screenshots use the built-in mockup mode (Settings → Look & feel), which fills the UI with demo data.
 
-| Review queue | Archive (Slate theme) |
+| Review queue | Archive |
 | --- | --- |
 | ![Review](docs/screenshots/review.png) | ![Archive](docs/screenshots/archive.png) |
 
 | Ask the archive | Settings |
 | --- | --- |
 | ![Ask](docs/screenshots/ask.png) | ![Settings](docs/screenshots/settings.png) |
+
+All five shots use mockup mode with the Slate theme (`?mock=1&theme=slate`). Regenerate with `node scripts/capture-screenshots.mjs` while the app is running on port 8080.
+
+Product deck (open in a browser): [`docs/deck/index.html`](docs/deck/index.html) — arrow keys or Space to advance.
 
 ## Install
 
@@ -136,7 +141,7 @@ Does not remove `%USERPROFILE%\.codex\auth.json` or archive folders outside the 
 
 ### Desktop window (optional)
 
-From a venv install, after `pip install -r requirements-desktop.txt` (needs WebKitGTK on Linux):
+From a venv install, after `pip install -e '.[desktop]' -c constraints.txt` (needs WebKitGTK on Linux):
 
 ```bash
 python -m paperless_agent.desktop
@@ -154,9 +159,11 @@ cd paperlessagent
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip
-pip install -r requirements.txt
+pip install -e . -c constraints.txt
 cp .env.example .env   # skip if .env already exists
 ```
+
+(`requirements.txt` is a thin wrapper around the same constrained install for the OS installers.)
 
 If you already have a clone but no `.venv`, run the `venv` / `pip install` steps above (or re-run the OS installer) before starting the server.
 
@@ -181,7 +188,7 @@ PAPERLESS_MODEL=gpt-5.6-luna
 PAPERLESS_EMBEDDING_MODEL=text-embedding-3-small
 ```
 
-ChatGPT OAuth only supports Codex models (e.g. `gpt-5.6-luna` / `terra` / `sol`). Platform IDs like `gpt-4.1` are rejected — the app auto-falls back to `gpt-5.6-luna` in that case. ChatGPT OAuth uses a local embedding fallback for RAG; for higher-quality embeddings, save an API key.
+ChatGPT OAuth only supports Codex models (e.g. `gpt-5.6-luna` / `terra` / `sol`). Platform IDs like `gpt-4.1` are rejected — the app auto-falls back to `gpt-5.6-luna` in that case. ChatGPT OAuth cannot call Platform embedding APIs, so RAG uses a **local ONNX sentence embedding model** (`all-MiniLM-L6-v2` via Chroma). For OpenAI-hosted embeddings, save an API key. Fully local installs should use the Ollama provider with `nomic-embed-text`.
 
 **Find details (metadata extract)** uses the Codex Responses streaming API. The pipeline asks for JSON only and parses fenced or partially wrapped replies; empty model output is reported distinctly from invalid JSON. Platform API-key mode can additionally request JSON object mode on chat completions.
 
@@ -245,7 +252,12 @@ uvicorn app.main:app --host 127.0.0.1 --port 8080
 | Ollama OCR times out on CPU | Raise `PAPERLESS_OLLAMA_OCR_PAGE_TIMEOUT` (default 900s) or lower `PAPERLESS_OLLAMA_OCR_MAX_IMAGE_PX` (default 1024); see [OCR tuning](#ocr-and-long-documents) |
 | Find details fails with “invalid JSON” | Usually empty/malformed model output — retry the file; with ChatGPT OAuth confirm a Codex model is selected and you are signed in |
 
-Uvicorn binds to `127.0.0.1` by default — keep it that way. The API has no login; mutating routes are protected against cross-site form posts by a custom header the UI always sends, but binding with `--host 0.0.0.0` would still expose your documents and settings to anyone on the network.
+Uvicorn should bind to `127.0.0.1` (the default). The API has no user login; mutating routes also require a custom header the UI sends (CSRF hardening). **Non-loopback binds** (`0.0.0.0`, a LAN IP, etc.) are **refused at startup** unless you set `PAPERLESS_API_TOKEN` in `.env`. With a token configured, every `/api/*` route except `/api/health` requires `Authorization: Bearer …` or the `pa_session` cookie (the UI bootstraps this on loopback, or via `http://host:8080/?token=…` once). Host headers are allowlisted (`PAPERLESS_ALLOWED_HOSTS`, defaulting to localhost / loopback) to harden against DNS rebinding.
+
+```bash
+python -c "from paperless_agent.local_security import generate_api_token; print(generate_api_token())"
+# → put the value in .env as PAPERLESS_API_TOKEN=…
+```
 
 Open [http://localhost:8080](http://localhost:8080).
 
@@ -304,14 +316,23 @@ The review form shows amount/currency only when the selected category is financi
 
 ## OCR and long documents
 
-Text recovery on ingest always uses **AI vision OCR** on rendered page images; a PDF text layer, when present, serves as a hint and fallback.
+Text recovery is **adaptive**. For each PDF page the agent assesses the embedded text layer first:
 
-By default, **all PDF pages** are transcribed (one vision call per page, up to 128 pages). Per-page OCR is slower but avoids truncated output on multi-page scans. Page images are downscaled before vision OCR. For **local Ollama**, images use a tighter default max edge (`1024px`) and JPEG quality ~80 so dense scans stay tractable on CPU; cloud providers keep the larger `1536px` default.
+- **Fast** — use embedded text when anything usable is present; vision only if the page is nearly empty
+- **Balanced** (default) — use embedded text when quality heuristics pass; vision for weak/garbled/scanned pages
+- **Maximum** — always run AI vision OCR on every page (closest to the old always-vision behavior)
+
+Image files always use vision. Change the mode under **Settings → Filing & scanning → OCR accuracy**, or set `PAPERLESS_OCR_MODE`.
+
+By default, **all PDF pages** are considered (up to 128). Cloud providers run needed vision pages with **bounded concurrency** (`PAPERLESS_OCR_CONCURRENCY`, default 4). Local Ollama stays serial by default (`PAPERLESS_OCR_CONCURRENCY_OLLAMA=1`). Page images are downscaled before vision OCR.
 
 Tune via `.env` (see `.env.example` for the full list):
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
+| `PAPERLESS_OCR_MODE` | `balanced` | `fast` \| `balanced` \| `maximum` (overrides Settings) |
+| `PAPERLESS_OCR_CONCURRENCY` | `4` | Parallel vision pages for cloud providers |
+| `PAPERLESS_OCR_CONCURRENCY_OLLAMA` | `1` | Parallel vision pages for local Ollama |
 | `PAPERLESS_OCR_MAX_PAGES` | `0` (all) | Cap pages per document; `0` = all up to safety max |
 | `PAPERLESS_OCR_SAFETY_MAX_PAGES` | `128` | Hard ceiling on page count |
 | `PAPERLESS_OCR_DPI` | `200` | PDF render resolution |
@@ -334,7 +355,9 @@ LLM timeouts (chat, vision, Ollama) and cancel join behavior:
 | `PAPERLESS_OLLAMA_TIMEOUT` | `300` | Ollama chat/vision timeout |
 | `PAPERLESS_CANCEL_JOIN_TIMEOUT` | `3` | Max wait when joining a cancelled async LLM call |
 
-If you switch embedding providers (Gemini / OpenAI / Ollama), re-index documents — vector spaces are not compatible.
+If you switch embedding providers or models (Gemini / OpenAI / Ollama / local ONNX), the app **detects the mismatch automatically** (stored `embedding_provider`, `model`, `dimension`, and index schema version in `data/chroma/index_meta.json`) and rebuilds the vector index on the next index or Ask request. You do not need to remember to re-index manually.
+
+**Ask grounding:** answers use only confident semantic hits (cosine distance ≤ `PAPERLESS_ASK_MAX_CHUNK_DISTANCE`, default `0.55`) plus SQLite FTS5 / metadata matches. If nothing relevant is retrieved, Ask says there isn’t enough evidence — it does **not** fall back to recent unrelated documents.
 
 ## Updates
 
@@ -346,7 +369,7 @@ Override the release source with `PAPERLESS_UPDATE_REPO=owner/repo` if you fork 
 
 Pushing a version tag (`v*`) runs GitHub Actions, which builds the tarball and `SHA256SUMS`, then publishes/updates the GitHub Release. The packager archives the **exact tagged commit** (not a dirty working tree), verifies the file list against `git ls-tree`, and embeds `.release-commit` plus `.release-files` so installs/updates can confirm the SHA and prune stale paths.
 
-**Release checklist:** land every change on `main` first, bump `version` in `pyproject.toml`, commit, then create the tag on that commit (`git tag v0.2.0 && git push origin v0.2.0`). Tagging an older commit is how earlier releases missed later work.
+**Release checklist:** land every change on `main` first, bump `version` in `pyproject.toml` (the single source for package metadata, OpenAPI/`FastAPI.version`, and the in-app updater), regenerate pins if dependencies changed (`./scripts/lock-deps.sh`), commit, then create the matching tag on that commit (`git tag v0.2.0 && git push origin v0.2.0`). Tagging an older commit is how earlier releases missed later work.
 
 Local dry-run:
 
@@ -364,12 +387,17 @@ git checkout v0.2.0
 
 ## Development
 
-### Tests & pre-commit gate
+### Tests & CI quality gate
 
 ```bash
-pytest -q                 # full suite, offline (embeddings and LLM calls are stubbed)
-./scripts/precommit.sh    # syntax checks + secret guard + tests
+pip install -e ".[dev]" -c constraints.txt   # pytest, pytest-cov, ruff, mypy, pip-tools
+./scripts/ci.sh           # same gate as GitHub Actions (format, lint, pip check, mypy, JS, Vitest, pytest+coverage)
+./scripts/precommit.sh    # secret guard + CI gate (also usable as a git hook)
 ```
+
+Coverage is measured with `pytest-cov` (`paperless_agent`, `app`, `query_agent`; branch coverage). CI fails if total coverage drops below the floor in `pyproject.toml` (`--cov-fail-under`). HTML report: `htmlcov/` (gitignored). Desktop GUI (`desktop.py`) and live network/Ollama/systemd are mocked or omitted — unit-test their helpers instead.
+
+Pure frontend helpers (`app/static/api.js`, `router.js`, `state.js`) have a small Vitest harness (`npm test`). Install Node deps once with `npm install`; CI runs the same suite after the JS syntax check.
 
 Install the pre-commit hook once per clone so the gate runs on every commit:
 
@@ -377,7 +405,21 @@ Install the pre-commit hook once per clone so the gate runs on every commit:
 ln -sf ../../scripts/precommit.sh .git/hooks/pre-commit
 ```
 
-The gate refuses commits containing `.env` files, databases, `data/` content, or anything that looks like an API key.
+The pre-commit gate refuses commits containing `.env` files, databases, `data/` content, or anything that looks like an API key.
+
+### Dependencies
+
+`pyproject.toml` is the source of truth for direct dependencies. Exact transitive versions are pinned in `constraints.txt` (regenerate with `./scripts/lock-deps.sh` after changing deps).
+
+| Install | Command |
+| --- | --- |
+| Runtime | `pip install -e . -c constraints.txt` |
+| Desktop shell | `pip install -e '.[desktop]' -c constraints.txt` |
+| Dev tools | `pip install -e '.[dev]' -c constraints.txt` |
+
+Installers still call `pip install -r requirements.txt` / `requirements-desktop.txt`, which are thin wrappers around those constrained editable installs (not a second dependency list).
+
+Pull requests and pushes to `main` run [`.github/workflows/ci.yml`](.github/workflows/ci.yml). Tag releases run the same quality gate on the exact tagged commit before publishing assets ([`.github/workflows/release.yml`](.github/workflows/release.yml)).
 
 ### ADK agents (debug)
 
@@ -399,8 +441,9 @@ python scripts/watch_inbox.py --process-existing
 ```
 paperless_agent/       # ingest pipeline, review queue, dedup, updater, auth/llm helpers
   ingest.py            #   OCR → extract → name → review gate → file + index
-  ocr.py               #   per-page vision OCR, PDF render, image prep
-  llm.py               #   OpenAI / Codex OAuth / Gemini / Ollama + cooperative cancel
+  ocr.py               #   adaptive text-layer / vision OCR, PDF render, image prep
+  llm.py               #   OpenAI / Codex OAuth / Gemini / Ollama backends + cancel
+  providers/           #   LlmProvider interface (text, vision, embeddings, health, usage)
   progress.py          #   SSE progress + pipeline step labels/descriptions
   job_control.py       #   per-file cancel events for ingest
   review.py            #   human-in-the-loop queue (approve / reject)
@@ -409,11 +452,24 @@ paperless_agent/       # ingest pipeline, review queue, dedup, updater, auth/llm
   system_service.py    #   systemd user unit for boot autostart
   updater.py           #   self-update from GitHub releases
 query_agent/           # RAG Q&A agent
-app/                   # FastAPI backend + single-page web UI (app/static/)
-scripts/               # install.sh, install.ps1, make-release-assets.sh, watch_inbox.py, precommit.sh
-tests/                 # offline test suite
+app/                   # FastAPI app (main.py + routers/) and ES-module UI (static/)
+  routers/             #   documents, reviews, settings, processing, auth, updates
+  schemas.py           #   request/response models
+  static/              #   api.js, inbox.js, review.js, settings.js, events.js, …
+scripts/               # install.sh, install.ps1, make-release-assets.sh, ci.sh, precommit.sh, watch_inbox.py
+tests/                 # pytest (Python) + tests/frontend (Vitest)
 docs/screenshots/      # README screenshots (generated with mockup mode)
+docs/deck/             # product slide deck (open index.html in a browser)
+package.json           # Vitest for pure ES-module UI helpers
 data/                  # created at runtime (gitignored)
+```
+
+Regenerate README screenshots (server must be running on port 8080):
+
+```bash
+# uvicorn app.main:app --port 8080
+npx playwright install chromium   # once
+node scripts/capture-screenshots.mjs
 ```
 
 ## Configuration reference

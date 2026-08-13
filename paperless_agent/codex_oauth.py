@@ -43,7 +43,11 @@ def _pkce_pair() -> tuple[str, str]:
 
 def decode_chatgpt_identity(access_token: str) -> dict[str, str | None]:
     """Best-effort decode of ChatGPT claims from the access-token JWT."""
-    empty = {"account_id": None, "email": None, "plan_type": None}
+    empty: dict[str, str | None] = {
+        "account_id": None,
+        "email": None,
+        "plan_type": None,
+    }
     parts = access_token.split(".")
     if len(parts) != 3:
         return empty
@@ -187,9 +191,7 @@ def exchange_authorization_code(*, code: str, verifier: str) -> dict[str, Any]:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
     if response.status_code >= 400:
-        raise RuntimeError(
-            f"Token exchange failed ({response.status_code}): {response.text[:300]}"
-        )
+        raise RuntimeError(f"Token exchange failed ({response.status_code}): {response.text[:300]}")
     data = response.json()
     access = data.get("access_token")
     refresh = data.get("refresh_token")
@@ -216,9 +218,7 @@ def refresh_chatgpt_tokens(refresh_token: str) -> dict[str, Any]:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
     if response.status_code >= 400:
-        raise RuntimeError(
-            f"Token refresh failed ({response.status_code}): {response.text[:300]}"
-        )
+        raise RuntimeError(f"Token refresh failed ({response.status_code}): {response.text[:300]}")
     data = response.json()
     access = data.get("access_token")
     refresh = data.get("refresh_token") or refresh_token
@@ -285,14 +285,21 @@ def parse_manual_callback(raw: str) -> tuple[str | None, str | None]:
         try:
             url = urlparse(text)
             params = parse_qs(url.query)
-            code = (params.get("code") or [None])[0]
-            state = (params.get("state") or [None])[0]
+            code_vals = params.get("code") or []
+            state_vals = params.get("state") or []
+            code = code_vals[0] if code_vals else None
+            state = state_vals[0] if state_vals else None
             return code, state
         except ValueError:
             return None, None
     if "code=" in text:
         params = parse_qs(text.lstrip("?"))
-        return (params.get("code") or [None])[0], (params.get("state") or [None])[0]
+        code_vals = params.get("code") or []
+        state_vals = params.get("state") or []
+        return (
+            code_vals[0] if code_vals else None,
+            state_vals[0] if state_vals else None,
+        )
     return text, None
 
 
@@ -310,9 +317,12 @@ def _ensure_callback_server() -> None:
                 self.end_headers()
                 return
             params = parse_qs(parsed.query)
-            code = (params.get("code") or [None])[0]
-            state = (params.get("state") or [None])[0]
-            error = (params.get("error") or [None])[0]
+            code_vals = params.get("code") or []
+            state_vals = params.get("state") or []
+            error_vals = params.get("error") or []
+            code = code_vals[0] if code_vals else None
+            state = state_vals[0] if state_vals else None
+            error = error_vals[0] if error_vals else None
             html = (
                 "<!doctype html><html><body style='font-family:sans-serif;padding:2rem'>"
                 "<h2>PaperlessAgent</h2><p>Sign-in complete. You can close this tab "
