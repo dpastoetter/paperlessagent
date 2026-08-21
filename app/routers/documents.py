@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import mimetypes
+import re
 from pathlib import Path
 from typing import Any
 
@@ -13,10 +14,23 @@ from app.deps import archive_roots, is_within
 from app.schemas import AskRequest
 from paperless_agent.runner import run_query
 from paperless_agent.tools.filesystem import reveal_in_explorer
-from paperless_agent.tools.metadata_db import get_document, list_recent, search_metadata
+from paperless_agent.tools.metadata_db import get_document, search_metadata
 from paperless_agent.tools.rag_index import retrieve_chunks
 
 router = APIRouter(tags=["documents"])
+
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _optional_doc_date(value: str | None, field: str) -> str | None:
+    if value is None or value == "":
+        return None
+    if not _DATE_RE.match(value):
+        raise HTTPException(
+            status_code=422,
+            detail=f"{field} must be YYYY-MM-DD",
+        )
+    return value
 
 
 @router.get("/api/documents")
@@ -24,16 +38,20 @@ def api_documents(
     q: str | None = None,
     doc_type: str | None = None,
     counterparty: str | None = None,
-    limit: int = Query(default=50, ge=1, le=100),
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = Query(default=40, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
-    if q or doc_type or counterparty:
-        return search_metadata(
-            query=q,
-            doc_type=doc_type,
-            counterparty=counterparty,
-            limit=limit,
-        )
-    return list_recent(limit=limit)
+    return search_metadata(
+        query=q,
+        doc_type=doc_type,
+        counterparty=counterparty,
+        date_from=_optional_doc_date(date_from, "date_from"),
+        date_to=_optional_doc_date(date_to, "date_to"),
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/api/documents/{document_id}")
@@ -113,7 +131,8 @@ def api_retrieve(
 
 @router.post("/api/ask")
 async def api_ask(body: AskRequest) -> dict[str, Any]:
+    history = [{"role": t.role, "content": t.content} for t in body.history]
     try:
-        return await run_query(body.question)
+        return await run_query(body.question, history=history)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc

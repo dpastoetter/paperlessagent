@@ -1,14 +1,23 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { VIEWS, currentView, initRouter, renderRoute } from "../../app/static/router.js";
+import {
+  VIEWS,
+  currentView,
+  initRouter,
+  parseHashQuery,
+  renderRoute,
+  setHashQuery,
+} from "../../app/static/router.js";
 
 describe("router", () => {
   beforeEach(() => {
     document.body.innerHTML = `
       <div class="view" data-view="inbox"></div>
       <div class="view" data-view="ask"></div>
+      <div class="view" data-view="archive"></div>
       <a class="nav-item" data-view="inbox"></a>
       <a class="nav-item" data-view="ask"></a>
+      <a class="nav-item" data-view="archive"></a>
     `;
     window.location.hash = "";
   });
@@ -23,6 +32,20 @@ describe("router", () => {
     expect(currentView()).toBe("ask");
     window.location.hash = "#/nope";
     expect(currentView()).toBe("inbox");
+  });
+
+  it("ignores query string when resolving the view name", () => {
+    window.location.hash = "#/archive?q=Acme&doc_type=invoice";
+    expect(currentView()).toBe("archive");
+  });
+
+  it("parses and writes hash query params", () => {
+    window.location.hash = "#/archive?q=Acme&doc_type=invoice";
+    expect(parseHashQuery()).toEqual({ q: "Acme", doc_type: "invoice" });
+
+    setHashQuery("archive", { q: "Beta", date_from: "2024-01-01", empty: "" }, { replace: true });
+    expect(currentView()).toBe("archive");
+    expect(parseHashQuery()).toEqual({ q: "Beta", date_from: "2024-01-01" });
   });
 
   it("toggles active view and nav on renderRoute", () => {

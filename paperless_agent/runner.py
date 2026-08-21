@@ -42,6 +42,9 @@ async def run_pipeline_on_path(source_path: str) -> dict[str, Any]:
     }
 
 
-async def run_query(question: str) -> dict[str, Any]:
+async def run_query(
+    question: str,
+    history: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Answer an archive question via retrieve + direct LLM completion."""
-    return await ask_archive(question)
+    return await ask_archive(question, history=history)

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PaperlessAgent</title>
   <script src="/static/theme-boot.js?v=1"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=8" />
+  <link rel="stylesheet" href="/static/styles.css?v=13" />
 </head>
 <body>
   <svg xmlns="http://www.w3.org/2000/svg" class="sprite" aria-hidden="true">
@@ -126,37 +126,53 @@
         </header>
 
         <div class="inbox-grid">
-          <section class="card">
+          <section class="card inbox-add">
             <h2 class="card-title">
               <svg class="icon" aria-hidden="true"><use href="#i-upload" /></svg>
               Add scans
             </h2>
-            <form id="upload-form" class="upload" aria-label="Upload scan">
-              <label class="drop-zone" for="file">
-                <input type="file" id="file" accept=".pdf,image/*" required />
-                <span class="drop-visual" aria-hidden="true">
-                  <span class="drop-mark">+</span>
-                  <span class="drop-cue">Drop scan</span>
-                  <span class="drop-sub">PDF or image</span>
-                </span>
-              </label>
-              <p id="file-label" class="file-label">No file selected</p>
-              <button type="submit" class="btn primary stretch">Upload to inbox</button>
+            <form id="upload-form" class="upload" aria-label="Add scans to inbox">
+              <div class="drop-zone" id="drop-zone" data-state="idle">
+                <input type="file" id="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,.bmp,image/*" multiple />
+                <label class="drop-visual" for="file">
+                  <span class="drop-mark" aria-hidden="true">+</span>
+                  <span class="drop-cue">Drop scans or browse</span>
+                  <span class="drop-sub">PDF or image · multiple files OK</span>
+                </label>
+              </div>
+
+              <div id="staging-panel" class="staging-panel" hidden>
+                <div class="staging-head">
+                  <p id="staging-meta" class="staging-totals"></p>
+                  <div class="staging-head-actions">
+                    <button type="button" class="btn ghost compact" id="clear-staged">Clear staged</button>
+                    <button type="button" class="btn ghost compact" id="retry-failed" hidden>Retry failed</button>
+                  </div>
+                </div>
+                <ul id="staging-list" class="staging-list" aria-label="Staged scans"></ul>
+                <button type="button" class="btn secondary stretch" id="upload-staged">Upload scans</button>
+              </div>
+              <p id="upload-live" class="sr-only" aria-live="polite"></p>
             </form>
 
             <p id="inbox-summary" class="status-line">Inbox: checking…</p>
             <p id="process-status" class="status-line" aria-live="polite"></p>
+            <p id="process-review-link" class="process-review-link" hidden>
+              <a class="btn primary compact" href="#/review">Review documents</a>
+            </p>
 
-            <div class="actions tight">
-              <button id="refresh-inbox" type="button" class="btn ghost">
-                <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg>
-                Refresh
-              </button>
-              <button id="clear-inbox" type="button" class="btn ghost danger">Remove all</button>
-              <button id="process-inbox" type="button" class="btn secondary">
+            <div class="inbox-actions">
+              <button id="process-inbox" type="button" class="btn primary stretch" disabled>
                 <svg class="icon" aria-hidden="true"><use href="#i-play" /></svg>
                 Process inbox
               </button>
+              <div class="inbox-actions-secondary">
+                <button id="refresh-inbox" type="button" class="btn ghost">
+                  <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg>
+                  Refresh
+                </button>
+                <button id="clear-inbox" type="button" class="btn ghost danger" disabled>Remove all</button>
+              </div>
             </div>
           </section>
 
@@ -193,7 +209,7 @@
         <header class="view-head">
           <div>
             <h1>Review</h1>
-            <p>Nothing is written to your archive until you approve it. Edit, approve, or reject each proposal.</p>
+            <p>Compare the scan with extracted details, then approve &amp; file — or reject.</p>
           </div>
           <button id="refresh-reviews" type="button" class="btn ghost">
             <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg>
@@ -213,26 +229,68 @@
         <header class="view-head">
           <div>
             <h1>Archive</h1>
-            <p>Filed documents, searchable by keyword or type.</p>
+            <p>Search filed documents by keyword, category, people, or date.</p>
           </div>
         </header>
 
-        <form id="search-form" class="search card">
-          <label class="field grow">
-            <span>Search</span>
-            <input type="search" id="search-q" placeholder="Acme, invoice, tax…" />
-          </label>
-          <label class="field narrow">
-            <span>Type</span>
-            <input type="text" id="search-type" placeholder="invoice" />
-          </label>
-          <button type="submit" class="btn secondary">
-            <svg class="icon" aria-hidden="true"><use href="#i-search" /></svg>
-            Search
-          </button>
+        <form id="search-form" class="archive-toolbar search" role="search">
+          <div class="archive-toolbar-top">
+            <label class="field grow">
+              <span>Search</span>
+              <input type="search" id="search-q" placeholder="Acme, invoice, tax…" autocomplete="off" />
+            </label>
+            <button type="button" class="btn ghost compact" id="archive-filters-toggle" aria-expanded="false" aria-controls="archive-filters-panel">
+              <span class="archive-filters-toggle-label">Filters</span>
+              <span class="archive-filter-count" id="archive-filter-count" hidden></span>
+            </button>
+            <button type="submit" class="btn secondary">
+              <svg class="icon" aria-hidden="true"><use href="#i-search" /></svg>
+              Search
+            </button>
+            <button type="button" class="btn ghost" id="search-clear" hidden>Clear filters</button>
+          </div>
+          <div class="archive-filters-panel" id="archive-filters-panel">
+            <label class="field narrow">
+              <span>Category</span>
+              <select id="search-type">
+                <option value="">Any</option>
+              </select>
+            </label>
+            <label class="field narrow">
+              <span>People / organization</span>
+              <input type="text" id="search-counterparty" placeholder="Acme, Dr. Weber…" autocomplete="off" />
+            </label>
+            <label class="field narrow">
+              <span>Date from</span>
+              <input type="date" id="search-date-from" />
+            </label>
+            <label class="field narrow">
+              <span>Date to</span>
+              <input type="date" id="search-date-to" />
+            </label>
+          </div>
+          <div class="archive-toolbar-status">
+            <span id="archive-result-count" class="archive-result-count">—</span>
+            <span id="archive-status" class="archive-status sr-only" aria-live="polite"></span>
+          </div>
         </form>
 
-        <div id="docs" class="docs"></div>
+        <div class="archive-workspace">
+          <div class="archive-list-pane">
+            <div id="docs" class="docs" role="listbox" aria-label="Archive results"></div>
+            <div class="archive-list-footer" id="archive-list-footer" hidden>
+              <button type="button" class="btn ghost" id="archive-load-more">Load more</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="archive-drawer-backdrop" class="archive-drawer-backdrop" hidden></div>
+        <aside id="archive-drawer" class="archive-drawer" role="dialog" aria-modal="true" aria-labelledby="archive-drawer-title" hidden>
+          <header class="archive-drawer-head">
+            <button type="button" class="btn ghost compact" id="archive-drawer-close" aria-label="Close document details">Close</button>
+          </header>
+          <div id="archive-drawer-body" class="archive-drawer-body"></div>
+        </aside>
       </section>
 
       <!-- ————— Ask ————— -->
@@ -240,20 +298,24 @@
         <header class="view-head">
           <div>
             <h1>Ask</h1>
-            <p>Natural-language questions over indexed documents.</p>
+            <p>Research your archive with grounded answers and document sources.</p>
           </div>
+          <button type="button" class="btn ghost" id="ask-clear" hidden>
+            Clear conversation
+          </button>
         </header>
 
-        <form id="ask-form" class="ask-form card">
-          <label class="field grow">
-            <span>Question</span>
-            <textarea id="question" rows="3" placeholder="Which invoices from Acme are over €100?"></textarea>
-          </label>
-          <button type="submit" class="btn primary">Ask</button>
-        </form>
+        <div class="ask-workspace">
+          <div id="ask-thread" class="ask-thread" aria-label="Archive research thread"></div>
+          <p id="ask-live" class="sr-only" aria-live="polite"></p>
 
-        <div id="ask-out" class="answer card" aria-live="polite">
-          <div class="ask-reply idle">Answers appear here.</div>
+          <form id="ask-form" class="ask-composer">
+            <label class="field grow" for="question">
+              <span>Question</span>
+              <textarea id="question" rows="2" placeholder="Ask about invoices, policies, counterparties…"></textarea>
+            </label>
+            <button type="submit" class="btn primary" id="ask-submit">Ask</button>
+          </form>
         </div>
       </section>
 
@@ -262,292 +324,364 @@
         <header class="view-head">
           <div>
             <h1>Settings</h1>
-            <p>AI provider, filing rules, and data management.</p>
+            <p>Configure AI, filing, automation, and privacy — advanced options stay available when you need them.</p>
           </div>
         </header>
 
-        <section class="card auth" id="auth-section" data-ready="false" data-provider="">
-          <div class="auth-bar">
-            <div>
-              <p class="section-kicker">AI</p>
-              <h2>AI provider</h2>
-              <p id="auth-status" class="auth-line">Checking provider…</p>
-            </div>
-            <div class="actions provider-switch" role="group" aria-label="AI provider">
-              <button id="provider-cloud" type="button" class="btn secondary" data-active="false">Cloud (ChatGPT)</button>
-              <button id="provider-ollama" type="button" class="btn secondary" data-active="false">Local Ollama</button>
-              <button id="provider-ollama-remote" type="button" class="btn secondary" data-active="false">Remote Ollama</button>
-            </div>
-          </div>
+        <div class="settings-layout">
+          <nav class="settings-nav" id="settings-nav" aria-label="Settings sections">
+            <a href="#settings-ai">AI &amp; OCR</a>
+            <a href="#settings-filing">Inbox &amp; filing</a>
+            <a href="#settings-automation">Automation</a>
+            <a href="#settings-appearance">Appearance</a>
+            <a href="#settings-system">System</a>
+            <a href="#settings-privacy">Data &amp; privacy</a>
+          </nav>
 
-          <div id="ollama-panel" class="auth-details ollama-panel hidden">
-            <p id="ollama-status" class="auth-line">Checking local Ollama…</p>
-            <p id="ollama-hint" class="fine"></p>
-            <div id="ollama-remote-fields" class="ollama-remote-fields hidden">
-              <label class="field">
-                <span>Ollama base URL</span>
-                <input id="ollama-base-url" type="url" placeholder="http://192.168.1.10:11434" autocomplete="off" />
-              </label>
-              <p class="fine">
-                Remote Ollama sends page images and text to that host — same privacy rules as cloud AI.
-                Approve the disclaimer below before enabling.
-              </p>
-            </div>
-            <div class="actions ollama-actions">
-              <button id="ollama-start" type="button" class="btn secondary" disabled>Start Ollama</button>
-              <button id="ollama-enable" type="button" class="btn primary">Use Ollama</button>
-              <button id="ollama-pull" type="button" class="btn secondary">Pull required models</button>
-              <button id="ollama-unload" type="button" class="btn ghost">Unload model</button>
-              <button id="ollama-restart" type="button" class="btn ghost">Restart Ollama</button>
-              <button id="ollama-refresh" type="button" class="btn ghost">Refresh</button>
-            </div>
-            <p class="fine">
-              Needs a multimodal chat model (default <code>gemma3</code>) plus
-              <code>nomic-embed-text</code> for search.
-              <a class="text-link" href="https://ollama.com/download" target="_blank" rel="noopener">Download Ollama</a>
-            </p>
-          </div>
+          <div class="settings-main">
+            <section class="card settings-summary" id="settings-summary" aria-label="Setup status">
+              <p class="section-kicker">Setup</p>
+              <h2 class="settings-summary-title">Status</h2>
+              <ul class="settings-summary-list" id="settings-summary-list">
+                <li data-key="ai"><span class="settings-summary-label">AI provider</span><span class="settings-summary-value" data-state="unknown">Checking…</span><a class="settings-summary-jump" href="#settings-ai">Open</a></li>
+                <li data-key="ocr"><span class="settings-summary-label">OCR model</span><span class="settings-summary-value" data-state="unknown">Checking…</span><a class="settings-summary-jump" href="#settings-ai">Open</a></li>
+                <li data-key="inbox"><span class="settings-summary-label">Inbox folder</span><span class="settings-summary-value" data-state="unknown">Checking…</span><a class="settings-summary-jump" href="#settings-filing">Open</a></li>
+                <li data-key="archives"><span class="settings-summary-label">Archive folders</span><span class="settings-summary-value" data-state="unknown">Checking…</span><a class="settings-summary-jump" href="#settings-filing">Open</a></li>
+                <li data-key="auto"><span class="settings-summary-label">Auto-processing</span><span class="settings-summary-value" data-state="unknown">Checking…</span><a class="settings-summary-jump" href="#settings-automation">Open</a></li>
+              </ul>
+            </section>
 
-          <div id="cloud-auth-panel" class="cloud-auth-panel" data-locked="true">
-            <div id="cloud-disclaimer" class="cloud-disclaimer" data-accepted="false">
-              <div class="disclaimer-copy">
-                <p class="section-kicker">Before you continue</p>
-                <p class="disclaimer-lead">Cloud AI sends your documents off this machine.</p>
-                <p class="disclaimer-body">
-                  Page images and extracted text go to ChatGPT, OpenAI, or Gemini for OCR,
-                  filing, and Ask. Storage can stay local — processing does not.
-                  Use <span class="disclaimer-em">Local Ollama</span> to keep AI on-device.
-                  <span class="disclaimer-em">Remote Ollama</span> also leaves this machine.
+            <!-- 1. AI & OCR -->
+            <section class="card auth settings-section" id="settings-ai" data-settings-section="ai" data-ready="false" data-provider="">
+              <div class="auth-bar">
+                <div>
+                  <p class="section-kicker">AI &amp; OCR</p>
+                  <h2>AI provider</h2>
+                  <p id="auth-status" class="auth-line">Checking provider…</p>
+                  <p id="settings-ai-alert" class="settings-section-alert" hidden></p>
+                </div>
+              </div>
+
+              <div class="provider-cards" role="group" aria-label="AI provider">
+                <button type="button" class="provider-card" id="provider-cloud" data-active="false">
+                  <span class="provider-card-title">Cloud / ChatGPT</span>
+                  <span class="provider-card-desc">Fast and convenient. Document content is sent to the configured cloud provider.</span>
+                </button>
+                <button type="button" class="provider-card" id="provider-ollama" data-active="false">
+                  <span class="provider-card-title">Local Ollama</span>
+                  <span class="provider-card-desc">Documents stay on this computer. Requires local models and sufficient hardware.</span>
+                </button>
+                <button type="button" class="provider-card" id="provider-ollama-remote" data-active="false">
+                  <span class="provider-card-title">Remote Ollama</span>
+                  <span class="provider-card-desc">Uses another Ollama computer on your network. Content leaves this machine.</span>
+                </button>
+              </div>
+
+              <div id="ollama-panel" class="auth-details ollama-panel hidden">
+                <p id="ollama-status" class="auth-line">Checking local Ollama…</p>
+                <p id="ollama-hint" class="fine"></p>
+                <div class="actions ollama-actions">
+                  <button id="ollama-enable" type="button" class="btn primary">Use Ollama</button>
+                  <button id="ollama-refresh" type="button" class="btn ghost">Refresh</button>
+                </div>
+                <p class="fine">
+                  Needs a multimodal chat model (default <code>gemma3</code>) plus
+                  <code>nomic-embed-text</code> for search.
+                  <a class="text-link" href="https://ollama.com/download" target="_blank" rel="noopener">Download Ollama</a>
                 </p>
               </div>
-              <label class="disclaimer-check">
-                <input type="checkbox" id="cloud-disclaimer-accept" />
-                <span class="disclaimer-check-box" aria-hidden="true"></span>
-                <span class="disclaimer-check-label">I approve cloud processing for my documents</span>
-              </label>
-            </div>
 
-            <div class="auth-bar cloud-auth-bar">
-              <div class="actions">
-                <button id="oauth-start" type="button" class="btn primary" disabled>Sign in with ChatGPT</button>
-                <button id="auth-toggle" type="button" class="btn ghost" disabled>More options</button>
-                <button id="auth-logout" type="button" class="btn ghost">Log out</button>
+              <div id="cloud-auth-panel" class="cloud-auth-panel" data-locked="true">
+                <div id="cloud-disclaimer" class="cloud-disclaimer" data-accepted="false">
+                  <div class="disclaimer-copy">
+                    <p class="section-kicker">Before you continue</p>
+                    <p class="disclaimer-lead">Cloud AI sends your documents off this machine.</p>
+                    <p class="disclaimer-body">
+                      Page images and extracted text go to ChatGPT, OpenAI, or Gemini for OCR,
+                      filing, and Ask. Storage can stay local — processing does not.
+                      Use <span class="disclaimer-em">Local Ollama</span> to keep AI on-device.
+                      <span class="disclaimer-em">Remote Ollama</span> also leaves this machine.
+                    </p>
+                  </div>
+                  <label class="disclaimer-check">
+                    <input type="checkbox" id="cloud-disclaimer-accept" />
+                    <span class="disclaimer-check-box" aria-hidden="true"></span>
+                    <span class="disclaimer-check-label">I approve cloud processing for my documents</span>
+                  </label>
+                </div>
+
+                <div class="auth-bar cloud-auth-bar">
+                  <div class="actions">
+                    <button id="oauth-start" type="button" class="btn primary" disabled>Sign in with ChatGPT</button>
+                    <button id="auth-toggle" type="button" class="btn ghost" disabled>More options</button>
+                    <button id="auth-logout" type="button" class="btn ghost">Log out</button>
+                  </div>
+                </div>
+
+                <div id="auth-details" class="auth-details hidden">
+                  <div id="oauth-panel" class="oauth hidden">
+                    <p id="oauth-hint" class="fine"></p>
+                    <a id="oauth-link" class="text-link" href="#" target="_blank" rel="noopener">Open ChatGPT login</a>
+                    <label class="field">
+                      <span>Paste callback URL if redirect fails</span>
+                      <textarea id="oauth-paste" rows="2" placeholder="http://localhost:1455/auth/callback?code=…"></textarea>
+                    </label>
+                    <button id="oauth-complete" type="button" class="btn primary">Complete sign-in</button>
+                  </div>
+
+                  <form id="api-key-form" class="key-row">
+                    <label class="field grow">
+                      <span>OpenAI API key</span>
+                      <input type="password" id="api-key" placeholder="sk-…" autocomplete="off" disabled />
+                    </label>
+                    <button type="submit" class="btn secondary" disabled>Save key</button>
+                    <button id="auth-refresh" type="button" class="btn ghost">Refresh</button>
+                  </form>
+                  <details class="debug">
+                    <summary>Auth details</summary>
+                    <pre id="auth-out" class="out"></pre>
+                  </details>
+                </div>
               </div>
-            </div>
 
-            <div id="auth-details" class="auth-details hidden">
-              <div id="oauth-panel" class="oauth hidden">
-                <p id="oauth-hint" class="fine"></p>
-                <a id="oauth-link" class="text-link" href="#" target="_blank" rel="noopener">Open ChatGPT login</a>
-                <label class="field">
-                  <span>Paste callback URL if redirect fails</span>
-                  <textarea id="oauth-paste" rows="2" placeholder="http://localhost:1455/auth/callback?code=…"></textarea>
-                </label>
-                <button id="oauth-complete" type="button" class="btn primary">Complete sign-in</button>
-              </div>
-
-              <form id="api-key-form" class="key-row">
-                <label class="field grow">
-                  <span>OpenAI API key</span>
-                  <input type="password" id="api-key" placeholder="sk-…" autocomplete="off" disabled />
-                </label>
-                <button type="submit" class="btn secondary" disabled>Save key</button>
-                <button id="auth-refresh" type="button" class="btn ghost">Refresh</button>
-              </form>
-              <details class="debug">
-                <summary>Auth details</summary>
-                <pre id="auth-out" class="out"></pre>
+              <details class="settings-advanced" id="settings-ai-advanced">
+                <summary>Advanced AI &amp; OCR</summary>
+                <div class="settings-advanced-body">
+                  <div id="ollama-remote-fields" class="ollama-remote-fields hidden">
+                    <label class="field">
+                      <span>Ollama base URL</span>
+                      <input id="ollama-base-url" type="url" placeholder="http://192.168.1.10:11434" autocomplete="off" />
+                    </label>
+                    <p class="fine">
+                      Remote Ollama sends page images and text to that host — same privacy rules as cloud AI.
+                      Approve the disclaimer above before enabling.
+                    </p>
+                  </div>
+                  <div class="actions ollama-actions">
+                    <button id="ollama-start" type="button" class="btn secondary" disabled>Start Ollama</button>
+                    <button id="ollama-pull" type="button" class="btn secondary">Pull required models</button>
+                    <button id="ollama-unload" type="button" class="btn ghost">Unload model</button>
+                    <button id="ollama-restart" type="button" class="btn ghost">Restart Ollama</button>
+                  </div>
+                  <div class="setup-batch">
+                    <h3>OCR accuracy</h3>
+                    <p class="fine">
+                      How aggressively to reuse a PDF’s embedded text versus calling AI vision OCR.
+                      Scanned pages without a usable text layer still use vision in every mode.
+                    </p>
+                    <label class="field">
+                      <span>Mode</span>
+                      <select id="setup-ocr-mode">
+                        <option value="fast">Fast — use embedded text when present; vision only if nearly empty</option>
+                        <option value="balanced" selected>Balanced — use good embedded text; vision for weak/garbled pages</option>
+                        <option value="maximum">Maximum — always vision OCR every page</option>
+                      </select>
+                    </label>
+                    <p class="fine">OCR uses your selected AI provider. Saved with Inbox &amp; filing → Save setup.</p>
+                  </div>
+                </div>
               </details>
-            </div>
-          </div>
-        </section>
+            </section>
 
-        <section class="card auth setup" id="setup-section">
-          <div class="auth-bar">
-            <div>
-              <p class="section-kicker">Filing</p>
-              <h2>Filing &amp; scanning</h2>
-              <p id="setup-status" class="auth-line">Configure source folder, categories, and inbox scanning.</p>
-            </div>
-            <div class="actions">
-              <button id="setup-save" type="button" class="btn primary">Save setup</button>
-            </div>
-          </div>
-
-          <div id="setup-details" class="auth-details">
-            <label class="field">
-              <span>Source folder (inbox)</span>
-              <input type="text" id="setup-source" placeholder="/path/to/inbox" autocomplete="off" />
-            </label>
-
-            <div class="setup-cats">
-              <div class="setup-cats-head">
-                <h3>Document categories</h3>
-                <button id="setup-add-category" type="button" class="btn ghost compact">Add category</button>
+            <!-- 2. Inbox & filing -->
+            <section class="card auth setup settings-section" id="settings-filing" data-settings-section="filing">
+              <div class="auth-bar" id="setup-section">
+                <div>
+                  <p class="section-kicker">Inbox &amp; filing</p>
+                  <h2>Filing folders</h2>
+                  <p id="setup-status" class="auth-line">Configure source folder, categories, and approval.</p>
+                  <p id="setup-dup-warning" class="settings-inline-warn" hidden></p>
+                </div>
+                <div class="actions">
+                  <button id="setup-save" type="button" class="btn primary">Save setup</button>
+                </div>
               </div>
-              <p class="fine">Map each category name to an archive folder. An <code>other</code> category is required.</p>
-              <div id="setup-categories" class="cat-list"></div>
-            </div>
 
-            <div class="setup-batch">
-              <h3>Inbox scanning</h3>
-              <p class="fine">How often the agent should look for new files in the source folder and process them automatically.</p>
-              <div class="batch-row">
-                <label class="field narrow">
-                  <span>Poll interval (seconds)</span>
-                  <input type="number" id="setup-poll-interval" min="0" step="1" value="30" />
+              <div id="setup-details" class="auth-details">
+                <label class="field">
+                  <span>Source folder (inbox)</span>
+                  <input type="text" id="setup-source" placeholder="/path/to/inbox" autocomplete="off" />
+                  <span id="setup-source-valid" class="path-valid" data-state="unknown"></span>
                 </label>
-                <p class="fine batch-hint">Use <code>0</code> for manual processing only (Process inbox button).</p>
+
+                <div class="setup-cats">
+                  <div class="setup-cats-head">
+                    <h3>Document categories</h3>
+                    <button id="setup-add-category" type="button" class="btn ghost compact">Add category</button>
+                  </div>
+                  <p class="fine">Map each category name to an archive folder. An <code>other</code> category is required.</p>
+                  <div id="setup-categories" class="cat-list"></div>
+                </div>
+
+                <div class="setup-batch">
+                  <h3>Human review</h3>
+                  <label class="check-field">
+                    <input type="checkbox" id="setup-require-approval" checked />
+                    <span>Require approval before filing — every proposal waits in Review until you approve it</span>
+                  </label>
+                  <p class="fine">When off, documents are filed automatically. Suspected duplicates always stop for review.</p>
+                </div>
               </div>
-            </div>
+            </section>
 
-            <div class="setup-batch">
-              <h3>OCR accuracy</h3>
-              <p class="fine">
-                How aggressively to reuse a PDF’s embedded text versus calling AI vision OCR.
-                Scanned pages without a usable text layer still use vision in every mode.
+            <!-- 3. Automation -->
+            <section class="card auth settings-section" id="settings-automation" data-settings-section="automation">
+              <div class="auth-bar">
+                <div>
+                  <p class="section-kicker">Automation</p>
+                  <h2>Background processing</h2>
+                  <p class="auth-line">Control how PaperlessAgent watches the inbox and starts with the system.</p>
+                </div>
+              </div>
+              <div class="setup-batch">
+                <h3>Auto-process inbox</h3>
+                <p class="fine">When enabled, new files in the inbox are processed automatically on a timer. Use <code>0</code> for manual processing only (Process inbox button).</p>
+                <div class="batch-row">
+                  <label class="field narrow">
+                    <span>Poll interval (seconds)</span>
+                    <input type="number" id="setup-poll-interval" min="0" step="1" value="30" />
+                  </label>
+                  <p class="fine batch-hint">Saved with Inbox &amp; filing → Save setup.</p>
+                </div>
+              </div>
+              <div id="autostart-section" class="autostart-block hidden">
+                <h3>Start at boot</h3>
+                <p id="autostart-status" class="auth-line">Checking autostart…</p>
+                <label class="check-field">
+                  <input type="checkbox" id="autostart-toggle" />
+                  <span>Start PaperlessAgent when the system boots</span>
+                </label>
+                <p id="autostart-hint" class="fine">
+                  Installs a systemd user service, enables it across reboots, and keeps the web UI available at boot.
+                </p>
+              </div>
+            </section>
+
+            <!-- 4. Appearance -->
+            <section class="card auth settings-section" id="settings-appearance" data-settings-section="appearance">
+              <div class="auth-bar" id="appearance-section">
+                <div>
+                  <p class="section-kicker">Appearance</p>
+                  <h2>Look &amp; feel</h2>
+                  <p class="auth-line">Pick a preset. Applies instantly and is remembered in this browser.</p>
+                </div>
+              </div>
+              <div class="theme-grid" id="theme-grid">
+                <button type="button" class="theme-card" data-theme-preset="graphite">
+                  <span class="theme-preview" data-preview="graphite" aria-hidden="true">
+                    <span class="tp-side"></span>
+                    <span class="tp-body">
+                      <span class="tp-accent"></span>
+                      <span class="tp-line"></span>
+                      <span class="tp-line short"></span>
+                    </span>
+                  </span>
+                  <span class="theme-name">Graphite</span>
+                  <span class="theme-desc">Dark · steel cyan</span>
+                </button>
+                <button type="button" class="theme-card" data-theme-preset="carbon">
+                  <span class="theme-preview" data-preview="carbon" aria-hidden="true">
+                    <span class="tp-side"></span>
+                    <span class="tp-body">
+                      <span class="tp-accent"></span>
+                      <span class="tp-line"></span>
+                      <span class="tp-line short"></span>
+                    </span>
+                  </span>
+                  <span class="theme-name">Carbon</span>
+                  <span class="theme-desc">Black · amber</span>
+                </button>
+                <button type="button" class="theme-card" data-theme-preset="slate">
+                  <span class="theme-preview" data-preview="slate" aria-hidden="true">
+                    <span class="tp-side"></span>
+                    <span class="tp-body">
+                      <span class="tp-accent"></span>
+                      <span class="tp-line"></span>
+                      <span class="tp-line short"></span>
+                    </span>
+                  </span>
+                  <span class="theme-name">Slate</span>
+                  <span class="theme-desc">Light · teal</span>
+                </button>
+                <button type="button" class="theme-card" data-theme-preset="paper">
+                  <span class="theme-preview" data-preview="paper" aria-hidden="true">
+                    <span class="tp-side"></span>
+                    <span class="tp-body">
+                      <span class="tp-accent"></span>
+                      <span class="tp-line"></span>
+                      <span class="tp-line short"></span>
+                    </span>
+                  </span>
+                  <span class="theme-name">Paper</span>
+                  <span class="theme-desc">Warm · terracotta</span>
+                </button>
+              </div>
+              <details class="settings-advanced">
+                <summary>Advanced appearance</summary>
+                <div class="settings-advanced-body">
+                  <div class="mock-block">
+                    <label class="check-field">
+                      <input type="checkbox" id="mock-toggle" />
+                      <span>Mockup mode — fill every view with demo data for screenshots</span>
+                    </label>
+                    <p class="fine">Client-side only: nothing is read from or written to your archive while enabled. Also available via <code>?mock=1</code> in the URL.</p>
+                  </div>
+                </div>
+              </details>
+            </section>
+
+            <!-- 5. System & updates -->
+            <section class="card auth settings-section" id="settings-system" data-settings-section="system">
+              <div class="auth-bar" id="update-section">
+                <div>
+                  <p class="section-kicker">System &amp; updates</p>
+                  <h2>Software update</h2>
+                  <p id="update-status" class="auth-line">Version —</p>
+                </div>
+                <div class="actions">
+                  <button id="update-check" type="button" class="btn secondary">
+                    <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg>
+                    Check for updates
+                  </button>
+                  <button id="update-apply" type="button" class="btn primary hidden">Download &amp; install</button>
+                  <button id="update-restart" type="button" class="btn primary hidden">Restart now</button>
+                </div>
+              </div>
+              <p class="fine">Updates are downloaded from <a id="update-repo-link" class="text-link" href="#" target="_blank" rel="noopener">GitHub</a>. Your documents, settings, and credentials are kept.</p>
+              <pre id="update-notes" class="out hidden"></pre>
+            </section>
+
+            <!-- 6. Data & privacy + Danger -->
+            <section class="card auth settings-section" id="settings-privacy" data-settings-section="privacy">
+              <div class="auth-bar">
+                <div>
+                  <p class="section-kicker">Data &amp; privacy</p>
+                  <h2>How your documents are processed</h2>
+                  <p id="privacy-status" class="auth-line">Checking privacy mode…</p>
+                </div>
+              </div>
+              <p id="privacy-copy" class="fine privacy-copy">
+                Local Ollama keeps AI on this computer. Cloud / ChatGPT and Remote Ollama send document content to another machine for OCR, filing, and Ask.
               </p>
-              <label class="field">
-                <span>Mode</span>
-                <select id="setup-ocr-mode">
-                  <option value="fast">Fast — use embedded text when present; vision only if nearly empty</option>
-                  <option value="balanced" selected>Balanced — use good embedded text; vision for weak/garbled pages</option>
-                  <option value="maximum">Maximum — always vision OCR every page</option>
-                </select>
-              </label>
-            </div>
+            </section>
 
-            <div class="setup-batch">
-              <h3>Human review</h3>
-              <label class="check-field">
-                <input type="checkbox" id="setup-require-approval" checked />
-                <span>Require approval before filing — every proposal waits in Review until you approve it</span>
-              </label>
-              <p class="fine">When off, documents are filed automatically. Suspected duplicates always stop for review.</p>
-            </div>
+            <section class="card auth danger-zone settings-section" id="settings-danger">
+              <div class="auth-bar">
+                <div>
+                  <p class="section-kicker">Danger zone</p>
+                  <h2>Remove stored data</h2>
+                  <p class="auth-line">Delete tracked archive files (inside configured archive folders only), supported inbox scans, metadata, and the RAG index. Category folders are never wiped recursively. Setup settings are kept.</p>
+                </div>
+                <div class="actions">
+                  <button id="clear-all-data" type="button" class="btn ghost danger">
+                    Remove all stored data
+                  </button>
+                </div>
+              </div>
+              <p id="danger-status" class="status-line" aria-live="polite"></p>
+            </section>
           </div>
-        </section>
-
-        <section class="card auth hidden" id="autostart-section">
-          <div class="auth-bar">
-            <div>
-              <p class="section-kicker">System</p>
-              <h2>Autostart</h2>
-              <p id="autostart-status" class="auth-line">Checking autostart…</p>
-            </div>
-          </div>
-          <label class="check-field">
-            <input type="checkbox" id="autostart-toggle" />
-            <span>Start PaperlessAgent when the system boots</span>
-          </label>
-          <p id="autostart-hint" class="fine">
-            Installs a systemd user service, enables it across reboots, and keeps the web UI available at boot.
-          </p>
-        </section>
-
-        <section class="card auth" id="appearance-section">
-          <div class="auth-bar">
-            <div>
-              <p class="section-kicker">Appearance</p>
-              <h2>Look &amp; feel</h2>
-              <p class="auth-line">Pick a preset. Applies instantly and is remembered in this browser.</p>
-            </div>
-          </div>
-          <div class="theme-grid" id="theme-grid">
-            <button type="button" class="theme-card" data-theme-preset="graphite">
-              <span class="theme-preview" data-preview="graphite" aria-hidden="true">
-                <span class="tp-side"></span>
-                <span class="tp-body">
-                  <span class="tp-accent"></span>
-                  <span class="tp-line"></span>
-                  <span class="tp-line short"></span>
-                </span>
-              </span>
-              <span class="theme-name">Graphite</span>
-              <span class="theme-desc">Dark · steel cyan</span>
-            </button>
-            <button type="button" class="theme-card" data-theme-preset="carbon">
-              <span class="theme-preview" data-preview="carbon" aria-hidden="true">
-                <span class="tp-side"></span>
-                <span class="tp-body">
-                  <span class="tp-accent"></span>
-                  <span class="tp-line"></span>
-                  <span class="tp-line short"></span>
-                </span>
-              </span>
-              <span class="theme-name">Carbon</span>
-              <span class="theme-desc">Black · amber</span>
-            </button>
-            <button type="button" class="theme-card" data-theme-preset="slate">
-              <span class="theme-preview" data-preview="slate" aria-hidden="true">
-                <span class="tp-side"></span>
-                <span class="tp-body">
-                  <span class="tp-accent"></span>
-                  <span class="tp-line"></span>
-                  <span class="tp-line short"></span>
-                </span>
-              </span>
-              <span class="theme-name">Slate</span>
-              <span class="theme-desc">Light · teal</span>
-            </button>
-            <button type="button" class="theme-card" data-theme-preset="paper">
-              <span class="theme-preview" data-preview="paper" aria-hidden="true">
-                <span class="tp-side"></span>
-                <span class="tp-body">
-                  <span class="tp-accent"></span>
-                  <span class="tp-line"></span>
-                  <span class="tp-line short"></span>
-                </span>
-              </span>
-              <span class="theme-name">Paper</span>
-              <span class="theme-desc">Warm · terracotta</span>
-            </button>
-          </div>
-
-          <div class="mock-block">
-            <label class="check-field">
-              <input type="checkbox" id="mock-toggle" />
-              <span>Mockup mode — fill every view with demo data for screenshots</span>
-            </label>
-            <p class="fine">Client-side only: nothing is read from or written to your archive while enabled. Also available via <code>?mock=1</code> in the URL.</p>
-          </div>
-        </section>
-
-        <section class="card auth" id="update-section">
-          <div class="auth-bar">
-            <div>
-              <p class="section-kicker">Updates</p>
-              <h2>Software update</h2>
-              <p id="update-status" class="auth-line">Version —</p>
-            </div>
-            <div class="actions">
-              <button id="update-check" type="button" class="btn secondary">
-                <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg>
-                Check for updates
-              </button>
-              <button id="update-apply" type="button" class="btn primary hidden">Download &amp; install</button>
-              <button id="update-restart" type="button" class="btn primary hidden">Restart now</button>
-            </div>
-          </div>
-          <p class="fine">Updates are downloaded from <a id="update-repo-link" class="text-link" href="#" target="_blank" rel="noopener">GitHub</a>. Your documents, settings, and credentials are kept.</p>
-          <pre id="update-notes" class="out hidden"></pre>
-        </section>
-
-        <section class="card auth danger-zone">
-          <div class="auth-bar">
-            <div>
-              <p class="section-kicker">Danger</p>
-              <h2>Danger zone</h2>
-              <p class="auth-line">Delete tracked archive files (inside configured archive folders only), supported inbox scans, metadata, and the RAG index. Category folders are never wiped recursively. Setup settings are kept.</p>
-            </div>
-            <div class="actions">
-              <button id="clear-all-data" type="button" class="btn ghost danger">
-                Remove all stored data
-              </button>
-            </div>
-          </div>
-          <p id="danger-status" class="status-line" aria-live="polite"></p>
-        </section>
+        </div>
       </section>
     </main>
   </div>
@@ -567,7 +701,7 @@
     </form>
   </div>
 
-  <script src="/static/mock.js?v=8"></script>
-  <script type="module" src="/static/app.js?v=8"></script>
+  <script src="/static/mock.js?v=13"></script>
+  <script type="module" src="/static/app.js?v=13"></script>
 </body>
 </html>

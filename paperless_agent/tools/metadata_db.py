@@ -407,6 +407,7 @@ def search_metadata(
     date_from: str | None = None,
     date_to: str | None = None,
     limit: int = 20,
+    offset: int = 0,
 ) -> dict[str, Any]:
     """
     Search document metadata with optional filters.
@@ -414,9 +415,13 @@ def search_metadata(
     Free-text ``query`` uses SQLite FTS5 (token OR) so invoice numbers, names,
     and dates match even inside longer Ask questions. Falls back to LIKE when
     FTS cannot run or returns nothing for a short exact substring.
+
+    Pagination uses ``LIMIT`` / ``OFFSET`` with a limit+1 probe so callers get
+    ``has_more`` without a separate COUNT query.
     """
     init_db()
     capped = max(1, min(limit, 100))
+    skip = max(0, int(offset))
     fts_match = build_fts_match_query(query) if query else None
 
     filter_clauses: list[str] = []
@@ -438,12 +443,19 @@ def search_metadata(
     def _run(where_sql: str, where_params: list[Any]) -> list[sqlite3.Row]:
         parts = [c for c in [where_sql, *filter_clauses] if c]
         where = f"WHERE {' AND '.join(parts)}" if parts else ""
+        # Fetch one extra row to detect has_more without COUNT(*).
         sql = (
-            f"SELECT * FROM documents {where} ORDER BY COALESCE(doc_date, created_at) DESC LIMIT ?"
+            f"SELECT * FROM documents {where} "
+            "ORDER BY COALESCE(doc_date, created_at) DESC LIMIT ? OFFSET ?"
         )
         with _connect() as conn:
             _ensure_fts(conn)
-            return list(conn.execute(sql, [*where_params, *filter_params, capped]).fetchall())
+            return list(
+                conn.execute(
+                    sql,
+                    [*where_params, *filter_params, capped + 1, skip],
+                ).fetchall()
+            )
 
     used = "filter"
     rows: list[sqlite3.Row] = []
@@ -485,11 +497,16 @@ def search_metadata(
     else:
         rows = _run("", [])
 
+    has_more = len(rows) > capped
+    page = rows[:capped]
     return {
         "status": "success",
-        "count": len(rows),
-        "documents": [_row_to_dict(r) for r in rows],
+        "count": len(page),
+        "documents": [_row_to_dict(r) for r in page],
         "search": used,
+        "has_more": has_more,
+        "offset": skip,
+        "limit": capped,
     }
 
 

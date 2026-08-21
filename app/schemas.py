@@ -7,8 +7,18 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+class AskHistoryTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(..., min_length=1, max_length=4000)
+
+
 class AskRequest(BaseModel):
-    question: str = Field(..., min_length=1)
+    question: str = Field(..., min_length=1, max_length=4000)
+    history: list[AskHistoryTurn] = Field(
+        default_factory=list,
+        max_length=8,
+        description="Optional recent Q/A turns for follow-ups; retrieval uses question only.",
+    )
 
 
 class ProcessRequest(BaseModel):

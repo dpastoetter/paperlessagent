@@ -13,6 +13,7 @@ CONTENT_SECURITY_POLICY = (
     "img-src 'self' blob: data:; "
     "font-src 'self'; "
     "connect-src 'self'; "
+    "frame-src 'self' blob:; "
     "object-src 'none'; "
     "base-uri 'none'; "
     "frame-ancestors 'none'; "

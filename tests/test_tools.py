@@ -108,6 +108,42 @@ def test_search_metadata_includes_subject(isolated_data):
     found = metadata_db.search_metadata(query="enrollment")
     assert found["count"] >= 1
     assert any(d["id"] == saved["document_id"] for d in found["documents"])
+    assert found["has_more"] is False
+    assert found["offset"] == 0
+
+
+def test_search_metadata_date_filters_and_offset(isolated_data):
+    for i, (doc_date, party) in enumerate(
+        [
+            ("2023-01-10", "Alpha"),
+            ("2023-06-15", "Beta"),
+            ("2024-02-01", "Alpha"),
+        ]
+    ):
+        path = isolated_data / "archive" / "invoice" / doc_date[:4] / f"d{i}.pdf"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"%PDF")
+        metadata_db.upsert_metadata(
+            original_name=f"s{i}.pdf",
+            filename=f"{doc_date}_Invoice_{party}.pdf",
+            path=str(path),
+            doc_type="invoice",
+            doc_date=doc_date,
+            counterparties=party,
+            summary=f"Invoice for {party}",
+        )
+
+    ranged = metadata_db.search_metadata(date_from="2023-01-01", date_to="2023-12-31")
+    assert ranged["count"] == 2
+    assert all(d["doc_date"].startswith("2023") for d in ranged["documents"])
+
+    party = metadata_db.search_metadata(counterparty="Alpha", limit=1, offset=0)
+    assert party["count"] == 1
+    assert party["has_more"] is True
+    page2 = metadata_db.search_metadata(counterparty="Alpha", limit=1, offset=1)
+    assert page2["count"] == 1
+    assert page2["has_more"] is False
+    assert party["documents"][0]["id"] != page2["documents"][0]["id"]
 
 
 def test_search_metadata_fts_matches_tokens_in_question(isolated_data):

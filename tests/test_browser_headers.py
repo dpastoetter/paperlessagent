@@ -24,6 +24,7 @@ def test_csp_is_strict_and_blocks_third_party():
     assert "script-src 'self'" in csp
     assert "style-src 'self'" in csp
     assert "object-src 'none'" in csp
+    assert "frame-src 'self' blob:" in csp
     assert "frame-ancestors 'none'" in csp
     assert "base-uri 'none'" in csp
     assert "unsafe-inline" not in csp

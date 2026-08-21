@@ -20,6 +20,197 @@ import { renderWorkflow } from "./events.js";
 
 let oauthState = null;
 let oauthPollTimer = null;
+let lastSettingsSnapshot = null;
+let pathValidationCache = new Map();
+
+export function summarizeAiStatus({ provider, openaiReady, ollamaReady, disclaimerAccepted }) {
+  if (provider === "ollama") {
+    return ollamaReady
+      ? { state: "ok", label: "Ready" }
+      : { state: "warn", label: "Needs attention" };
+  }
+  if (provider === "openai" || provider === "gemini" || !provider) {
+    if (!disclaimerAccepted) return { state: "warn", label: "Needs attention" };
+    return openaiReady
+      ? { state: "ok", label: "Ready" }
+      : { state: "warn", label: "Needs attention" };
+  }
+  return { state: "warn", label: "Needs attention" };
+}
+
+export function summarizeAutoProcessing(pollIntervalSeconds) {
+  const on = Number(pollIntervalSeconds) > 0;
+  return { state: on ? "ok" : "off", label: on ? "On" : "Off" };
+}
+
+export function findDuplicateFolders(categories) {
+  const map = new Map();
+  for (const cat of categories || []) {
+    const folder = String(cat.folder || "").trim();
+    if (!folder) continue;
+    const key = folder.replace(/\/+$/, "");
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(cat.name || "(unnamed)");
+  }
+  const dups = [];
+  for (const [folder, names] of map.entries()) {
+    if (names.length > 1) dups.push({ folder, names });
+  }
+  return dups;
+}
+
+export function pathValidationLabel(result) {
+  if (!result) return { state: "unknown", label: "—" };
+  if (result.error || result.status === "error") return { state: "err", label: "Problem" };
+  if (result.exists && result.is_dir) return { state: "ok", label: "Valid" };
+  if (result.exists && !result.is_dir) return { state: "err", label: "Not a folder" };
+  return { state: "warn", label: "Missing" };
+}
+
+async function validatePath(path) {
+  const trimmed = String(path || "").trim();
+  if (!trimmed) return { error: "empty", exists: false, is_dir: false };
+  if (pathValidationCache.has(trimmed)) return pathValidationCache.get(trimmed);
+  try {
+    const data = await api("/api/settings/validate-path", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: trimmed }),
+    });
+    pathValidationCache.set(trimmed, data);
+    return data;
+  } catch (err) {
+    const fail = { error: String(err.message || err), exists: false, is_dir: false };
+    pathValidationCache.set(trimmed, fail);
+    return fail;
+  }
+}
+
+function setSummaryItem(key, { state, label }) {
+  const li = document.querySelector(`#settings-summary-list li[data-key="${key}"]`);
+  if (!li) return;
+  const value = li.querySelector(".settings-summary-value");
+  if (!value) return;
+  value.textContent = label;
+  value.dataset.state = state || "unknown";
+}
+
+function updatePrivacyCopy({ provider, remoteOllama, disclaimerAccepted }) {
+  const status = document.getElementById("privacy-status");
+  const copy = document.getElementById("privacy-copy");
+  if (provider === "ollama" && !remoteOllama) {
+    if (status) status.textContent = "Local processing — document content stays on this computer for AI.";
+    if (copy) {
+      copy.textContent =
+        "Local Ollama runs OCR, filing, and Ask on this machine. Archive files remain under your configured folders.";
+    }
+    return;
+  }
+  if (provider === "ollama" && remoteOllama) {
+    if (status) {
+      status.textContent = disclaimerAccepted
+        ? "Remote Ollama — document content is sent to another computer on your network."
+        : "Remote Ollama requires cloud-processing approval.";
+    }
+    if (copy) {
+      copy.textContent =
+        "Remote Ollama leaves this machine. Approve the disclaimer under AI & OCR before enabling.";
+    }
+    return;
+  }
+  if (status) {
+    status.textContent = disclaimerAccepted
+      ? "Cloud AI — document content is sent to the configured cloud provider for processing."
+      : "Cloud AI locked until you approve cloud processing.";
+  }
+  if (copy) {
+    copy.textContent =
+      "Storage can stay local while ChatGPT / OpenAI / Gemini process page images and text. Switch to Local Ollama to keep AI on-device.";
+  }
+}
+
+export async function renderSettingsSummary({
+  settings = null,
+  health = null,
+  auth = null,
+  ollama = null,
+} = {}) {
+  const snap = settings || lastSettingsSnapshot || {};
+  const provider = health?.llm_provider || lastProvider || "";
+  const remote = provider === "ollama" && ollamaRemoteMode;
+  const ai = summarizeAiStatus({
+    provider,
+    openaiReady: Boolean(auth?.openai_ready),
+    ollamaReady: Boolean(ollama?.ready ?? health?.ollama?.ready),
+    disclaimerAccepted: cloudDisclaimerAccepted,
+  });
+  setSummaryItem("ai", ai);
+  setSummaryItem("ocr", {
+    state: ai.state,
+    label: ai.state === "ok" ? "Ready" : "Needs attention",
+  });
+  setSummaryItem("auto", summarizeAutoProcessing(snap?.batch?.poll_interval_seconds));
+
+  const source = snap.source_dir || document.getElementById("setup-source")?.value || "";
+  const sourceResult = await validatePath(source);
+  const sourceLabel = pathValidationLabel(sourceResult);
+  setSummaryItem("inbox", {
+    state: sourceLabel.state === "ok" ? "ok" : "warn",
+    label: sourceLabel.state === "ok" ? "Valid" : "Problem",
+  });
+  const sourceValid = document.getElementById("setup-source-valid");
+  if (sourceValid) {
+    sourceValid.textContent = sourceLabel.label;
+    sourceValid.dataset.state = sourceLabel.state;
+  }
+
+  const categories = snap.categories || collectSetupPayload().categories || [];
+  let archiveOk = categories.length > 0;
+  for (const cat of categories) {
+    const result = await validatePath(cat.folder);
+    const label = pathValidationLabel(result);
+    if (label.state !== "ok") archiveOk = false;
+  }
+  setSummaryItem("archives", {
+    state: archiveOk ? "ok" : "warn",
+    label: archiveOk ? "Valid" : "Problem",
+  });
+
+  updateDuplicateFolderWarning(categories);
+  updatePrivacyCopy({
+    provider,
+    remoteOllama: remote,
+    disclaimerAccepted: cloudDisclaimerAccepted,
+  });
+
+  const aiAlert = document.getElementById("settings-ai-alert");
+  if (aiAlert) {
+    if (remote && !document.getElementById("ollama-base-url")?.value?.trim()) {
+      aiAlert.hidden = false;
+      aiAlert.textContent = "Remote Ollama needs a base URL (see Advanced).";
+    } else if (provider === "ollama" && ollama?.missing_models?.length) {
+      aiAlert.hidden = false;
+      aiAlert.textContent = `Missing models: ${ollama.missing_models.join(", ")} (see Advanced to pull).`;
+    } else {
+      aiAlert.hidden = true;
+      aiAlert.textContent = "";
+    }
+  }
+}
+
+function updateDuplicateFolderWarning(categories) {
+  const el = document.getElementById("setup-dup-warning");
+  if (!el) return;
+  const dups = findDuplicateFolders(categories);
+  if (!dups.length) {
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
+  const parts = dups.map((d) => `${d.names.join(" & ")} → ${d.folder}`);
+  el.hidden = false;
+  el.textContent = `Possible duplicate folders: ${parts.join("; ")}. This is allowed, but may be confusing.`;
+}
 
 function stopOauthPoll() {
   if (oauthPollTimer) {
@@ -53,6 +244,7 @@ async function selectCloudProvider() {
     toast("Switched to ChatGPT / OpenAI", "ok");
     await refreshHealth();
     await refreshAuth();
+    await renderSettingsSummary({}).catch(() => {});
   } catch (err) {
     toast(String(err.message || err), "error");
   }
@@ -103,6 +295,7 @@ async function selectOllamaProvider({ enable = true, pullMissing = false, remote
       await refreshOllamaStatus();
     }
     await refreshHealth();
+    await renderSettingsSummary({}).catch(() => {});
   } catch (err) {
     toast(String(err.message || err), "error");
   }
@@ -124,7 +317,9 @@ function setDangerStatus(message, tone = "") {
   else delete el.dataset.tone;
 }
 
-function categoryRowHtml(cat = { name: "", folder: "" }) {
+function categoryRowHtml(cat = { name: "", folder: "" }, pathState = "unknown") {
+  const pathLabel =
+    pathState === "ok" ? "Valid" : pathState === "err" ? "Problem" : pathState === "warn" ? "Missing" : "";
   return `<div class="cat-row">
     <label class="field">
       <span>Name</span>
@@ -133,16 +328,19 @@ function categoryRowHtml(cat = { name: "", folder: "" }) {
     <label class="field grow">
       <span>Folder</span>
       <input type="text" class="cat-folder" value="${escapeHtml(cat.folder || "")}" placeholder="/path/to/archive/invoice" />
+      <span class="path-valid cat-path-valid" data-state="${escapeHtml(pathState)}">${escapeHtml(pathLabel)}</span>
     </label>
     <button type="button" class="btn ghost compact cat-remove">Remove</button>
   </div>`;
 }
 
-function renderCategories(categories) {
+function renderCategories(categories, pathStates = {}) {
   const root = document.getElementById("setup-categories");
   if (!root) return;
   const list = categories && categories.length ? categories : [{ name: "other", folder: "" }];
-  root.innerHTML = list.map((c) => categoryRowHtml(c)).join("");
+  root.innerHTML = list
+    .map((c) => categoryRowHtml(c, pathStates[c.folder] || "unknown"))
+    .join("");
 }
 
 function collectSetupPayload() {
@@ -169,6 +367,7 @@ function collectSetupPayload() {
 }
 
 function applySettingsToForm(settings) {
+  lastSettingsSnapshot = settings || {};
   document.getElementById("setup-source").value = settings.source_dir || "";
   renderCategories(settings.categories || []);
   setKnownCategories((settings.categories || []).map((c) => c.name).filter(Boolean));
@@ -187,12 +386,22 @@ function applySettingsToForm(settings) {
     `Source: ${settings.source_dir || "—"} · ${catCount} categor${catCount === 1 ? "y" : "ies"} · ${scan} · OCR ${ocrMode}`,
     "ok",
   );
+  updateDuplicateFolderWarning(settings.categories || []);
 }
 
 export async function refreshSetup() {
+  pathValidationCache.clear();
   const data = await api("/api/settings");
-  applySettingsToForm(data.settings || {});
-  return data.settings;
+  const settings = data.settings || {};
+  applySettingsToForm(settings);
+  const pathStates = {};
+  for (const cat of settings.categories || []) {
+    const result = await validatePath(cat.folder);
+    pathStates[cat.folder] = pathValidationLabel(result).state;
+  }
+  renderCategories(settings.categories || [], pathStates);
+  await renderSettingsSummary({ settings }).catch(() => {});
+  return settings;
 }
 
 const THEME_PRESETS = ["graphite", "carbon", "slate", "paper"];
@@ -327,6 +536,32 @@ export async function refreshAutostart() {
 }
 
 export function initSettings() {
+  document.getElementById("settings-nav")?.addEventListener("click", (event) => {
+    const link = event.target.closest("a[href^='#']");
+    if (!link) return;
+    const id = link.getAttribute("href")?.slice(1);
+    const target = id ? document.getElementById(id) : null;
+    if (!target) return;
+    event.preventDefault();
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    target.focus?.({ preventScroll: true });
+  });
+
+  document.querySelectorAll(".settings-advanced").forEach((details) => {
+    const sync = () => {
+      details.setAttribute("aria-expanded", details.open ? "true" : "false");
+    };
+    sync();
+    details.addEventListener("toggle", sync);
+  });
+
+  document.getElementById("setup-categories")?.addEventListener("change", () => {
+    updateDuplicateFolderWarning(collectSetupPayload().categories);
+  });
+  document.getElementById("setup-categories")?.addEventListener("input", () => {
+    updateDuplicateFolderWarning(collectSetupPayload().categories);
+  });
+
   document.getElementById("cloud-disclaimer-accept")?.addEventListener("change", async (event) => {
     const checked = Boolean(event.target?.checked);
     try {
@@ -352,6 +587,7 @@ export function initSettings() {
         toast("Cloud sign-in and API keys are locked until you approve again", "warn");
         showAuthDetails(false);
       }
+      await renderSettingsSummary({}).catch(() => {});
     } catch (err) {
       event.target.checked = !checked;
       toast(String(err.message || err), "error");
@@ -656,7 +892,16 @@ export function initSettings() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      pathValidationCache.clear();
       applySettingsToForm(data.settings || payload);
+      const settings = data.settings || payload;
+      const pathStates = {};
+      for (const cat of settings.categories || []) {
+        const result = await validatePath(cat.folder);
+        pathStates[cat.folder] = pathValidationLabel(result).state;
+      }
+      renderCategories(settings.categories || [], pathStates);
+      await renderSettingsSummary({ settings }).catch(() => {});
       setSetupStatus("Setup saved.", "ok");
       toast("Setup saved", "ok");
     } catch (err) {

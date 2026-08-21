@@ -175,6 +175,11 @@ function patchWorkflowNowElapsed() {
   if (stateEl && started) {
     stateEl.textContent = formatElapsed(performance.now() - started);
   }
+
+  // Keep active queue row elapsed fresh without remounting.
+  if (workflowState.activeFileId) {
+    patchQueueRow(workflowState.activeFileId);
+  }
 }
 
 function queueStatusLabel(item) {
@@ -221,6 +226,45 @@ function updateQueueRowActions(li, item) {
   }
 }
 
+function queueElapsedText(item) {
+  if (!item || item.status !== "running") return "";
+  if (item.file_id !== workflowState.activeFileId) return "";
+  const runningStep = workflowState.steps.find(
+    (step) => workflowState.stepStatus[step.id] === "running",
+  );
+  if (!runningStep) return "";
+  const started = workflowState.stepStartedAt[runningStep.id];
+  if (!started) return "";
+  return formatElapsed(performance.now() - started);
+}
+
+function fillQueueRowContent(li, item) {
+  let main = li.querySelector(".queue-main");
+  if (!main) {
+    main = document.createElement("div");
+    main.className = "queue-main";
+    li.prepend(main);
+  }
+
+  let nameEl = main.querySelector(".queue-name");
+  if (!nameEl) {
+    nameEl = document.createElement("span");
+    nameEl.className = "queue-name";
+    main.appendChild(nameEl);
+  }
+  nameEl.textContent = item.filename || "document";
+
+  let metaEl = main.querySelector(".queue-meta");
+  if (!metaEl) {
+    metaEl = document.createElement("span");
+    metaEl.className = "queue-meta";
+    main.appendChild(metaEl);
+  }
+  const status = queueStatusLabel(item);
+  const elapsed = queueElapsedText(item);
+  metaEl.textContent = elapsed ? `${status} · ${elapsed}` : status;
+}
+
 function mountQueue() {
   const root = document.getElementById("job-queue");
   if (!root) return;
@@ -241,16 +285,7 @@ function mountQueue() {
     const li = document.createElement("li");
     li.dataset.fileId = item.file_id || "";
     li.dataset.status = item.status || "queued";
-
-    const nameEl = document.createElement("span");
-    nameEl.className = "queue-name";
-    nameEl.textContent = item.filename || "document";
-
-    const statusEl = document.createElement("span");
-    statusEl.className = "queue-status";
-    statusEl.textContent = queueStatusLabel(item);
-
-    li.append(nameEl, statusEl);
+    fillQueueRowContent(li, item);
     updateQueueRowActions(li, item);
     root.appendChild(li);
   }
@@ -266,8 +301,7 @@ export function patchQueueRow(fileId) {
   if (!li) return;
 
   li.dataset.status = item.status || "queued";
-  const statusEl = li.querySelector(".queue-status");
-  if (statusEl) statusEl.textContent = queueStatusLabel(item);
+  fillQueueRowContent(li, item);
   updateQueueRowActions(li, item);
 }
 
@@ -287,10 +321,7 @@ function patchQueue() {
     const li = root.querySelector(`[data-file-id="${item.file_id || ""}"]`);
     if (!li) continue;
     li.dataset.status = item.status || "queued";
-    const nameEl = li.querySelector(".queue-name");
-    const statusEl = li.querySelector(".queue-status");
-    if (nameEl) nameEl.textContent = item.filename || "document";
-    if (statusEl) statusEl.textContent = queueStatusLabel(item);
+    fillQueueRowContent(li, item);
     updateQueueRowActions(li, item);
   }
 }

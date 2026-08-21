@@ -13,7 +13,7 @@ import {
   setProcessInboxBusy,
 } from "./inbox.js";
 import { initReview, refreshReviews } from "./review.js";
-import { initDocuments, refreshDocs } from "./documents.js";
+import { initDocuments, refreshDocs, syncDocumentFilters } from "./documents.js";
 import { initAsk, renderAskResult } from "./ask.js";
 import {
   connectWorkflowEvents,
@@ -28,6 +28,7 @@ import {
   refreshAutostart,
   refreshSetup,
   refreshUpdateVersion,
+  renderSettingsSummary,
   setSetupStatus,
 } from "./settings.js";
 
@@ -64,9 +65,16 @@ if (window.PA_MOCK?.enabled) {
 ensureBrowserSession().then((ready) => {
   if (!ready) return;
   refreshHealth()
-    .then((health) => {
-      if (health?.llm_provider === "ollama") return null;
-      return refreshAuth();
+    .then(async (health) => {
+      let auth = null;
+      if (health?.llm_provider !== "ollama") {
+        auth = await refreshAuth().catch(() => null);
+      }
+      await renderSettingsSummary({
+        health,
+        auth,
+        ollama: health?.ollama,
+      }).catch(() => {});
     })
     .catch(() => {});
   startHealthPolling();
@@ -79,8 +87,9 @@ ensureBrowserSession().then((ready) => {
       setSetupStatus(String(err.message || err), "err");
     })
     .finally(() => {
-      // Re-render once categories are known so review cards get full select options.
+      // Re-render once categories are known so review/archive selects are complete.
       refreshReviews().catch(() => {});
+      syncDocumentFilters();
     });
   refreshAutostart().catch(() => {});
 });

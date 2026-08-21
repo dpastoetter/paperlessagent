@@ -312,7 +312,8 @@ export async function refreshCloudDisclaimer() {
 export function setProviderUi(provider, { remoteOllama = false } = {}) {
   lastProvider = provider || "";
   ollamaRemoteMode = provider === "ollama" && Boolean(remoteOllama);
-  const section = document.getElementById("auth-section");
+  const section =
+    document.getElementById("settings-ai") || document.getElementById("auth-section");
   const ollamaPanel = document.getElementById("ollama-panel");
   const cloudPanel = document.getElementById("cloud-auth-panel");
   const remoteFields = document.getElementById("ollama-remote-fields");
@@ -329,6 +330,9 @@ export function setProviderUi(provider, { remoteOllama = false } = {}) {
   if (cloudBtn) cloudBtn.dataset.active = !isOllama ? "true" : "false";
   if (ollamaBtn) ollamaBtn.dataset.active = isOllama && !ollamaRemoteMode ? "true" : "false";
   if (remoteBtn) remoteBtn.dataset.active = ollamaRemoteMode ? "true" : "false";
+
+  const advanced = document.getElementById("settings-ai-advanced");
+  if (advanced && ollamaRemoteMode) advanced.open = true;
 
   const enableBtn = document.getElementById("ollama-enable");
   if (enableBtn) enableBtn.textContent = ollamaRemoteMode ? "Use remote Ollama" : "Use Ollama";
@@ -347,7 +351,8 @@ function formatOllamaCompute(ollama) {
 export function renderOllamaStatus(ollama) {
   const statusEl = document.getElementById("ollama-status");
   const hintEl = document.getElementById("ollama-hint");
-  const section = document.getElementById("auth-section");
+  const section =
+    document.getElementById("settings-ai") || document.getElementById("auth-section");
   const pullBtn = document.getElementById("ollama-pull");
   const startBtn = document.getElementById("ollama-start");
   if (!ollama) {
@@ -443,7 +448,8 @@ export function renderAuthStatus(auth) {
     // Cloud auth panel is inactive while Ollama is selected.
     return;
   }
-  const section = document.getElementById("auth-section");
+  const section =
+    document.getElementById("settings-ai") || document.getElementById("auth-section");
   const el = document.getElementById("auth-status");
   if (!auth) {
     if (el) el.textContent = "Auth status unavailable";

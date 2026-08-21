@@ -104,7 +104,7 @@ def test_run_pipeline_shapes_success_and_errors(monkeypatch):
 
 
 def test_run_query_delegates_to_ask(monkeypatch):
-    async def fake_ask(q: str):
+    async def fake_ask(q: str, history=None):
         return {"status": "success", "reply": q}
 
     monkeypatch.setattr(runner, "ask_archive", fake_ask)
