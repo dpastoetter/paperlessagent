@@ -7,7 +7,7 @@
   },
   "devDependencies": {
     "happy-dom": "^20.11.2",
-    "pdfjs-dist": "^4.10.38",
+    "pdfjs-dist": "^6.2.108",
     "vitest": "^4.1.11"
   }
 }
