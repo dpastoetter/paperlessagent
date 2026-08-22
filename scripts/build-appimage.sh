@@ -409,8 +409,10 @@ PYTHON="$APPDIR/usr/bin/python3"
 "$PYTHON" -m pip install --no-warn-script-location \
   -c "$SRC/constraints.txt" \
   "$SRC[desktop]"
-"$PYTHON" -m pip install --no-warn-script-location pycairo pygobject \
-  || die "pycairo/PyGObject build failed — install gcc, pkg-config, meson, ninja, libgirepository1.0-dev, libcairo2-dev, gobject-introspection"
+"$PYTHON" -m pip install --no-warn-script-location \
+  'pycairo>=1.26' \
+  'pygobject>=3.46,<3.52' \
+  || die "pycairo/PyGObject build failed — install gcc, pkg-config, meson, ninja, libgirepository1.0-dev, libcairo2-dev, gobject-introspection (PyGObject 3.52+ needs girepository-2.0, not available on Ubuntu 22.04)"
 
 VENDOR_MODE=poppler
 vendor_binary "$(command -v pdftoppm)" "$APPDIR/usr/bin" "$APPDIR/usr/lib/deepcatalog-native"
