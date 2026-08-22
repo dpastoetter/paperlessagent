@@ -1,20 +1,35 @@
 # Keep Actions SHA pins and Python/npm lockfiles from going stale.
+# github-actions updates re-pin commit SHAs when upstream tags move.
+# Group per ecosystem so lockstep packages (OpenTelemetry, CodeQL actions)
+# land in one PR instead of uninstallable single-package slices.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
 
   - package-ecosystem: pip
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
+    groups:
+      python:
+        patterns:
+          - "*"
 
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: monthly
     open-pull-requests-limit: 5
+    groups:
+      npm:
+        patterns:
+          - "*"
