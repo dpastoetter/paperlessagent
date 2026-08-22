@@ -5,6 +5,8 @@ import {
   initDesktopShell,
   isBrowserChromeShortcut,
   isDesktopShell,
+  isExternalHttpUrl,
+  openExternalHttpUrl,
 } from "../../app/static/desktop-shell.js";
 
 function keyEvent(init) {
@@ -68,5 +70,51 @@ describe("initDesktopShell", () => {
     const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
     document.body.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
+  });
+});
+
+describe("external http links", () => {
+  it("treats ChatGPT / GitHub as external and loopback as in-app", () => {
+    expect(isExternalHttpUrl("https://auth.openai.com/authorize")).toBe(true);
+    expect(isExternalHttpUrl("https://github.com/dpastoetter/DeepCatalog")).toBe(true);
+    expect(isExternalHttpUrl("http://127.0.0.1:8080/?desktop=1")).toBe(false);
+    expect(isExternalHttpUrl("http://localhost:11434")).toBe(false);
+    expect(isExternalHttpUrl("about:blank")).toBe(false);
+  });
+
+  it("sends external URLs through the pywebview bridge", () => {
+    window.history.replaceState(null, "", "/?desktop=1");
+    const opened = [];
+    window.pywebview = {
+      api: {
+        open_url: (url) => {
+          opened.push(url);
+          return true;
+        },
+      },
+    };
+    expect(openExternalHttpUrl("https://ollama.com/download")).toBe(true);
+    expect(opened).toEqual(["https://ollama.com/download"]);
+    expect(openExternalHttpUrl("http://127.0.0.1:8080/")).toBe(false);
+    delete window.pywebview;
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("routes window.open of https URLs to the desktop bridge", () => {
+    window.history.replaceState(null, "", "/?desktop=1");
+    const opened = [];
+    window.pywebview = {
+      api: {
+        open_url: (url) => {
+          opened.push(url);
+          return true;
+        },
+      },
+    };
+    initDesktopShell();
+    expect(window.open("https://auth.openai.com/x", "_blank", "noopener")).toBeNull();
+    expect(opened).toEqual(["https://auth.openai.com/x"]);
+    delete window.pywebview;
+    window.history.replaceState(null, "", "/");
   });
 });

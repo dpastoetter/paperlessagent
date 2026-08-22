@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # DeepCatalog AppImage entrypoint.
-# Do not prepend a global LD_LIBRARY_PATH: host WebKitGTK/GTK must win for the
-# desktop window. Bundled pdftoppm/pdfinfo use RPATH instead.
+# Bundled WebKitGTK/GTK live in usr/lib/deepcatalog-webkit (GI typelibs alongside).
+# Host libc / libGL / X11 / Wayland stay on the OS. Poppler uses RPATH.
 set -euo pipefail
 
 SELF="$(readlink -f "$0")"
@@ -15,6 +15,42 @@ export PYTHONNOUSERSITE=1
 export PYTHONPATH="${DEEPCATALOG_PROJECT_ROOT}${PYTHONPATH:+:$PYTHONPATH}"
 
 export PATH="$HERE/usr/bin:${PATH:-}"
+
+WEBKIT_DIR="$HERE/usr/lib/deepcatalog-webkit"
+if [ -d "$WEBKIT_DIR" ]; then
+  export LD_LIBRARY_PATH="${WEBKIT_DIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+if [ -d "$HERE/usr/lib/girepository-1.0" ]; then
+  export GI_TYPELIB_PATH="$HERE/usr/lib/girepository-1.0${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
+fi
+if [ -d "$HERE/usr/lib/webkit2gtk-4.1" ]; then
+  export WEBKIT_EXEC_PATH="$HERE/usr/lib/webkit2gtk-4.1"
+elif [ -d "$HERE/usr/lib/webkit2gtk-4.0" ]; then
+  export WEBKIT_EXEC_PATH="$HERE/usr/lib/webkit2gtk-4.0"
+fi
+# bwrap sandbox cannot see the AppImage mount as a normal rootfs.
+export WEBKIT_FORCE_SANDBOX="${WEBKIT_FORCE_SANDBOX:-0}"
+
+export XDG_DATA_DIRS="$HERE/usr/share:${XDG_DATA_DIRS:-/usr/share}"
+if [ -d "$HERE/usr/share/glib-2.0/schemas" ]; then
+  export GSETTINGS_SCHEMA_DIR="$HERE/usr/share/glib-2.0/schemas"
+fi
+if [ -d "$HERE/usr/lib/gio/modules" ]; then
+  export GIO_MODULE_DIR="$HERE/usr/lib/gio/modules"
+fi
+
+PIXBUF_LOADERS="$HERE/usr/lib/gdk-pixbuf-2.0/loaders"
+if [ -d "$PIXBUF_LOADERS" ]; then
+  export GDK_PIXBUF_MODULEDIR="$PIXBUF_LOADERS"
+  cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/deepcatalog"
+  mkdir -p "$cache_dir"
+  export GDK_PIXBUF_MODULE_FILE="$cache_dir/gdk-pixbuf-loaders.cache"
+  if command -v gdk-pixbuf-query-loaders >/dev/null 2>&1; then
+    gdk-pixbuf-query-loaders > "$GDK_PIXBUF_MODULE_FILE" 2>/dev/null || true
+  elif [ -x "$HERE/usr/bin/gdk-pixbuf-query-loaders" ]; then
+    "$HERE/usr/bin/gdk-pixbuf-query-loaders" > "$GDK_PIXBUF_MODULE_FILE" 2>/dev/null || true
+  fi
+fi
 
 cd "$DEEPCATALOG_PROJECT_ROOT"
 

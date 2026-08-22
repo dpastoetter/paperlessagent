@@ -1,10 +1,12 @@
 /**
- * AppImage / --app window: hide website behaviors (browser menus, tab shortcuts).
+ * AppImage / native window: hide website behaviors (browser menus, tab shortcuts)
+ * and send http(s) links to the system browser instead of a second WebKit view.
  */
 
 import { isTypingTarget } from "./keyboard.js";
 
 let desktopShellInitialized = false;
+let originalWindowOpen = null;
 
 export function isDesktopShell() {
   try {
@@ -20,6 +22,31 @@ export function applyDesktopShellClass() {
   if (!isDesktopShell()) return false;
   document.documentElement.classList.add("dc-desktop");
   return true;
+}
+
+export function isExternalHttpUrl(url) {
+  try {
+    const parsed = new URL(String(url), window.location.href);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    const host = parsed.hostname.toLowerCase();
+    return host !== "127.0.0.1" && host !== "localhost" && host !== "::1";
+  } catch {
+    return false;
+  }
+}
+
+export function openExternalHttpUrl(url) {
+  if (!isExternalHttpUrl(url)) return false;
+  const api = window.pywebview?.api;
+  if (api && typeof api.open_url === "function") {
+    Promise.resolve(api.open_url(url)).catch(() => {});
+    return true;
+  }
+  if (originalWindowOpen) {
+    originalWindowOpen(url, "_blank", "noopener");
+    return true;
+  }
+  return false;
 }
 
 export function isBrowserChromeShortcut(event) {
@@ -71,10 +98,35 @@ function onDesktopBrowserKeys(event) {
   event.stopPropagation();
 }
 
+function onDesktopWindowOpen(url, target, features) {
+  if (typeof url === "string" && isExternalHttpUrl(url) && openExternalHttpUrl(url)) {
+    return null;
+  }
+  return originalWindowOpen ? originalWindowOpen(url, target, features) : null;
+}
+
+function onDesktopExternalLinkClick(event) {
+  if (event.defaultPrevented) return;
+  const link = event.target?.closest?.("a[href]");
+  if (!link) return;
+  const href = link.href;
+  if (!isExternalHttpUrl(href)) return;
+  if (link.target !== "_blank" && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+    return;
+  }
+  event.preventDefault();
+  openExternalHttpUrl(href);
+}
+
 export function initDesktopShell() {
   if (desktopShellInitialized) return;
   desktopShellInitialized = true;
   if (!applyDesktopShellClass()) return;
   document.addEventListener("contextmenu", onDesktopContextMenu);
   document.addEventListener("keydown", onDesktopBrowserKeys, true);
+  document.addEventListener("click", onDesktopExternalLinkClick);
+  if (typeof window.open === "function") {
+    originalWindowOpen = window.open.bind(window);
+    window.open = onDesktopWindowOpen;
+  }
 }

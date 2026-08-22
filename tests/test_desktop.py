@@ -14,6 +14,7 @@ import pytest
 
 from deepcatalog.desktop import (
     WM_CLASS,
+    DesktopJsApi,
     _launch_ui_window,
     _pick_port,
     _project_root,
@@ -25,11 +26,13 @@ from deepcatalog.desktop import (
     find_chromium_app_browser,
     health_url,
     install_linux_desktop_entry,
+    is_external_http_url,
     is_server_healthy,
     main,
     open_chromium_app_window,
-    prefer_chromium_app_window,
     render_desktop_entry,
+    splash_html,
+    splash_html_path,
     wait_for_health,
     window_icon_path,
 )
@@ -139,13 +142,13 @@ def test_chromium_app_argv_uses_isolated_profile_and_class(tmp_path):
     assert profile.is_dir()
 
 
-def test_find_chromium_app_browser_prefers_brave(monkeypatch):
+def test_find_chromium_app_browser_prefers_chromium(monkeypatch):
     def fake_which(name: str) -> str | None:
         mapping = {"brave-browser": "/usr/bin/brave-browser", "chromium": "/usr/bin/chromium"}
         return mapping.get(name)
 
     monkeypatch.setattr("deepcatalog.desktop.shutil.which", fake_which)
-    assert find_chromium_app_browser() == "/usr/bin/brave-browser"
+    assert find_chromium_app_browser() == "/usr/bin/chromium"
 
 
 def test_open_chromium_app_window_closed(tmp_path, monkeypatch):
@@ -260,29 +263,30 @@ def test_try_native_window_logs_webkit_failure(monkeypatch, caplog):
     assert "Native WebKitGTK window failed" in caplog.text
 
 
-def test_desktop_ui_url_marks_app_shell():
-    assert desktop_ui_url("127.0.0.1", 8080) == "http://127.0.0.1:8080/?desktop=1"
+def test_try_native_window_starts_gtk_backend(monkeypatch):
+    webview = MagicMock()
+    webview.settings = {}
+    window = MagicMock()
+    webview.create_window.return_value = window
+    monkeypatch.setitem(sys.modules, "webview", webview)
+    monkeypatch.setattr("deepcatalog.desktop._apply_gtk_wm_class", lambda: None)
+    monkeypatch.setattr("deepcatalog.desktop.sys.platform", "linux")
+    assert _try_native_window("http://127.0.0.1:8080/?desktop=1", 800, 600) is True
+    kwargs = webview.start.call_args.kwargs
+    assert kwargs["gui"] == "gtk"
+    assert kwargs["debug"] is False
+    assert kwargs["private_mode"] is True
+    created = webview.create_window.call_args.kwargs
+    assert "DeepCatalog" in created.get("html", "")
+    assert created["js_api"].__class__.__name__ == "DesktopJsApi"
 
 
-def test_prefer_chromium_app_window_for_appimage(monkeypatch):
-    monkeypatch.delenv("APPIMAGE", raising=False)
-    monkeypatch.delenv("DEEPCATALOG_APPIMAGE", raising=False)
-    assert prefer_chromium_app_window() is False
-    monkeypatch.setenv("DEEPCATALOG_APPIMAGE", "1")
-    assert prefer_chromium_app_window() is True
-
-
-def test_appimage_launch_uses_chromium_before_webview(tmp_path, monkeypatch):
-    monkeypatch.setenv("DEEPCATALOG_APPIMAGE", "1")
+def test_launch_falls_back_to_chromium_when_webview_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr("deepcatalog.desktop._try_native_window", lambda *_a, **_k: False)
     monkeypatch.setattr(
         "deepcatalog.desktop.open_chromium_app_window",
-        lambda *_a, **_k: "detached",
+        lambda *_a, **_k: "closed",
     )
-
-    def fail_webview(*_a, **_k):
-        raise AssertionError("AppImage must not wait on pywebview")
-
-    monkeypatch.setattr("deepcatalog.desktop._try_native_window", fail_webview)
     assert (
         _launch_ui_window(
             "http://127.0.0.1:8080/?desktop=1",
@@ -290,15 +294,72 @@ def test_appimage_launch_uses_chromium_before_webview(tmp_path, monkeypatch):
             width=800,
             height=600,
         )
-        is False
+        is True
     )
 
 
-def test_appimage_launch_falls_back_to_browser(tmp_path, monkeypatch):
+def test_desktop_ui_url_marks_app_shell():
+    assert desktop_ui_url("127.0.0.1", 8080) == "http://127.0.0.1:8080/?desktop=1"
+
+
+def test_is_external_http_url():
+    assert is_external_http_url("https://auth.openai.com/authorize") is True
+    assert is_external_http_url("https://ollama.com/download") is True
+    assert is_external_http_url("http://127.0.0.1:8080/?desktop=1") is False
+    assert is_external_http_url("http://localhost:1455/auth/callback") is False
+    assert is_external_http_url("about:blank") is False
+    assert is_external_http_url("not a url") is False
+
+
+def test_desktop_js_api_opens_external_only(monkeypatch):
+    opened: list[str] = []
+    monkeypatch.setattr("deepcatalog.desktop._open_in_browser", opened.append)
+    api = DesktopJsApi()
+    assert api.open_url("https://github.com/dpastoetter/DeepCatalog") is True
+    assert api.open_url("http://127.0.0.1:8080/") is False
+    assert api.open_url("about:blank") is False
+    assert opened == ["https://github.com/dpastoetter/DeepCatalog"]
+
+
+def test_splash_html_reads_packaging_file():
+    path = splash_html_path()
+    assert path is not None
+    assert path.name == "splash.html"
+    html = splash_html()
+    assert "DeepCatalog" in html
+    assert "Studio" in html
+
+
+def test_launch_uses_webview_before_chromium(tmp_path, monkeypatch):
+    monkeypatch.setenv("DEEPCATALOG_APPIMAGE", "1")
+    order: list[str] = []
+
+    def webview_ok(*_a, **_k):
+        order.append("webview")
+        return True
+
+    def chromium_should_not_run(*_a, **_k):
+        raise AssertionError("Chromium --app must not run when pywebview succeeded")
+
+    monkeypatch.setattr("deepcatalog.desktop._try_native_window", webview_ok)
+    monkeypatch.setattr("deepcatalog.desktop.open_chromium_app_window", chromium_should_not_run)
+    assert (
+        _launch_ui_window(
+            "http://127.0.0.1:8080/?desktop=1",
+            data_dir=tmp_path,
+            width=800,
+            height=600,
+        )
+        is True
+    )
+    assert order == ["webview"]
+
+
+def test_launch_falls_back_to_chromium_then_browser(tmp_path, monkeypatch):
     monkeypatch.setenv("DEEPCATALOG_APPIMAGE", "1")
     opened: list[str] = []
-    monkeypatch.setattr("deepcatalog.desktop.open_chromium_app_window", lambda *_a, **_k: None)
     monkeypatch.setattr("deepcatalog.desktop._try_native_window", lambda *_a, **_k: False)
+    monkeypatch.setattr("deepcatalog.desktop.open_chromium_app_window", lambda *_a, **_k: None)
     monkeypatch.setattr(
         "deepcatalog.desktop._open_in_browser",
         lambda url: opened.append(url),

@@ -150,6 +150,7 @@ REQUIRED_PATHS=(
   "packaging/linux/deepcatalog.desktop"
   "packaging/linux/deepcatalog.svg"
   "packaging/linux/deepcatalog.png"
+  "packaging/linux/splash.html"
   "scripts/build-appimage.sh"
   "scripts/install.sh"
   "scripts/install.ps1"

@@ -176,11 +176,17 @@ jobs:
             exit 1
           fi
 
-      - name: Install Poppler and patchelf
+      - name: Install Poppler, WebKitGTK, and AppImage build deps
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq poppler-utils patchelf
+          sudo apt-get install -y -qq \
+            poppler-utils patchelf gcc pkg-config meson ninja-build \
+            libgirepository1.0-dev libcairo2-dev gobject-introspection \
+            gir1.2-gtk-3.0 libgtk-3-0 libffi-dev
+          if ! sudo apt-get install -y -qq libwebkit2gtk-4.1-0 gir1.2-webkit2-4.1; then
+            sudo apt-get install -y -qq libwebkit2gtk-4.0-37 libwebkit2gtk-4.0-dev gir1.2-webkit2-4.0
+          fi
 
       - name: Build AppImage
         run: |

@@ -3240,7 +3240,7 @@ select:focus-visible {
   }
 }
 
-/* Chromeless AppImage / --app window: read as a desktop shell, not a website. */
+/* Native GTK / AppImage window: read as a desktop shell, not a website. */
 html.dc-desktop,
 html.dc-desktop body {
   overscroll-behavior: none;

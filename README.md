@@ -59,14 +59,14 @@ The recommended Linux desktop install is the **AppImage** (no Python/venv setup)
 
 ### Linux AppImage
 
-Download the `x86_64` AppImage from [GitHub Releases](https://github.com/dpastoetter/DeepCatalog/releases/latest) (glibc 2.35+ — Ubuntu 22.04, Fedora 36, Debian 12, and newer). Poppler is bundled. On first launch the AppImage installs a `.desktop` entry (`StartupWMClass=DeepCatalog`) so the window groups under its own icon. It opens a **chromeless Brave/Chrome/Chromium `--app` window** (isolated profile in `~/.local/share/deepcatalog/chromium-profile`, own window class so it does not appear as a browser tab). Source checkouts can use a native **WebKitGTK** window when PyGObject is installed. Only if no Chromium-based browser is found does it fall back to your default browser.
+Download the `x86_64` AppImage from [GitHub Releases](https://github.com/dpastoetter/DeepCatalog/releases/latest) (glibc 2.35+ — Ubuntu 22.04, Fedora 36, Debian 12, and newer). Poppler and a **private GTK + WebKitGTK window** are bundled. On first launch the AppImage installs a `.desktop` entry (`StartupWMClass=DeepCatalog`) so the window groups under its own icon. The Studio UI opens in that native window (title **DeepCatalog Studio**), not in Brave or Chrome. If WebKit cannot start, it falls back to a Chromium `--app` window (Chromium/Chrome before Brave), then to your default browser.
 
 ```bash
-# Optional (source installs): native GTK window instead of Chromium --app
+# Optional (source installs): native GTK window via host WebKitGTK
 # Fedora / RHEL
-sudo dnf install webkit2gtk4.1
+sudo dnf install webkit2gtk4.1 python3-gobject
 # Debian / Ubuntu
-sudo apt install gir1.2-webkit2-4.1
+sudo apt install gir1.2-webkit2-4.1 python3-gi
 ```
 
 ```bash
@@ -183,7 +183,7 @@ From a venv install, after `pip install -e '.[desktop]' -c constraints.txt` (nee
 python -m deepcatalog.desktop
 ```
 
-The desktop wrapper respects `DEEPCATALOG_HOST`, `DEEPCATALOG_PORT`, and `DEEPCATALOG_LOG_LEVEL`. Pass `--headless` to keep the server in the foreground without a window (used by the AppImage systemd unit). On Linux it installs `~/.local/share/applications/deepcatalog.desktop` on launch. If WebKitGTK is missing, it uses Brave/Chrome/Chromium `--app` before falling back to a normal browser tab.
+The desktop wrapper respects `DEEPCATALOG_HOST`, `DEEPCATALOG_PORT`, and `DEEPCATALOG_LOG_LEVEL`. Pass `--headless` to keep the server in the foreground without a window (used by the AppImage systemd unit). On Linux it installs `~/.local/share/applications/deepcatalog.desktop` on launch. The AppImage ships WebKitGTK so this is a real GTK window. Source installs use host WebKitGTK + PyGObject; if that is missing, Chromium `--app` is the fallback, then a normal browser tab.
 
 ### Manual setup
 
@@ -481,26 +481,26 @@ Override the release source with `DEEPCATALOG_UPDATE_REPO=owner/repo` if you for
 
 GitHub Actions **packages the Linux AppImage as part of the release SDLC**: quality gate → dependency audit → AppImage (Ubuntu 22.04 / glibc 2.35+) → tarball + checksums → attach everything to the GitHub Release. That runs when you:
 
-- push a version tag (`git tag v0.4.0 && git push origin v0.4.0`)
+- push a version tag (`git tag v0.5.0 && git push origin v0.5.0`)
 - publish a GitHub Release in the UI (or `gh release create`) for a `v*` tag
 - run **Actions → Release → Run workflow** with the tag (rebuild / replace assets)
 
 The packager archives the **exact tagged commit** (not a dirty working tree), verifies the file list against `git ls-tree`, and embeds `.release-commit` plus `.release-files` so installs/updates can confirm the SHA and prune stale paths.
 
-**Release checklist:** land every change on `main` first, bump `version` in `pyproject.toml` (the single source for package metadata, OpenAPI/`FastAPI.version`, and the in-app updater), regenerate pins if dependencies changed (`./scripts/lock-deps.sh`), commit, then create the matching tag on that commit (`git tag v0.4.0 && git push origin v0.4.0`) — or **GitHub → Releases → Draft a new release** using that tag. Tagging an older commit is how earlier releases missed later work.
+**Release checklist:** land every change on `main` first, bump `version` in `pyproject.toml` (the single source for package metadata, OpenAPI/`FastAPI.version`, and the in-app updater), regenerate pins if dependencies changed (`./scripts/lock-deps.sh`), commit, then create the matching tag on that commit (`git tag v0.5.0 && git push origin v0.5.0`) — or **GitHub → Releases → Draft a new release** using that tag. Tagging an older commit is how earlier releases missed later work.
 
 Local dry-run:
 
 ```bash
-git checkout v0.4.0
-./scripts/make-release-assets.sh v0.4.0
+git checkout v0.5.0
+./scripts/make-release-assets.sh v0.5.0
 # or before the tag exists:
-./scripts/make-release-assets.sh v0.4.0 HEAD
-# dist/ contains deepcatalog-0.4.0.tar.gz, install.sh, install.ps1, SHA256SUMS
+./scripts/make-release-assets.sh v0.5.0 HEAD
+# dist/ contains deepcatalog-0.5.0.tar.gz, install.sh, install.ps1, SHA256SUMS
 
 # Linux x86_64 AppImage (needs poppler-utils + patchelf):
-./scripts/build-appimage.sh v0.4.0
-# dist/DeepCatalog-0.4.0-x86_64.AppImage
+./scripts/build-appimage.sh v0.5.0
+# dist/DeepCatalog-0.5.0-x86_64.AppImage
 ```
 
 ## Mockup mode

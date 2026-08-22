@@ -14,6 +14,7 @@ import threading
 import time
 import webbrowser
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 import uvicorn
@@ -37,23 +38,23 @@ DESKTOP_FILE_NAME = "deepcatalog.desktop"
 ICON_THEME_NAME = "deepcatalog"
 CHROMIUM_HANDOFF_S = 2.5
 CHROMIUM_BINARIES = (
-    "brave-browser",
-    "brave-browser-stable",
-    "brave",
-    "google-chrome-stable",
-    "google-chrome",
     "chromium-browser",
     "chromium",
+    "google-chrome-stable",
+    "google-chrome",
     "microsoft-edge-stable",
     "microsoft-edge",
     "vivaldi-stable",
     "vivaldi",
+    "brave-browser",
+    "brave-browser-stable",
+    "brave",
 )
 CHROMIUM_FALLBACK_PATHS = (
-    "/opt/brave.com/brave/brave",
-    "/opt/google/chrome/chrome",
     "/usr/lib64/chromium-browser/chromium-browser",
     "/usr/lib/chromium-browser/chromium-browser",
+    "/opt/google/chrome/chrome",
+    "/opt/brave.com/brave/brave",
 )
 
 logger = logging.getLogger(__name__)
@@ -213,6 +214,61 @@ def window_icon_path() -> Path | None:
     return None
 
 
+_SPLASH_HTML = """<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"/><title>DeepCatalog Studio</title>
+<style>html,body{margin:0;height:100%;background:#0e1317;color:#e8eef2;font-family:ui-sans-serif,system-ui,sans-serif}
+body{display:grid;place-items:center}h1{margin:0;font-size:1.6rem}p{margin:.45rem 0 0;opacity:.72}</style>
+</head><body><div><h1>DeepCatalog</h1><p>Studio</p></div></body></html>
+"""
+
+
+def splash_html_path() -> Path | None:
+    """Bundled splash page shown while WebKit starts (AppImage overlay first)."""
+    candidates: list[Path] = []
+    appdir = os.getenv("APPDIR", "").strip()
+    if appdir:
+        root = Path(appdir)
+        candidates.append(root / "opt/deepcatalog/packaging/linux/splash.html")
+        candidates.append(root / "splash.html")
+    candidates.append(_project_root() / "packaging" / "linux" / "splash.html")
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
+def splash_html() -> str:
+    path = splash_html_path()
+    if path is None:
+        return _SPLASH_HTML
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return _SPLASH_HTML
+
+
+def is_external_http_url(url: str) -> bool:
+    """True for http(s) URLs that are not the local Studio server."""
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    host = (parsed.hostname or "").lower()
+    return host not in {"127.0.0.1", "localhost", "::1"}
+
+
+class DesktopJsApi:
+    """pywebview JS bridge: open ChatGPT OAuth / docs links in the system browser."""
+
+    def open_url(self, url: str) -> bool:
+        if not isinstance(url, str) or not is_external_http_url(url):
+            return False
+        _open_in_browser(url)
+        return True
+
+
 def _quote_desktop_exec_arg(value: str) -> str:
     if value and all(ch.isalnum() or ch in "/._-+:@" for ch in value):
         return value
@@ -341,13 +397,6 @@ def desktop_ui_url(host: str, port: int) -> str:
     return f"http://{host}:{port}/?desktop=1"
 
 
-def prefer_chromium_app_window() -> bool:
-    """AppImage Python has no PyGObject — Chromium --app is the real window."""
-    if os.getenv("APPIMAGE", "").strip():
-        return True
-    return os.getenv("DEEPCATALOG_APPIMAGE", "").strip().lower() in {"1", "true", "yes"}
-
-
 def find_chromium_app_browser() -> str | None:
     for name in CHROMIUM_BINARIES:
         found = shutil.which(name)
@@ -389,7 +438,7 @@ def chromium_app_argv(
         "--hide-crash-restore-bubble",
         "--password-store=basic",
         "--noerrdialogs",
-        # XWayland so --class/StartupWMClass apply; native Wayland groups with Brave.
+        # XWayland so --class/StartupWMClass apply; native Wayland groups with Chromium.
         "--ozone-platform-hint=x11",
     ]
 
@@ -463,6 +512,18 @@ def _apply_gtk_wm_class() -> None:
         logger.debug("Could not set GTK application id: %s", exc)
 
 
+def _apply_window_icon(window: object, icon: Path | None) -> None:
+    if icon is None or window is None:
+        return
+    native = getattr(window, "native", None)
+    setter = getattr(native, "set_icon_from_file", None)
+    if callable(setter):
+        try:
+            setter(str(icon))
+        except Exception as exc:  # noqa: BLE001 — icon is best-effort
+            logger.debug("Could not set native window icon: %s", exc)
+
+
 def _try_native_window(url: str, width: int, height: int) -> bool:
     """Open pywebview; return False when WebKitGTK / pywebview is unavailable."""
     try:
@@ -472,31 +533,41 @@ def _try_native_window(url: str, width: int, height: int) -> bool:
         return False
     _apply_gtk_wm_class()
     icon = window_icon_path()
+    html = splash_html()
     try:
+        try:
+            webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
+            webview.settings["ALLOW_DOWNLOADS"] = True
+        except Exception:  # noqa: BLE001 — settings may be immutable
+            pass
         window = webview.create_window(
             "DeepCatalog Studio",
-            url,
+            html=html,
+            js_api=DesktopJsApi(),
             width=width,
             height=height,
             min_size=(900, 600),
             text_select=True,
+            background_color="#0e1317",
         )
-        if icon is not None and window is not None:
+        if window is not None:
             events = getattr(window, "events", None)
             shown = getattr(events, "shown", None)
 
-            def _apply_icon() -> None:
-                native = getattr(window, "native", None)
-                setter = getattr(native, "set_icon_from_file", None)
-                if callable(setter):
-                    try:
-                        setter(str(icon))
-                    except Exception as exc:  # noqa: BLE001 — icon is best-effort
-                        logger.debug("Could not set native window icon: %s", exc)
+            def _on_shown() -> None:
+                _apply_window_icon(window, icon)
+                loader = getattr(window, "load_url", None)
+                if callable(loader):
+                    loader(url)
 
             if shown is not None:
-                shown += _apply_icon
-        webview.start()
+                shown += _on_shown
+        start_kwargs: dict = {"debug": False, "private_mode": True}
+        if sys.platform.startswith("linux"):
+            start_kwargs["gui"] = "gtk"
+        if icon is not None:
+            start_kwargs["icon"] = str(icon)
+        webview.start(**start_kwargs)
     except Exception:
         logger.exception(
             "Native WebKitGTK window failed; falling back to a Chromium --app window. "
@@ -517,12 +588,7 @@ def _chromium_result_closes_ui(result: str | None) -> bool | None:
 
 def _launch_ui_window(url: str, *, data_dir: Path, width: int, height: int) -> bool:
     """Open the UI. Return True when the window closed and the process should exit."""
-    chromium_first = prefer_chromium_app_window()
-    backends = (
-        ("chromium-app", "webview", "browser")
-        if chromium_first
-        else ("webview", "chromium-app", "browser")
-    )
+    backends = ("webview", "chromium-app", "browser")
     for backend in backends:
         if backend == "webview":
             if _try_native_window(url, width, height):
@@ -553,9 +619,8 @@ def run_desktop(
 
     Starts a local uvicorn server when nothing healthy is already listening.
     ``headless`` keeps the server in the foreground (systemd / AppImage autostart).
-    Window order: AppImage prefers a chromeless Chromium ``--app`` window
-    (isolated profile, own WM_CLASS). Source installs try pywebview/WebKitGTK
-    first, then Chromium ``--app``, then the default browser.
+    Window order: native pywebview/WebKitGTK first (bundled in the AppImage),
+    then a Chromium ``--app`` window, then the default browser.
     """
     if not logging.getLogger().handlers:
         level_name = os.getenv("DEEPCATALOG_LOG_LEVEL", "warning").strip().upper() or "WARNING"

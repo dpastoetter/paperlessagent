@@ -6,7 +6,9 @@
 #   ./scripts/build-appimage.sh v0.2.9
 #   ./scripts/build-appimage.sh v0.2.9 HEAD
 #
-# Requires: linux x86_64, git, curl, tar, python3, pdftoppm, pdfinfo, patchelf, ldd.
+# Requires: linux x86_64, git, curl, tar, python3, pdftoppm, pdfinfo, patchelf, ldd,
+# gcc, pkg-config, meson, ninja, WebKitGTK 4.1 or 4.0, gobject-introspection, cairo headers
+# (see CI apt list in .github/workflows/release.yml / appimage.yml).
 # Downloads a pinned CPython and appimagetool (SHA-256 verified).
 #
 # Output:
@@ -119,13 +121,30 @@ vendor_binary() {
   fi
 }
 
-lib_excluded() {
+# Host graphics / libc — never vendor (NVIDIA/Mesa/X11 must come from the OS).
+host_lib_excluded() {
   local base="$1"
   case "$base" in
-    libc.so*|libm.so*|libpthread.so*|libdl.so*|librt.so*|libutil.so*|libresolv.so*|libnsl.so*|libcrypt.so*|ld-linux*|libgcc_s.so*|libstdc++.so*|libgtk-*|libwebkit*|libjavascriptcoregtk*|libgdk-*|libgdk_pixbuf*|libpango-*|libpangocairo*|libpangoft*|libsoup-*|libwayland-*|libX11.so*|libXext.so*|libXrender.so*|libXcursor.so*|libXrandr.so*|libXi.so*|libXfixes.so*|libxcb.so*|libgio-2*|libgobject-2*|libglib-2*|libgmodule-2*|libgthread-2*)
+    libc.so*|libm.so*|libpthread.so*|libdl.so*|librt.so*|libutil.so*|libresolv.so*|libnsl.so*|libcrypt.so*|ld-linux*|libgcc_s.so*|libstdc++.so*|libGL.so*|libOpenGL.so*|libGLdispatch.so*|libGLX.so*|libEGL.so*|libGLESv2.so*|libdrm.so*|libgbm.so*|libnvidia-*|libcuda.so*|libwayland-*|libX11.so*|libXext.so*|libXrender.so*|libXcursor.so*|libXrandr.so*|libXi.so*|libXfixes.so*|libXcomposite.so*|libXdamage.so*|libXinerama.so*|libXss.so*|libXtst.so*|libXxf86vm.so*|libXau.so*|libXdmcp.so*|libxcb.so*|libxcb-*)
       return 0
       ;;
   esac
+  return 1
+}
+
+lib_excluded() {
+  local base="$1"
+  if host_lib_excluded "$base"; then
+    return 0
+  fi
+  # Poppler tree stays GTK-free; WebKit/GTK go in deepcatalog-webkit instead.
+  if [ "${VENDOR_MODE:-poppler}" = poppler ]; then
+    case "$base" in
+      libgtk-*|libwebkit*|libjavascriptcoregtk*|libgdk-*|libgdk_pixbuf*|libpango-*|libpangocairo*|libpangoft*|libsoup-*|libgio-2*|libgobject-2*|libglib-2*|libgmodule-2*|libgthread-2*|libgirepository*)
+        return 0
+        ;;
+    esac
+  fi
   return 1
 }
 
@@ -163,6 +182,128 @@ vendor_deps() {
   fi
 }
 
+find_webkit_so() {
+  local so candidate
+  for candidate in \
+    /usr/lib/x86_64-linux-gnu/libwebkit2gtk-4.1.so.0 \
+    /usr/lib64/libwebkit2gtk-4.1.so.0 \
+    /usr/lib/libwebkit2gtk-4.1.so.0 \
+    /usr/lib/x86_64-linux-gnu/libwebkit2gtk-4.0.so.37 \
+    /usr/lib/x86_64-linux-gnu/libwebkit2gtk-4.0.so.0 \
+    /usr/lib64/libwebkit2gtk-4.0.so.0 \
+    /usr/lib/libwebkit2gtk-4.0.so.0
+  do
+    if [ -e "$candidate" ]; then
+      readlink -f "$candidate"
+      return 0
+    fi
+  done
+  so="$(ldconfig -p 2>/dev/null | awk '/libwebkit2gtk-4\.[01]\.so/{print $NF; exit}')"
+  if [ -n "$so" ] && [ -e "$so" ]; then
+    readlink -f "$so"
+    return 0
+  fi
+  return 1
+}
+
+copy_dir_contents() {
+  local src="$1"
+  local dest="$2"
+  [ -d "$src" ] || return 0
+  mkdir -p "$dest"
+  cp -a "$src"/. "$dest/"
+}
+
+vendor_webkit_stack() {
+  local webkit_dest="$1"
+  local webkit_so helper_src helper_name libdir loader_src gi_so so
+  webkit_so="$(find_webkit_so)" || die \
+    "libwebkit2gtk-4.1 (or 4.0) not found. Install libwebkit2gtk-4.1-0 / libwebkit2gtk-4.0-37, gir1.2-webkit2-4.1 or gir1.2-webkit2-4.0, libgirepository1.0-dev, libcairo2-dev, gobject-introspection, gcc."
+
+  echo "Vendoring WebKitGTK from ${webkit_so}"
+  mkdir -p "$webkit_dest"
+  VENDOR_MODE=webkit
+  vendor_deps "$webkit_so" "$webkit_dest"
+
+  libdir="$(dirname "$webkit_so")"
+  helper_src=""
+  helper_name=""
+  if [ -d "$libdir/webkit2gtk-4.1" ]; then
+    helper_src="$libdir/webkit2gtk-4.1"
+    helper_name="webkit2gtk-4.1"
+  elif [ -d "$libdir/webkit2gtk-4.0" ]; then
+    helper_src="$libdir/webkit2gtk-4.0"
+    helper_name="webkit2gtk-4.0"
+  fi
+  if [ -n "$helper_src" ]; then
+    mkdir -p "$APPDIR/usr/lib/$helper_name"
+    cp -a "$helper_src"/. "$APPDIR/usr/lib/$helper_name/"
+    for so in "$APPDIR/usr/lib/$helper_name"/WebKitWebProcess \
+              "$APPDIR/usr/lib/$helper_name"/WebKitNetworkProcess \
+              "$APPDIR/usr/lib/$helper_name"/WebKitGPUProcess \
+              "$APPDIR/usr/lib/$helper_name"/injected-bundle/*.so
+    do
+      [ -f "$so" ] || continue
+      vendor_deps "$so" "$webkit_dest"
+      if command -v patchelf >/dev/null; then
+        patchelf --set-rpath "\$ORIGIN:\$ORIGIN/../deepcatalog-webkit" "$so" 2>/dev/null || true
+      fi
+    done
+  fi
+
+  mkdir -p "$APPDIR/usr/lib/girepository-1.0"
+  copy_dir_contents /usr/lib/x86_64-linux-gnu/girepository-1.0 "$APPDIR/usr/lib/girepository-1.0"
+  copy_dir_contents /usr/lib64/girepository-1.0 "$APPDIR/usr/lib/girepository-1.0"
+  copy_dir_contents /usr/lib/girepository-1.0 "$APPDIR/usr/lib/girepository-1.0"
+  [ -n "$(ls -A "$APPDIR/usr/lib/girepository-1.0" 2>/dev/null)" ] \
+    || die "girepository typelibs missing (install gir1.2-webkit2-4.1 or gir1.2-webkit2-4.0 and gir1.2-gtk-3.0)"
+
+  mkdir -p "$APPDIR/usr/share/glib-2.0/schemas"
+  copy_dir_contents /usr/share/glib-2.0/schemas "$APPDIR/usr/share/glib-2.0/schemas"
+  rm -f "$APPDIR/usr/share/glib-2.0/schemas/gschemas.compiled"
+  if command -v glib-compile-schemas >/dev/null; then
+    glib-compile-schemas "$APPDIR/usr/share/glib-2.0/schemas" 2>/dev/null || true
+  fi
+
+  loader_src="$(find /usr/lib /usr/lib64 -type d -path '*/gdk-pixbuf-2.0/*/loaders' 2>/dev/null | head -1 || true)"
+  if [ -n "$loader_src" ] && [ -d "$loader_src" ]; then
+    mkdir -p "$APPDIR/usr/lib/gdk-pixbuf-2.0/loaders"
+    cp -a "$loader_src"/. "$APPDIR/usr/lib/gdk-pixbuf-2.0/loaders/"
+    for so in "$APPDIR/usr/lib/gdk-pixbuf-2.0/loaders"/*.so; do
+      [ -f "$so" ] || continue
+      vendor_deps "$so" "$webkit_dest"
+      if command -v patchelf >/dev/null; then
+        patchelf --set-rpath "\$ORIGIN/../../deepcatalog-webkit" "$so" 2>/dev/null || true
+      fi
+    done
+  fi
+
+  if [ -d /usr/lib/x86_64-linux-gnu/gio/modules ]; then
+    mkdir -p "$APPDIR/usr/lib/gio/modules"
+    cp -a /usr/lib/x86_64-linux-gnu/gio/modules/. "$APPDIR/usr/lib/gio/modules/" 2>/dev/null || true
+  elif [ -d /usr/lib64/gio/modules ]; then
+    mkdir -p "$APPDIR/usr/lib/gio/modules"
+    cp -a /usr/lib64/gio/modules/. "$APPDIR/usr/lib/gio/modules/" 2>/dev/null || true
+  fi
+  for so in "$APPDIR/usr/lib/gio/modules"/*.so; do
+    [ -f "$so" ] || continue
+    vendor_deps "$so" "$webkit_dest"
+    if command -v patchelf >/dev/null; then
+      patchelf --set-rpath "\$ORIGIN/../../deepcatalog-webkit" "$so" 2>/dev/null || true
+    fi
+  done
+
+  for gi_so in "$APPDIR"/usr/lib/python3.*/site-packages/gi/_gi*.so \
+               "$APPDIR"/usr/lib/python3.*/site-packages/cairo/_cairo*.so; do
+    [ -f "$gi_so" ] || continue
+    vendor_deps "$gi_so" "$webkit_dest"
+    if command -v patchelf >/dev/null; then
+      patchelf --set-rpath "\$ORIGIN/../../../deepcatalog-webkit" "$gi_so" 2>/dev/null || true
+    fi
+  done
+  VENDOR_MODE=poppler
+}
+
 [ "$(uname -s)" = "Linux" ] || die "AppImage builds require Linux"
 [ "$(uname -m)" = "x86_64" ] || die "AppImage builds currently support x86_64 only"
 
@@ -197,7 +338,7 @@ COMMIT="$(git -C "$ROOT" rev-parse "${REF}^{commit}")"
 COMMIT_SHORT="$(git -C "$ROOT" rev-parse --short=12 "$COMMIT")"
 
 rm -rf "$APPDIR" "$DIST/squashfs-root"
-mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib/deepcatalog-native" "$APPDIR/opt/deepcatalog" "$CACHE"
+mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib/deepcatalog-native" "$APPDIR/usr/lib/deepcatalog-webkit" "$APPDIR/opt/deepcatalog" "$CACHE"
 
 echo "Packing commit ${COMMIT_SHORT} as DeepCatalog ${VERSION}"
 
@@ -222,6 +363,9 @@ fi
 if [ ! -f "$SRC/packaging/linux/deepcatalog.png" ]; then
   die "packaging/linux/deepcatalog.png missing from commit ${COMMIT_SHORT}"
 fi
+if [ ! -f "$SRC/packaging/linux/splash.html" ]; then
+  die "packaging/linux/splash.html missing from commit ${COMMIT_SHORT}"
+fi
 
 rewrite_pyproject_version "$SRC/pyproject.toml" "$VERSION"
 
@@ -229,6 +373,7 @@ install -m 0755 "$SRC/packaging/linux/AppRun" "$APPDIR/AppRun"
 install -m 0644 "$SRC/packaging/linux/deepcatalog.desktop" "$APPDIR/deepcatalog.desktop"
 install -m 0644 "$SRC/packaging/linux/deepcatalog.svg" "$APPDIR/deepcatalog.svg"
 install -m 0644 "$SRC/packaging/linux/deepcatalog.png" "$APPDIR/deepcatalog.png"
+install -m 0644 "$SRC/packaging/linux/splash.html" "$APPDIR/splash.html"
 mkdir -p "$APPDIR/usr/share/icons/hicolor/scalable/apps"
 mkdir -p "$APPDIR/usr/share/icons/hicolor/256x256/apps"
 install -m 0644 "$SRC/packaging/linux/deepcatalog.svg" \
@@ -264,9 +409,13 @@ PYTHON="$APPDIR/usr/bin/python3"
 "$PYTHON" -m pip install --no-warn-script-location \
   -c "$SRC/constraints.txt" \
   "$SRC[desktop]"
+"$PYTHON" -m pip install --no-warn-script-location pycairo pygobject \
+  || die "pycairo/PyGObject build failed — install gcc, pkg-config, meson, ninja, libgirepository1.0-dev, libcairo2-dev, gobject-introspection"
 
+VENDOR_MODE=poppler
 vendor_binary "$(command -v pdftoppm)" "$APPDIR/usr/bin" "$APPDIR/usr/lib/deepcatalog-native"
 vendor_binary "$(command -v pdfinfo)" "$APPDIR/usr/bin" "$APPDIR/usr/lib/deepcatalog-native"
+vendor_webkit_stack "$APPDIR/usr/lib/deepcatalog-webkit"
 
 download_verified "$APPIMAGETOOL_URL" "$CACHE/appimagetool-x86_64.AppImage" "$APPIMAGETOOL_SHA256"
 chmod +x "$CACHE/appimagetool-x86_64.AppImage"
@@ -292,6 +441,25 @@ DEEPCATALOG_PROJECT_ROOT="$SMOKE/opt/deepcatalog" \
   PYTHONPATH="$SMOKE/opt/deepcatalog" \
   "$SMOKE/usr/bin/python3" -c "from app.main import app; print(app.version)"
 "$SMOKE/usr/bin/pdftoppm" -v >/dev/null
+GI_TYPELIB_PATH="$SMOKE/usr/lib/girepository-1.0${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}" \
+  LD_LIBRARY_PATH="$SMOKE/usr/lib/deepcatalog-webkit${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+  "$SMOKE/usr/bin/python3" -c "
+import gi
+gi.require_version('Gtk', '3.0')
+ok = False
+for ver in ('4.1', '4.0'):
+    try:
+        gi.require_version('WebKit2', ver)
+        ok = True
+        print('webkit2', ver)
+        break
+    except ValueError:
+        pass
+if not ok:
+    raise SystemExit('WebKit2 typelib missing from AppImage')
+from gi.repository import Gtk, WebKit2
+print('gi-ok', Gtk, WebKit2)
+"
 "$SMOKE/AppRun" --help >/dev/null
 rm -rf "$DIST/squashfs-root"
 
