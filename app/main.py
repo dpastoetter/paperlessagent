@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -19,11 +18,20 @@ from app.deps import (
     MAX_UPLOAD_BYTES,
     MUTATING_METHODS,
     peer_host,
+    rate_limit_ip,
     request_has_valid_token,
     request_is_https,
+    request_presents_credentials,
 )
 from app.routers import build_api_router
 from app.security_headers import apply_browser_security_headers
+from paperless_agent.access_log import install_access_log_redaction
+from paperless_agent.auth_rate_limit import (
+    RATE_LIMIT_DETAIL,
+    get_auth_rate_limiter,
+    log_rate_limited,
+    rate_limit_response_headers,
+)
 from paperless_agent.config import ensure_data_dirs
 from paperless_agent.env_permissions import ensure_dotenv_permissions
 from paperless_agent.inbox_worker import inbox_poll_loop
@@ -31,9 +39,11 @@ from paperless_agent.local_security import (
     COOKIE_NAME,
     assert_bind_allowed,
     auth_required_for_request,
+    effective_bind_host,
     get_api_token,
     host_header_allowed,
     is_direct_loopback_request,
+    remote_auth_must_be_https,
 )
 from paperless_agent.review import recover_stale_processing
 from paperless_agent.sessions import (
@@ -59,7 +69,8 @@ logger = logging.getLogger(__name__)
 async def lifespan(_app: FastAPI):
     ensure_data_dirs()
     ensure_dotenv_permissions(fix=True)
-    assert_bind_allowed(os.getenv("PAPERLESS_HOST", "127.0.0.1"))
+    install_access_log_redaction()
+    assert_bind_allowed(effective_bind_host())
     load_settings()
     recover_stale_processing()
     stop_event = asyncio.Event()
@@ -86,7 +97,7 @@ app = FastAPI(
 
 @app.middleware("http")
 async def security_boundary(request: Request, call_next):
-    """Host allowlist, optional bearer/session auth, CSRF, and browser headers."""
+    """Host allowlist, request-time HTTPS for credentials, auth, CSRF, headers."""
     path = request.url.path
 
     if path.startswith("/api/") or path == "/" or path.startswith("/static/"):
@@ -99,6 +110,27 @@ async def security_boundary(request: Request, call_next):
             )
 
     tcp_peer = peer_host(request)
+    # Reject credentials (and session exchange) from non-loopback clients unless
+    # the request is confirmed HTTPS. Do this before token checks so the secret
+    # is not processed over plain HTTP.
+    if (
+        path.startswith("/api/")
+        and path != "/api/health"
+        and (request_presents_credentials(request) or path == "/api/auth/session")
+        and remote_auth_must_be_https(
+            peer_host=tcp_peer,
+            host_header=request.headers.get("host"),
+            url_scheme=request.url.scheme,
+            x_forwarded_proto=request.headers.get("x-forwarded-proto"),
+        )
+    ):
+        return apply_browser_security_headers(
+            JSONResponse(
+                status_code=403,
+                content={"detail": "HTTPS required"},
+            )
+        )
+
     needs_auth = path.startswith("/api/") and path not in AUTH_EXEMPT_PATHS
     if needs_auth and auth_required_for_request(
         peer_host=tcp_peer,
@@ -116,7 +148,20 @@ async def security_boundary(request: Request, call_next):
                     },
                 )
             )
+        limiter = get_auth_rate_limiter()
+        client_ip = rate_limit_ip(request)
+        allowed, retry_after = limiter.check_api_auth(client_ip)
+        if not allowed:
+            log_rate_limited(client_ip, path, retry_after)
+            return apply_browser_security_headers(
+                JSONResponse(
+                    status_code=429,
+                    content={"detail": RATE_LIMIT_DETAIL},
+                    headers=rate_limit_response_headers(retry_after),
+                )
+            )
         if not request_has_valid_token(request):
+            limiter.record_api_auth_failure(client_ip, path)
             return apply_browser_security_headers(
                 JSONResponse(
                     status_code=401,

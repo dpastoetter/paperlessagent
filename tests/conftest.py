@@ -14,9 +14,17 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import CSRF_HEADER_NAME, CSRF_HEADER_VALUE, app
+from paperless_agent.auth_rate_limit import reset_auth_rate_limiter
 from paperless_agent.config import ensure_data_dirs
 from paperless_agent.privacy import clear_privacy_cache
 from paperless_agent.settings import clear_settings_cache, load_settings
+
+
+@pytest.fixture(autouse=True)
+def _reset_auth_rate_limiter():
+    reset_auth_rate_limiter()
+    yield
+    reset_auth_rate_limiter()
 
 
 @pytest.fixture()

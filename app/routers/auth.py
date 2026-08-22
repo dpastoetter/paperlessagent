@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
-from app.deps import peer_host, request_is_https, require_cloud_disclaimer_or_403
+from app.deps import peer_host, rate_limit_ip, request_is_https, require_cloud_disclaimer_or_403
 from app.schemas import (
     ApiKeyRequest,
     CloudDisclaimerRequest,
@@ -20,6 +20,12 @@ from app.schemas import (
 )
 from paperless_agent import config
 from paperless_agent.auth import codex_auth_status
+from paperless_agent.auth_rate_limit import (
+    RATE_LIMIT_DETAIL,
+    get_auth_rate_limiter,
+    log_rate_limited,
+    rate_limit_response_headers,
+)
 from paperless_agent.codex_oauth import (
     clear_auth,
     complete_oauth_login_manual,
@@ -87,9 +93,21 @@ def api_session_exchange(
     """Exchange PAPERLESS_API_TOKEN for an HttpOnly session cookie (secret never stored in JS)."""
     if not get_api_token():
         raise HTTPException(status_code=400, detail="PAPERLESS_API_TOKEN is not configured")
+    limiter = get_auth_rate_limiter()
+    client_ip = rate_limit_ip(request)
+    allowed, retry_after = limiter.check_session(client_ip)
+    if not allowed:
+        log_rate_limited(client_ip, request.url.path, retry_after)
+        raise HTTPException(
+            status_code=429,
+            detail=RATE_LIMIT_DETAIL,
+            headers=rate_limit_response_headers(retry_after),
+        )
     raw = exchange_api_token(body.token)
     if not raw:
+        limiter.record_session_failure(client_ip)
         raise HTTPException(status_code=401, detail="invalid API token")
+    limiter.record_session_success(client_ip)
     attach_session_cookie(response, raw, secure=request_is_https(request))
     return {
         "status": "success",

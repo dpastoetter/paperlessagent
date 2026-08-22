@@ -12,13 +12,19 @@ def test_render_unit_file_includes_paths(tmp_path, monkeypatch):
     project.mkdir()
     venv_bin = project / ".venv" / "bin"
     venv_bin.mkdir(parents=True)
+    (venv_bin / "python").write_text("#!/bin/sh\n", encoding="utf-8")
     (venv_bin / "uvicorn").write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv("PAPERLESS_HOST", "127.0.0.1")
+    monkeypatch.setenv("PAPERLESS_PORT", "8080")
     monkeypatch.setattr(system_service.config, "PROJECT_ROOT", project)
     monkeypatch.setattr(system_service.config, "DATA_DIR", project / "data")
 
     text = system_service.render_unit_file()
     assert f"WorkingDirectory={project}" in text
-    assert f"ExecStart={venv_bin / 'uvicorn'}" in text
+    assert (
+        f"ExecStart={venv_bin / 'python'} -m paperless_agent.serve --host 127.0.0.1 --port 8080"
+        in text
+    )
     assert "Environment=PAPERLESS_SYSTEMD=1" in text
     assert "WantedBy=default.target" in text
 
@@ -30,6 +36,8 @@ def test_render_unit_file_appimage(tmp_path, monkeypatch):
     data.mkdir()
     monkeypatch.setenv("APPIMAGE", str(image))
     monkeypatch.setenv("PAPERLESS_APPIMAGE", "1")
+    monkeypatch.setenv("PAPERLESS_HOST", "127.0.0.1")
+    monkeypatch.setenv("PAPERLESS_PORT", "8080")
     monkeypatch.setattr(system_service.config, "PROJECT_ROOT", tmp_path / "opt")
     monkeypatch.setattr(system_service.config, "DATA_DIR", data)
 
@@ -52,9 +60,12 @@ def test_set_autostart_enable_writes_unit_and_enables(tmp_path, monkeypatch):
     project.mkdir()
     venv_bin = project / ".venv" / "bin"
     venv_bin.mkdir(parents=True)
+    (venv_bin / "python").write_text("#!/bin/sh\n", encoding="utf-8")
     (venv_bin / "uvicorn").write_text("#!/bin/sh\n", encoding="utf-8")
     unit_file = tmp_path / "systemd-user" / system_service.UNIT_NAME
 
+    monkeypatch.setenv("PAPERLESS_HOST", "127.0.0.1")
+    monkeypatch.setenv("PAPERLESS_PORT", "8080")
     monkeypatch.setattr(system_service.config, "PROJECT_ROOT", project)
     monkeypatch.setattr(system_service.config, "DATA_DIR", project / "data")
     monkeypatch.setattr(system_service, "_systemd_available", lambda: True)
@@ -122,6 +133,7 @@ def test_set_autostart_disable_calls_systemctl(tmp_path, monkeypatch):
     project.mkdir()
     venv_bin = project / ".venv" / "bin"
     venv_bin.mkdir(parents=True)
+    (venv_bin / "python").write_text("#!/bin/sh\n", encoding="utf-8")
     (venv_bin / "uvicorn").write_text("#!/bin/sh\n", encoding="utf-8")
 
     monkeypatch.setattr(system_service.config, "PROJECT_ROOT", project)

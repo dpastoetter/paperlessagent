@@ -21,34 +21,36 @@ export function archiveShellHtml() {
           <div class="archive-toolbar-top">
             <label class="field grow">
               <span>Search</span>
-              <input type="search" id="search-q" placeholder="Acme, invoice, tax…" autocomplete="off" />
+              <input type="search" id="search-q" placeholder="Keywords, invoice number, topic…" autocomplete="off" />
             </label>
-            <button type="button" class="btn ghost compact" id="archive-filters-toggle" aria-expanded="false" aria-controls="archive-filters-panel">
-              <span class="archive-filters-toggle-label">Filters</span>
-              <span class="archive-filter-count" id="archive-filter-count" hidden></span>
-            </button>
-            <button type="submit" class="btn secondary">
-              <svg class="icon" aria-hidden="true"><use href="#i-search" /></svg>
-              Search
-            </button>
-            <button type="button" class="btn ghost" id="search-clear" hidden>Clear filters</button>
+            <div class="archive-toolbar-actions">
+              <button type="button" class="btn ghost compact" id="archive-filters-toggle" aria-expanded="false" aria-controls="archive-filters-panel">
+                <span class="archive-filters-toggle-label">Filters</span>
+                <span class="archive-filter-count" id="archive-filter-count" hidden></span>
+              </button>
+              <button type="submit" class="btn secondary">
+                <svg class="icon" aria-hidden="true"><use href="#i-search" /></svg>
+                Search
+              </button>
+              <button type="button" class="btn ghost" id="search-clear" hidden>Clear filters</button>
+            </div>
           </div>
           <div class="archive-filters-panel" id="archive-filters-panel">
-            <label class="field narrow">
+            <label class="field">
               <span>Category</span>
               <select id="search-type">
                 <option value="">Any</option>
               </select>
             </label>
-            <label class="field narrow">
+            <label class="field archive-filter-party">
               <span>People / organization</span>
-              <input type="text" id="search-counterparty" placeholder="Acme, Dr. Weber…" autocomplete="off" />
+              <input type="text" id="search-counterparty" placeholder="Name or organization…" autocomplete="off" />
             </label>
-            <label class="field narrow">
+            <label class="field archive-filter-date">
               <span>Date from</span>
               <input type="date" id="search-date-from" />
             </label>
-            <label class="field narrow">
+            <label class="field archive-filter-date">
               <span>Date to</span>
               <input type="date" id="search-date-to" />
             </label>

@@ -11,11 +11,13 @@ from typing import Any
 
 from paperless_agent import config
 from paperless_agent.config import running_as_appimage
-from paperless_agent.local_security import assert_bind_allowed, ssl_cert_paths
+from paperless_agent.local_security import (
+    assert_bind_allowed,
+    configured_bind_host,
+    configured_bind_port,
+)
 
 UNIT_NAME = "paperlessagent.service"
-DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 8080
 
 
 def _is_linux() -> bool:
@@ -49,6 +51,10 @@ def unit_path() -> Path:
     return Path.home() / ".config" / "systemd" / "user" / UNIT_NAME
 
 
+def venv_python() -> Path:
+    return config.PROJECT_ROOT / ".venv" / "bin" / "python"
+
+
 def uvicorn_binary() -> Path:
     return config.PROJECT_ROOT / ".venv" / "bin" / "uvicorn"
 
@@ -62,16 +68,11 @@ def appimage_exec_path() -> str | None:
 
 
 def service_host() -> str:
-    return (os.getenv("PAPERLESS_HOST") or DEFAULT_HOST).strip() or DEFAULT_HOST
+    return configured_bind_host()
 
 
 def service_port() -> int:
-    raw = (os.getenv("PAPERLESS_PORT") or str(DEFAULT_PORT)).strip()
-    try:
-        port = int(raw)
-    except ValueError:
-        return DEFAULT_PORT
-    return port if port > 0 else DEFAULT_PORT
+    return configured_bind_port()
 
 
 def service_url() -> str:
@@ -172,13 +173,8 @@ RestartSec=5
 WantedBy=default.target
 """
 
-    uvicorn = uvicorn_binary()
+    python = venv_python()
     workdir = config.PROJECT_ROOT
-    ssl_paths = ssl_cert_paths()
-    ssl_args = ""
-    if ssl_paths:
-        cert, key = ssl_paths
-        ssl_args = f" --ssl-certfile {cert} --ssl-keyfile {key}"
     return f"""[Unit]
 Description=PaperlessAgent local document assistant
 After=network-online.target
@@ -188,7 +184,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory={workdir}
 {env_lines}
-ExecStart={uvicorn} app.main:app --host {host} --port {port}{ssl_args}
+ExecStart={python} -m paperless_agent.serve --host {host} --port {port}
 Restart=on-failure
 RestartSec=5
 
@@ -237,7 +233,7 @@ def _port_is_free(host: str, port: int) -> bool:
 def autostart_status() -> dict[str, Any]:
     """Return autostart / systemd status for the Settings UI."""
     supported = _systemd_available()
-    uvicorn = uvicorn_binary()
+    python = venv_python()
     status: dict[str, Any] = {
         "supported": supported,
         "platform": sys.platform,
@@ -252,7 +248,7 @@ def autostart_status() -> dict[str, Any]:
         "port": service_port(),
         "url": service_url(),
         "project_root": str(config.PROJECT_ROOT),
-        "uvicorn_path": str(uvicorn),
+        "uvicorn_path": str(uvicorn_binary()),
         "error": None,
         "install_hint": None,
     }
@@ -271,9 +267,9 @@ def autostart_status() -> dict[str, Any]:
         status["enabled"] = _unit_enabled()
         status["active"] = _unit_active()
         return status
-    if not uvicorn.is_file():
+    if not python.is_file():
         status["error"] = (
-            f"Virtualenv not found at {uvicorn}. "
+            f"Virtualenv not found at {python}. "
             "Run the installer or create .venv before enabling autostart."
         )
         status["install_hint"] = (

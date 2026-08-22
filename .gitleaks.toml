@@ -1,0 +1,17 @@
+# Keep default gitleaks rules; only skip fixtures / lockfiles / example env.
+title = "PaperlessAgent"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures, lockfiles, and example env files"
+paths = [
+  '''(^|/)tests/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)\.venv/''',
+  '''package-lock\.json$''',
+  '''constraints\.txt$''',
+  '''\.env\.example$''',
+  '''(^|/)docs/''',
+]

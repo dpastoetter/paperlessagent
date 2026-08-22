@@ -38,7 +38,8 @@ describe("view shells", () => {
     ]) {
       expect(html).toContain(`id="${id}"`);
     }
-    expect(html).not.toContain(`id="archive-drawer"`);
+    expect(html).toContain('class="archive-toolbar-actions"');
+    expect(html).toContain('archive-filter-date');
 
     const drawer = archiveDrawerHtml();
     expect(drawer).toContain(`id="archive-drawer"`);

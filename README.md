@@ -55,9 +55,10 @@ The recommended Linux desktop install is the **AppImage** (no Python/venv setup)
 
 ### Linux AppImage
 
-Download the `x86_64` AppImage from [GitHub Releases](https://github.com/dpastoetter/paperlessagent/releases/latest) (glibc 2.35+ — Ubuntu 22.04, Fedora 36, Debian 12, and newer). Poppler is bundled. The native window needs **WebKitGTK** on the host; if it is missing, the AppImage starts the local server and opens your default browser.
+Download the `x86_64` AppImage from [GitHub Releases](https://github.com/dpastoetter/paperlessagent/releases/latest) (glibc 2.35+ — Ubuntu 22.04, Fedora 36, Debian 12, and newer). Poppler is bundled. On first launch the AppImage installs a `.desktop` entry (`StartupWMClass=PaperlessAgent`) so the window groups under its own icon. It prefers a native **WebKitGTK** window; if that fails it opens a chromeless **Brave/Chrome/Chromium** `--app` window (profile in `~/.local/share/paperlessagent/chromium-profile`). Only if no Chromium-based browser is found does it fall back to your default browser.
 
 ```bash
+# Optional: native GTK window (otherwise Brave/Chrome --app is used)
 # Fedora / RHEL
 sudo dnf install webkit2gtk4.1
 # Debian / Ubuntu
@@ -178,7 +179,7 @@ From a venv install, after `pip install -e '.[desktop]' -c constraints.txt` (nee
 python -m paperless_agent.desktop
 ```
 
-The desktop wrapper respects `PAPERLESS_HOST`, `PAPERLESS_PORT`, and `PAPERLESS_LOG_LEVEL`. Pass `--headless` to keep the server in the foreground without a window (used by the AppImage systemd unit).
+The desktop wrapper respects `PAPERLESS_HOST`, `PAPERLESS_PORT`, and `PAPERLESS_LOG_LEVEL`. Pass `--headless` to keep the server in the foreground without a window (used by the AppImage systemd unit). On Linux it installs `~/.local/share/applications/paperlessagent.desktop` on launch. If WebKitGTK is missing, it uses Brave/Chrome/Chromium `--app` before falling back to a normal browser tab.
 
 ### Manual setup
 
@@ -270,19 +271,21 @@ If `PAPERLESS_LLM_PROVIDER` is unset, the app auto-selects OpenAI when a key/Cod
 
 ## Run the web app
 
-Always activate the project venv first so you use its `uvicorn` and packages, not the system ones:
+Always activate the project venv first so you use its packages, not the system ones:
 
 ```bash
 cd ~/paperlessagent   # or your install directory
 source .venv/bin/activate
-uvicorn app.main:app --host 127.0.0.1 --port 8080
+python -m paperless_agent.serve --host 127.0.0.1 --port 8080
 ```
+
+That owned entry records `PAPERLESS_HOST` / `PAPERLESS_PORT` and starts uvicorn with the same values, so the bind-address security check cannot drift from the socket. `uvicorn app.main:app --host …` still works; lifespan reads uvicorn’s real `--host` (not a defaulted env var) and refuses a network bind unless network mode is fully configured.
 
 | Symptom | Fix |
 | --- | --- |
 | `.venv/bin/activate: No such file or directory` | Re-run the installer. On Debian/Ubuntu also install `python3-venv`, then remove a broken leftover with `rm -rf ~/paperlessagent/.venv` and install again |
 | `ModuleNotFoundError: No module named 'fastapi'` | Same — dependencies were never installed into `.venv`, or the venv was not activated |
-| Port already in use | Stop the other instance: `pkill -f "uvicorn app.main:app"`, or pick another port with `--port 8081` and `PAPERLESS_PORT=8081` |
+| Port already in use | Stop the other instance: `pkill -f "paperless_agent.serve"` / `pkill -f "uvicorn app.main:app"`, or pick another port with `--port 8081` and `PAPERLESS_PORT=8081` |
 | Ollama OCR times out on CPU | Raise `PAPERLESS_OLLAMA_OCR_PAGE_TIMEOUT` (default 900s) or lower `PAPERLESS_OLLAMA_OCR_MAX_IMAGE_PX` (default 1024); see [OCR tuning](#ocr-and-long-documents) |
 | Find details fails with “invalid JSON” | Usually empty/malformed model output — retry the file; with ChatGPT OAuth confirm a Codex model is selected and you are signed in |
 
@@ -296,9 +299,9 @@ Uvicorn should bind to `127.0.0.1` (the default). The API has no user login; mut
 2. `PAPERLESS_API_TOKEN=…`
 3. `PAPERLESS_SSL_CERTFILE` + `PAPERLESS_SSL_KEYFILE` pointing at existing PEM files (HTTPS on the uvicorn process)
 
-A token over plain HTTP on a LAN can be intercepted; network mode therefore requires TLS on the app itself. Prefer keeping the app on loopback and terminating TLS on a reverse proxy instead (see [Network access (TLS reverse proxy)](#network-access-tls-reverse-proxy)).
+A token over plain HTTP on a LAN can be intercepted; network mode therefore requires TLS on the app itself. Prefer keeping the app on loopback and terminating TLS on a reverse proxy instead (see [Network access (TLS reverse proxy)](#network-access-tls-reverse-proxy)). Credentials from non-loopback clients are refused unless the request is HTTPS (`X-Forwarded-Proto` is honored only for `PAPERLESS_TRUSTED_PROXIES`).
 
-With a token configured, every `/api/*` route except health/session bootstrap requires either `Authorization: Bearer <PAPERLESS_API_TOKEN>` (machine clients) or an HttpOnly `pa_session` cookie. Browser sessions are **random ids** created by `POST /api/auth/session` (or automatically for a **direct** loopback browser — loopback TCP peer and loopback Host, never via a reverse proxy). The long-lived API secret is never injected into JavaScript, reused as the cookie value, or accepted in a URL query string. Host headers are allowlisted (`PAPERLESS_ALLOWED_HOSTS`, defaulting to localhost / loopback) to harden against DNS rebinding. `X-Forwarded-*` is used only to recover the client IP / HTTPS scheme from a listed `PAPERLESS_TRUSTED_PROXIES` hop; it is never an authentication signal.
+With a token configured, every `/api/*` route except health/session bootstrap requires either `Authorization: Bearer <PAPERLESS_API_TOKEN>` (machine clients) or an HttpOnly `pa_session` cookie. Browser sessions are **random ids** created by `POST /api/auth/session` (or automatically for a **direct** loopback browser — loopback TCP peer and loopback Host, never via a reverse proxy). The long-lived API secret is never injected into JavaScript, reused as the cookie value, or accepted in a URL query string (`?token=` is ignored). Session creation and failed token checks are rate-limited per client IP (stricter on `POST /api/auth/session`); repeated failures are logged without the secret. Uvicorn access logs omit query strings so a pasted secret cannot land in log files. Host headers are allowlisted (`PAPERLESS_ALLOWED_HOSTS`, defaulting to localhost / loopback) to harden against DNS rebinding. `X-Forwarded-*` is used only to recover the client IP / HTTPS scheme from a listed `PAPERLESS_TRUSTED_PROXIES` hop; it is never an authentication signal.
 
 ```bash
 python -c "from paperless_agent.local_security import generate_api_token; print(generate_api_token())"
@@ -349,7 +352,7 @@ server {
 
 4. Example **Traefik** (label-style): route HTTPS entrypoint → `http://127.0.0.1:8080`, and only then set `PAPERLESS_TRUSTED_PROXIES` to the Traefik container/host IP.
 
-Do **not** set `PAPERLESS_TRUSTED_PROXIES=0.0.0.0/0`. Only list the proxy addresses that terminate TLS. Public/proxied browsers always use the session unlock panel (or Bearer token); localhost auto-login does not apply behind the proxy.
+Do **not** set `PAPERLESS_TRUSTED_PROXIES=0.0.0.0/0` (or `::/0`); those catch-alls are ignored. Only list the proxy addresses that terminate TLS. Public/proxied browsers always use the session unlock panel (or Bearer token); localhost auto-login does not apply behind the proxy.
 
 If you truly need uvicorn itself on a non-loopback address, use network mode with app-level TLS:
 
@@ -359,15 +362,14 @@ PAPERLESS_ALLOW_REMOTE=1
 PAPERLESS_API_TOKEN=…
 PAPERLESS_SSL_CERTFILE=/path/to/fullchain.pem
 PAPERLESS_SSL_KEYFILE=/path/to/privkey.pem
-uvicorn app.main:app --host 0.0.0.0 --port 8443 \
-  --ssl-certfile "$PAPERLESS_SSL_CERTFILE" --ssl-keyfile "$PAPERLESS_SSL_KEYFILE"
+python -m paperless_agent.serve --host 0.0.0.0 --port 8443
 ```
 
 ### Autostart at boot (Linux + systemd)
 
 **Settings → Autostart → Start PaperlessAgent when the system boots** installs a user systemd unit at `~/.config/systemd/user/paperlessagent.service`, runs `loginctl enable-linger` so the service can start without an interactive login, and starts the unit if port 8080 is free.
 
-The unit reads your install’s `.env`, sets `DATA_DIR`, and uses the venv `uvicorn` from the project root. Customize bind address/port with `PAPERLESS_HOST` and `PAPERLESS_PORT` in `.env` before enabling autostart.
+The unit reads your install’s `.env`, sets `DATA_DIR`, and starts `python -m paperless_agent.serve` from the project venv (same host/port as `PAPERLESS_HOST` / `PAPERLESS_PORT`). Customize bind address/port in `.env` before enabling autostart.
 
 Manual control:
 
@@ -402,7 +404,7 @@ Filing rules (source folder, category → folder mapping, poll interval, OCR acc
 
 Progress updates stream over `GET /api/process/events` (SSE). The workflow UI mounts once and patches in place to avoid flicker during rapid updates. Hover a pipeline step for a short description of what that stage does (and live detail while it is running). The strip stays on one row (labels wrap inside equal-height boxes; no horizontal scrollbar).
 
-LLM prompts wrap OCR and retrieved snippets in **per-request** `BEGIN_UNTRUSTED_*_<token>` markers so a document cannot close the untrusted region by embedding a fixed delimiter. Extracted metadata and Ask replies are length-clamped in code.
+LLM prompts wrap OCR and retrieved snippets in **per-request** `BEGIN_UNTRUSTED_*_<token>` markers. Delimiter lookalikes inside the document (`BEGIN_UNTRUSTED_DOCUMENT`, `END_UNTRUSTED_DOCUMENT`, nested `_hex` fakes) are rewritten before wrapping so they cannot close the region. Extracted metadata and Ask replies are length-clamped in code; model output is treated as untrusted.
 
 ### Metadata & review fields
 
@@ -475,7 +477,7 @@ Override the release source with `PAPERLESS_UPDATE_REPO=owner/repo` if you fork 
 
 GitHub Actions **packages the Linux AppImage as part of the release SDLC**: quality gate → dependency audit → AppImage (Ubuntu 22.04 / glibc 2.35+) → tarball + checksums → attach everything to the GitHub Release. That runs when you:
 
-- push a version tag (`git tag v0.3.0 && git push origin v0.3.0`)
+- push a version tag (`git tag v0.3.1 && git push origin v0.3.1`)
 - publish a GitHub Release in the UI (or `gh release create`) for a `v*` tag
 - run **Actions → Release → Run workflow** with the tag (rebuild / replace assets)
 
@@ -509,6 +511,8 @@ git checkout v0.2.0
 pip install -e ".[dev]" -c constraints.txt   # pytest, pytest-cov, ruff, mypy, pip-tools
 ./scripts/ci.sh                 # quality gate (format, lint, pip check, mypy, JS, Vitest, pytest+coverage)
 ./scripts/dependency-audit.sh   # pip-audit (OSV) + npm audit
+./scripts/secret-scan.sh        # gitleaks (pinned binary, checksum-verified)
+./scripts/sast-scan.sh          # Semgrep ERROR-severity (Python + JavaScript)
 ./scripts/precommit.sh          # secret guard + CI gate (also usable as a git hook)
 ```
 
@@ -536,7 +540,7 @@ The pre-commit gate refuses commits containing `.env` files, databases, `data/` 
 
 Installers still call `pip install -r requirements.txt` / `requirements-desktop.txt`, which are thin wrappers around those constrained editable installs (not a second dependency list).
 
-Pull requests and pushes to `main` run [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (`scripts/ci.sh`, `scripts/dependency-audit.sh` / pip-audit+OSV + npm audit, and CodeQL). Version tags and published GitHub Releases run the same quality and dependency gates on the **exact tagged commit**, then pack the Linux AppImage and publish assets ([`.github/workflows/release.yml`](.github/workflows/release.yml)). Workflows pin Actions to full commit SHAs and grant `contents: write` only to the release publish job.
+Pull requests and pushes to `main` run [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (`scripts/ci.sh` plus the reusable [security workflow](.github/workflows/security.yml): `pip-audit`/OSV + npm audit, gitleaks, Semgrep, and CodeQL). Version tags and published GitHub Releases run the same quality and security gates on the **exact tagged commit**, then pack the Linux AppImage and publish assets ([`.github/workflows/release.yml`](.github/workflows/release.yml)). Workflows pin Actions to full commit SHAs and grant `contents: write` only to the release publish job. Dependabot opens weekly PRs for GitHub Actions and pip, and monthly PRs for npm.
 
 ### ADK agents (debug, localhost only)
 
@@ -573,13 +577,16 @@ paperless_agent/       # ingest pipeline, review queue, dedup, updater, auth/llm
   dedup.py             #   checksum + content-hash + similarity duplicate detection
   ollama_setup.py      #   Ollama probe, model pull, CPU/GPU summary, provider switch
   system_service.py    #   systemd user unit for boot autostart
+  serve.py             #   owned uvicorn entry (bind host + security policy stay aligned)
+  access_log.py        #   strip query strings from uvicorn access logs
+  auth_rate_limit.py   #   per-IP backoff for session exchange and failed token checks
   updater.py           #   self-update from GitHub releases
 query_agent/           # RAG Q&A agent
 app/                   # FastAPI app (main.py + routers/) and ES-module UI (static/)
   routers/             #   documents, reviews, settings, processing, auth, updates
   schemas.py           #   request/response models
   static/              #   api.js, inbox.js, review.js, settings.js, events.js, keyboard.js, pdf-preview.js, …
-scripts/               # install.sh, install.ps1, make-release-assets.sh, build-appimage.sh, ci.sh, precommit.sh, watch_inbox.py
+scripts/               # install.sh, install.ps1, ci.sh, dependency-audit.sh, secret-scan.sh, sast-scan.sh, precommit.sh, watch_inbox.py, …
 packaging/linux/       # AppImage AppRun, .desktop, icon
 tests/                 # pytest (Python) + tests/frontend (Vitest)
 docs/screenshots/      # README screenshots (generated with mockup mode)
@@ -591,7 +598,7 @@ data/                  # created at runtime (gitignored)
 Regenerate README screenshots (server must be running on port 8080):
 
 ```bash
-# uvicorn app.main:app --host 127.0.0.1 --port 8080
+# python -m paperless_agent.serve --host 127.0.0.1 --port 8080
 npm install --no-save playwright   # first time
 npx playwright install chromium    # first time
 node scripts/capture-screenshots.mjs

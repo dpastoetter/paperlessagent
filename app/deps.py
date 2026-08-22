@@ -47,15 +47,20 @@ def peer_host(request: Request) -> str | None:
 
 def client_host(request: Request) -> str | None:
     """
-    End-user client host for logging / forwarded HTTPS detection.
+    End-user client host for logging / forwarded HTTPS detection / rate limits.
 
     Honors X-Forwarded-For only when the TCP peer is listed in
-    PAPERLESS_TRUSTED_PROXIES. Never use this for authentication decisions.
+    PAPERLESS_TRUSTED_PROXIES. Never use this to grant authentication.
     """
     return forwarded_client_host(
         peer_host=peer_host(request),
         x_forwarded_for=request.headers.get("x-forwarded-for"),
     )
+
+
+def rate_limit_ip(request: Request) -> str:
+    """Client IP used for auth rate limits (trusted-proxy XFF when applicable)."""
+    return (client_host(request) or peer_host(request) or "unknown").strip() or "unknown"
 
 
 def request_is_https(request: Request) -> bool:
@@ -66,11 +71,21 @@ def request_is_https(request: Request) -> bool:
     )
 
 
+def request_presents_credentials(request: Request) -> bool:
+    """True when the request carries a Bearer header or a pa_session cookie."""
+    if (request.headers.get(AUTH_HEADER) or "").strip():
+        return True
+    cookie = request.cookies.get(COOKIE_NAME)
+    return bool(cookie and str(cookie).strip())
+
+
 def request_has_valid_token(request: Request) -> bool:
     """
     Authenticate via Bearer PAPERLESS_API_TOKEN (machine clients) or pa_session cookie.
 
     The cookie must be a random session id — never the long-lived API secret.
+    Query parameters (``token``, ``access_token``, …) are never authentication;
+    they leak via history, Referer, proxies, and access logs.
     """
     expected = get_api_token()
     if not expected:

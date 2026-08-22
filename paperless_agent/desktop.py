@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import shutil
 import signal
@@ -19,13 +20,27 @@ import uvicorn
 from dotenv import load_dotenv
 
 from paperless_agent.env_permissions import harden_secret_file, write_secret_text
-from paperless_agent.local_security import assert_bind_allowed, ssl_cert_paths
+from paperless_agent.local_security import assert_bind_allowed, ssl_cert_paths, sync_configured_bind
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_WIDTH = 1280
 DEFAULT_HEIGHT = 840
 HEALTH_TIMEOUT_S = 30.0
 HEALTH_POLL_S = 0.15
+WM_CLASS = "PaperlessAgent"
+DESKTOP_FILE_NAME = "paperlessagent.desktop"
+ICON_THEME_NAME = "paperlessagent"
+CHROMIUM_HANDOFF_S = 2.5
+CHROMIUM_BINARIES = (
+    "brave-browser",
+    "brave",
+    "google-chrome-stable",
+    "google-chrome",
+    "chromium-browser",
+    "chromium",
+)
+
+logger = logging.getLogger(__name__)
 
 
 def _project_root() -> Path:
@@ -112,6 +127,7 @@ def _start_uvicorn(host: str, port: int) -> uvicorn.Server:
     # Import app only after DATA_DIR / env are prepared so config picks them up.
     from app.main import app
 
+    sync_configured_bind(host, port)
     ssl_paths = ssl_cert_paths()
     uv_kwargs: dict = {
         "app": app,
@@ -153,6 +169,229 @@ def _wait_for_server(server: uvicorn.Server) -> None:
         time.sleep(0.25)
 
 
+def xdg_data_home() -> Path:
+    raw = os.getenv("XDG_DATA_HOME", "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return Path.home() / ".local" / "share"
+
+
+def window_icon_path() -> Path | None:
+    """PNG preferred (GTK window icon), then SVG. AppImage overlay first."""
+    names = ("paperlessagent.png", "paperlessagent.svg")
+    candidates: list[Path] = []
+    appdir = os.getenv("APPDIR", "").strip()
+    if appdir:
+        root = Path(appdir)
+        for name in names:
+            candidates.append(root / name)
+            candidates.append(root / "usr/share/icons/hicolor/256x256/apps" / name)
+            candidates.append(root / "usr/share/icons/hicolor/scalable/apps" / name)
+    project = _project_root()
+    for name in names:
+        candidates.append(project / "packaging" / "linux" / name)
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
+def _quote_desktop_exec_arg(value: str) -> str:
+    if value and all(ch.isalnum() or ch in "/._-+:@" for ch in value):
+        return value
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    return f'"{escaped}"'
+
+
+def desktop_exec_command() -> str:
+    """Exec= line for the user .desktop file (AppImage path, or this interpreter)."""
+    image = os.getenv("APPIMAGE", "").strip()
+    if image and Path(image).is_file():
+        return _quote_desktop_exec_arg(str(Path(image).resolve()))
+    return " ".join(
+        [
+            _quote_desktop_exec_arg(sys.executable),
+            "-m",
+            "paperless_agent.desktop",
+        ]
+    )
+
+
+def render_desktop_entry(*, exec_line: str, icon: str = ICON_THEME_NAME) -> str:
+    return (
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Version=1.1\n"
+        "Name=PaperlessAgent\n"
+        "Comment=Local-first document agent\n"
+        f"Exec={exec_line}\n"
+        f"Icon={icon}\n"
+        "Terminal=false\n"
+        "Categories=Office;Scanning;Utility;\n"
+        "StartupNotify=true\n"
+        f"StartupWMClass={WM_CLASS}\n"
+        "MimeType=application/pdf;image/png;image/jpeg;image/tiff;image/webp;\n"
+        "Keywords=OCR;PDF;documents;archive;RAG;\n"
+    )
+
+
+def _copy_icon_into_hicolor(src: Path, data_home: Path) -> Path | None:
+    name = src.name.lower()
+    if name.endswith(".png"):
+        dest = data_home / "icons" / "hicolor" / "256x256" / "apps" / "paperlessagent.png"
+    elif name.endswith(".svg"):
+        dest = data_home / "icons" / "hicolor" / "scalable" / "apps" / "paperlessagent.svg"
+    else:
+        return None
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest)
+    return dest
+
+
+def install_linux_desktop_entry() -> Path | None:
+    """Install ~/.local/share/applications/paperlessagent.desktop and themed icons."""
+    if not sys.platform.startswith("linux"):
+        return None
+    data_home = xdg_data_home()
+    applications = data_home / "applications"
+    applications.mkdir(parents=True, exist_ok=True)
+
+    icon_field = ICON_THEME_NAME
+    png = None
+    svg = None
+    icon_src = window_icon_path()
+    appdir = os.getenv("APPDIR", "").strip()
+    search: list[Path] = []
+    if icon_src is not None:
+        search.append(icon_src)
+    if appdir:
+        search.extend(
+            [
+                Path(appdir) / "paperlessagent.png",
+                Path(appdir) / "paperlessagent.svg",
+                Path(appdir) / "usr/share/icons/hicolor/256x256/apps/paperlessagent.png",
+                Path(appdir) / "usr/share/icons/hicolor/scalable/apps/paperlessagent.svg",
+            ]
+        )
+    project_packaging = _project_root() / "packaging" / "linux"
+    search.extend(
+        [
+            project_packaging / "paperlessagent.png",
+            project_packaging / "paperlessagent.svg",
+        ]
+    )
+    seen: set[Path] = set()
+    for src in search:
+        resolved = src.resolve() if src.exists() else src
+        if resolved in seen or not src.is_file():
+            continue
+        seen.add(resolved)
+        copied = _copy_icon_into_hicolor(src, data_home)
+        if copied is None:
+            continue
+        if copied.suffix == ".png" and png is None:
+            png = copied
+        if copied.suffix == ".svg" and svg is None:
+            svg = copied
+    if png is not None:
+        icon_field = str(png)
+    elif svg is not None:
+        icon_field = str(svg)
+
+    dest = applications / DESKTOP_FILE_NAME
+    text = render_desktop_entry(exec_line=desktop_exec_command(), icon=icon_field)
+    if dest.is_file() and dest.read_text(encoding="utf-8") == text:
+        return dest
+    dest.write_text(text, encoding="utf-8")
+    try:
+        dest.chmod(0o644)
+    except OSError:
+        pass
+    updater = shutil.which("update-desktop-database")
+    if updater:
+        subprocess.run(  # noqa: S603
+            [updater, str(applications)],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    logger.info("Installed desktop entry %s", dest)
+    return dest
+
+
+def find_chromium_app_browser() -> str | None:
+    for name in CHROMIUM_BINARIES:
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
+
+
+def chromium_profile_dir(data_dir: Path) -> Path:
+    return Path(data_dir) / "chromium-profile"
+
+
+def chromium_app_argv(
+    browser: str,
+    url: str,
+    profile: Path,
+    *,
+    width: int,
+    height: int,
+) -> list[str]:
+    profile.mkdir(parents=True, exist_ok=True)
+    return [
+        browser,
+        f"--app={url}",
+        f"--user-data-dir={profile}",
+        f"--class={WM_CLASS}",
+        f"--name={WM_CLASS}",
+        f"--window-size={width},{height}",
+        "--no-first-run",
+        "--no-default-browser-check",
+    ]
+
+
+def open_chromium_app_window(
+    url: str,
+    *,
+    data_dir: Path,
+    width: int,
+    height: int,
+) -> str | None:
+    """Open a chromeless Chromium window. Returns closed / detached, or None."""
+    browser = find_chromium_app_browser()
+    if not browser:
+        logger.info("No Chromium-based browser found for an --app window")
+        return None
+    profile = chromium_profile_dir(data_dir)
+    argv = chromium_app_argv(browser, url, profile, width=width, height=height)
+    env = os.environ.copy()
+    env["CHROME_DESKTOP"] = DESKTOP_FILE_NAME
+    logger.info("Opening app window with %s", browser)
+    try:
+        proc = subprocess.Popen(  # noqa: S603
+            argv,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        logger.warning("Could not launch %s: %s", browser, exc)
+        return None
+    try:
+        proc.wait(timeout=CHROMIUM_HANDOFF_S)
+    except subprocess.TimeoutExpired:
+        proc.wait()
+        return "closed"
+    if proc.returncode == 0:
+        logger.info("Chromium --app handed off; keeping the local server running")
+        return "detached"
+    logger.warning("%s exited immediately with code %s", browser, proc.returncode)
+    return None
+
+
 def _open_in_browser(url: str) -> None:
     opener = shutil.which("xdg-open") or shutil.which("gio")
     if opener:
@@ -166,22 +405,61 @@ def _open_in_browser(url: str) -> None:
     webbrowser.open(url)
 
 
+def _apply_gtk_wm_class() -> None:
+    """Set WM_CLASS before Gtk.Application starts.
+
+    Optional host GI (PyGObject); not bundled in the AppImage Python.
+    """
+    try:
+        from gi.repository import GLib
+    except ImportError:
+        return
+    try:
+        GLib.set_prgname(WM_CLASS)
+        GLib.set_application_name("PaperlessAgent")
+    except Exception as exc:  # noqa: BLE001 — GI bindings vary by distro
+        logger.debug("Could not set GTK application id: %s", exc)
+
+
 def _try_native_window(url: str, width: int, height: int) -> bool:
     """Open pywebview; return False when WebKitGTK / pywebview is unavailable."""
     try:
         import webview
-    except ImportError:
+    except ImportError as exc:
+        logger.warning("pywebview is not available (%s)", exc)
         return False
+    _apply_gtk_wm_class()
+    icon = window_icon_path()
     try:
-        webview.create_window(
+        window = webview.create_window(
             "PaperlessAgent",
             url,
             width=width,
             height=height,
             min_size=(900, 600),
+            text_select=True,
         )
+        if icon is not None and window is not None:
+            events = getattr(window, "events", None)
+            shown = getattr(events, "shown", None)
+
+            def _apply_icon() -> None:
+                native = getattr(window, "native", None)
+                setter = getattr(native, "set_icon_from_file", None)
+                if callable(setter):
+                    try:
+                        setter(str(icon))
+                    except Exception as exc:  # noqa: BLE001 — icon is best-effort
+                        logger.debug("Could not set native window icon: %s", exc)
+
+            if shown is not None:
+                shown += _apply_icon
         webview.start()
-    except Exception:  # noqa: BLE001 — GI/WebKit failures must fall back
+    except Exception:
+        logger.exception(
+            "Native WebKitGTK window failed; falling back to a Chromium --app window. "
+            "Install WebKitGTK (webkit2gtk4.1) plus PyGObject for the GTK window."
+        )
         return False
     return True
 
@@ -199,13 +477,24 @@ def run_desktop(
 
     Starts a local uvicorn server when nothing healthy is already listening.
     ``headless`` keeps the server in the foreground (systemd / AppImage autostart).
-    When pywebview or WebKitGTK is missing, the default browser is opened instead.
+    Window order: pywebview/WebKitGTK, then Chromium ``--app`` (Brave/Chrome),
+    then the default browser.
     """
-    _prepare_environment()
+    if not logging.getLogger().handlers:
+        level_name = os.getenv("PAPERLESS_LOG_LEVEL", "warning").strip().upper() or "WARNING"
+        level = getattr(logging, level_name, logging.WARNING)
+        logging.basicConfig(level=level, format="%(levelname)s %(name)s: %(message)s")
+
+    data_dir = _prepare_environment()
     root = _project_root()
     os.chdir(root)
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
+
+    try:
+        install_linux_desktop_entry()
+    except OSError:
+        logger.exception("Could not install the PaperlessAgent .desktop entry")
 
     preferred = port
     if preferred is None:
@@ -235,7 +524,13 @@ def run_desktop(
             if owned_server is not None:
                 _stop_uvicorn(owned_server)
             return 0
-        _open_in_browser(url)
+        chrome = open_chromium_app_window(url, data_dir=data_dir, width=width, height=height)
+        if chrome == "closed":
+            if owned_server is not None:
+                _stop_uvicorn(owned_server)
+            return 0
+        if chrome is None:
+            _open_in_browser(url)
 
     if owned_server is None:
         return 0
