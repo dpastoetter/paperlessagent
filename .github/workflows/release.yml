@@ -1,5 +1,13 @@
-# Release pipeline: test the exact tagged commit, then publish assets.
+# Release pipeline: quality → audit → AppImage → publish assets onto the GitHub Release.
 # Actions are pinned to full commit SHAs (see CI workflow for the same pins).
+#
+# Triggers:
+#   - push of a v* tag (git tag && git push --tags)
+#   - publishing a GitHub Release (UI or gh release create)
+#   - workflow_dispatch with an explicit tag (rebuild / attach assets)
+#
+# GITHUB_TOKEN creating a release does not re-fire this workflow (GitHub loop guard).
+# A UI publish of a tag that already has an AppImage asset is skipped.
 
 name: Release
 
@@ -7,28 +15,87 @@ on:
   push:
     tags:
       - "v*"
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to pack and publish (e.g. v0.2.9)"
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 # Default deny write; only the publish job elevates.
 permissions:
   contents: read
 
 jobs:
-  quality:
-    name: Quality gate (tagged commit)
+  context:
+    name: Resolve release tag
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      pack: ${{ steps.resolve.outputs.pack }}
+    steps:
+      - name: Resolve tag
+        id: resolve
+        env:
+          EVENT: ${{ github.event_name }}
+          TAG_PUSH: ${{ github.ref_name }}
+          TAG_RELEASE: ${{ github.event.release.tag_name }}
+          TAG_INPUT: ${{ inputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "$EVENT" in
+            release) TAG="$TAG_RELEASE" ;;
+            workflow_dispatch) TAG="$TAG_INPUT" ;;
+            *) TAG="$TAG_PUSH" ;;
+          esac
+          TAG="${TAG#refs/tags/}"
+          if [[ ! "$TAG" =~ ^v[0-9] ]]; then
+            echo "Refusing to pack a non-version tag: ${TAG}" >&2
+            exit 1
+          fi
+          PACK=true
+          # Live check so a queued duplicate (tag push + UI publish) does not rebuild.
+          # workflow_dispatch always packs so a broken asset can be replaced.
+          if [ "$EVENT" != "workflow_dispatch" ] && gh release view "$TAG" >/dev/null 2>&1; then
+            assets="$(gh release view "$TAG" --json assets --jq '[.assets[].name] | join(",")')"
+            if echo "${assets:-}" | grep -q '\.AppImage'; then
+              echo "Release ${TAG} already has an AppImage — skipping duplicate pack"
+              PACK=false
+            fi
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "pack=${PACK}" >> "$GITHUB_OUTPUT"
+          echo "event=${EVENT} tag=${TAG} pack=${PACK}"
+
+  quality:
+    name: Quality gate (tagged commit)
+    needs: [context]
+    if: needs.context.outputs.pack == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ needs.context.outputs.tag }}
     steps:
       - name: Checkout tag
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
-          ref: ${{ github.ref }}
+          ref: ${{ needs.context.outputs.tag }}
 
       - name: Verify tag points at checked-out commit
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${RELEASE_TAG}"
           CHECKOUT="$(git rev-parse HEAD)"
           TAGGED="$(git rev-parse "${TAG}^{commit}")"
           echo "checkout=${CHECKOUT}"
@@ -71,15 +138,19 @@ jobs:
 
   dependency-audit:
     name: Dependency audit (pip-audit / OSV)
+    needs: [context]
+    if: needs.context.outputs.pack == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      RELEASE_TAG: ${{ needs.context.outputs.tag }}
     steps:
       - name: Checkout tag
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
-          ref: ${{ github.ref }}
+          ref: ${{ needs.context.outputs.tag }}
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -102,24 +173,78 @@ jobs:
           chmod +x scripts/dependency-audit.sh
           ./scripts/dependency-audit.sh
 
+  appimage:
+    name: Linux AppImage (x86_64)
+    needs: [context, quality, dependency-audit]
+    if: needs.context.outputs.pack == 'true'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ needs.context.outputs.tag }}
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.context.outputs.tag }}
+
+      - name: Verify tag points at checked-out commit
+        run: |
+          set -euo pipefail
+          TAG="${RELEASE_TAG}"
+          CHECKOUT="$(git rev-parse HEAD)"
+          TAGGED="$(git rev-parse "${TAG}^{commit}")"
+          echo "checkout=${CHECKOUT}"
+          echo "tag=${TAG} → ${TAGGED}"
+          if [ "$CHECKOUT" != "$TAGGED" ]; then
+            echo "Checked-out commit does not match tag ${TAG}" >&2
+            exit 1
+          fi
+
+      - name: Install Poppler and patchelf
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq poppler-utils patchelf
+
+      - name: Build AppImage
+        run: |
+          set -euo pipefail
+          chmod +x scripts/build-appimage.sh
+          ./scripts/build-appimage.sh "${RELEASE_TAG}"
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-appimage
+          path: |
+            dist/PaperlessAgent-*-x86_64.AppImage
+            dist/PaperlessAgent-*-x86_64.AppImage.sha256
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     name: Publish release
-    needs: [quality, dependency-audit]
+    needs: [context, quality, dependency-audit, appimage]
+    if: needs.context.outputs.pack == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ needs.context.outputs.tag }}
     steps:
       - name: Checkout tag
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           # Full history so the tag resolves cleanly and git archive sees every path.
           fetch-depth: 0
-          ref: ${{ github.ref }}
+          ref: ${{ needs.context.outputs.tag }}
 
       - name: Verify tag points at checked-out commit
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${RELEASE_TAG}"
           CHECKOUT="$(git rev-parse HEAD)"
           TAGGED="$(git rev-parse "${TAG}^{commit}")"
           echo "checkout=${CHECKOUT}"
@@ -140,22 +265,49 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x scripts/make-release-assets.sh
-          ./scripts/make-release-assets.sh "${GITHUB_REF_NAME}"
+          ./scripts/make-release-assets.sh "${RELEASE_TAG}"
           # Confirm the packed commit matches this tag.
           grep -F "commit=$(git rev-parse HEAD)" dist/stage/paperlessagent-*/.release-commit
           # Sanity: archive must contain every currently tracked path we care about.
           tar -tzf dist/paperlessagent-*.tar.gz | grep -E 'paperless_agent/system_service\.py$'
           tar -tzf dist/paperlessagent-*.tar.gz | grep -E 'app/static/app\.js$'
+          tar -tzf dist/paperlessagent-*.tar.gz | grep -E 'packaging/linux/AppRun$'
           tar -tzf dist/paperlessagent-*.tar.gz | grep -E '\.release-commit$'
           tar -tzf dist/paperlessagent-*.tar.gz | grep -E '\.release-files$'
           cat dist/stage/paperlessagent-*/.release-commit
+
+      - name: Download AppImage artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: linux-appimage
+          path: /tmp/linux-appimage
+
+      - name: Attach AppImage to checksums
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          APPIMAGE="PaperlessAgent-${VERSION}-x86_64.AppImage"
+          found="$(find /tmp/linux-appimage -name "${APPIMAGE}" -print -quit)"
+          if [ -z "$found" ]; then
+            echo "AppImage artifact missing: ${APPIMAGE}" >&2
+            find /tmp/linux-appimage -type f >&2 || true
+            exit 1
+          fi
+          cp "$found" "dist/${APPIMAGE}"
+          test -f "dist/${APPIMAGE}"
+          (
+            cd dist
+            sha256sum "${APPIMAGE}" >> SHA256SUMS
+          )
+          grep -F "${APPIMAGE}" dist/SHA256SUMS
+          cat dist/SHA256SUMS
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${RELEASE_TAG}"
           VERSION="${TAG#v}"
           COMMIT="$(git rev-parse HEAD)"
           COMMIT_SHORT="$(git rev-parse --short=12 HEAD)"
@@ -168,12 +320,21 @@ jobs:
 
           ### Assets
           - \`paperlessagent-${VERSION}.tar.gz\` — full source archive for the in-app updater (SHA-256 verified)
+          - \`PaperlessAgent-${VERSION}-x86_64.AppImage\` — Linux x86_64 desktop AppImage (glibc 2.35+)
           - \`install.sh\` — Linux/macOS one-line installer bootstrap
           - \`install.ps1\` — Windows PowerShell one-line installer bootstrap
           - \`SHA256SUMS\` — checksums
 
           ### Install
-          Linux / macOS:
+          Linux AppImage:
+          \`\`\`bash
+          curl -fsSL -o PaperlessAgent.AppImage \\
+            https://github.com/dpastoetter/paperlessagent/releases/latest/download/PaperlessAgent-${VERSION}-x86_64.AppImage
+          chmod +x PaperlessAgent.AppImage
+          ./PaperlessAgent.AppImage
+          \`\`\`
+
+          Linux / macOS (source + venv):
           \`\`\`bash
           curl -fsSL https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.sh | bash
           \`\`\`
@@ -186,7 +347,7 @@ jobs:
           # Strip the common leading indent from the heredoc body.
           sed -i 's/^          //' /tmp/release-notes.md
 
-          ASSETS=(dist/paperlessagent-"${VERSION}".tar.gz dist/install.sh dist/install.ps1 dist/SHA256SUMS)
+          ASSETS=(dist/paperlessagent-"${VERSION}".tar.gz dist/PaperlessAgent-"${VERSION}"-x86_64.AppImage dist/install.sh dist/install.ps1 dist/SHA256SUMS)
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "${ASSETS[@]}" --clobber

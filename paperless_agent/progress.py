@@ -134,8 +134,8 @@ PIPELINE_STEP_LABELS: dict[str, str] = {
     "ai_ocr": "Transcribe",
     "extract": "Find details",
     "name": "Name file",
-    "review": "Review",
     "file": "Save",
+    "review": "Review",
     "index": "Make searchable",
 }
 
@@ -144,8 +144,8 @@ PIPELINE_STEP_DESCRIPTIONS: dict[str, str] = {
     "ai_ocr": "Use AI vision to read each page image and recover the text.",
     "extract": "Pull out dates, parties, amounts, and other metadata with the LLM.",
     "name": "Propose a clear filename from the extracted details.",
-    "review": "Pause for your approval before anything is written to disk.",
     "file": "Move the document into the archive folder for its category.",
+    "review": "Pause for your approval before anything is written to disk.",
     "index": "Chunk the text and store embeddings so Ask can search it.",
 }
 

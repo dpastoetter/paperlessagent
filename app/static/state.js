@@ -28,14 +28,14 @@ export const DEFAULT_PIPELINE_STEPS = [
     description: "Propose a clear filename from the extracted details.",
   },
   {
-    id: "review",
-    label: "Review",
-    description: "Pause for your approval before anything is written to disk.",
-  },
-  {
     id: "file",
     label: "Save",
     description: "Move the document into the archive folder for its category.",
+  },
+  {
+    id: "review",
+    label: "Review",
+    description: "Pause for your approval before anything is written to disk.",
   },
   {
     id: "index",

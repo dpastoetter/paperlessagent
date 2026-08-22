@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from paperless_agent import config
+from paperless_agent.config import running_as_appimage
 from paperless_agent.local_security import assert_bind_allowed, ssl_cert_paths
 
 UNIT_NAME = "paperlessagent.service"
@@ -50,6 +51,14 @@ def unit_path() -> Path:
 
 def uvicorn_binary() -> Path:
     return config.PROJECT_ROOT / ".venv" / "bin" / "uvicorn"
+
+
+def appimage_exec_path() -> str | None:
+    """Absolute path of the running AppImage, if this process was launched from one."""
+    path = os.getenv("APPIMAGE", "").strip()
+    if path and Path(path).is_file():
+        return path
+    return None
 
 
 def service_host() -> str:
@@ -124,7 +133,11 @@ def _extra_environment_lines() -> list[str]:
         f"Environment=DATA_DIR={config.DATA_DIR}",
         "Environment=PAPERLESS_SYSTEMD=1",
     ]
-    env_file = config.PROJECT_ROOT / ".env"
+    if running_as_appimage():
+        lines.append("Environment=PAPERLESS_APPIMAGE=1")
+        env_file = Path(config.DATA_DIR) / ".env"
+    else:
+        env_file = config.PROJECT_ROOT / ".env"
     if env_file.is_file():
         lines.append(f"EnvironmentFile=-{env_file}")
     ollama_lib = Path.home() / ".local" / "lib" / "ollama"
@@ -135,11 +148,32 @@ def _extra_environment_lines() -> list[str]:
 
 def render_unit_file() -> str:
     """Render the systemd user unit for the current install."""
-    uvicorn = uvicorn_binary()
+    appimage = appimage_exec_path()
     host = service_host()
     port = service_port()
-    workdir = config.PROJECT_ROOT
     env_lines = "\n".join(_extra_environment_lines())
+    if appimage:
+        workdir = config.DATA_DIR
+        exec_start = f"{appimage} --headless --host {host} --port {port}"
+        return f"""[Unit]
+Description=PaperlessAgent local document assistant
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={workdir}
+{env_lines}
+ExecStart={exec_start}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+"""
+
+    uvicorn = uvicorn_binary()
+    workdir = config.PROJECT_ROOT
     ssl_paths = ssl_cert_paths()
     ssl_args = ""
     if ssl_paths:
@@ -224,6 +258,18 @@ def autostart_status() -> dict[str, Any]:
     }
     if not supported:
         status["install_hint"] = "Autostart requires Linux with systemd user services."
+        return status
+    if running_as_appimage():
+        if not appimage_exec_path():
+            status["error"] = (
+                "APPIMAGE path is missing; cannot install autostart from an extracted image."
+            )
+            status["install_hint"] = (
+                "Launch PaperlessAgent from the .AppImage file, then enable autostart."
+            )
+            return status
+        status["enabled"] = _unit_enabled()
+        status["active"] = _unit_active()
         return status
     if not uvicorn.is_file():
         status["error"] = (

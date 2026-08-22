@@ -6,6 +6,7 @@ from typing import Any
 
 # Strict CSP for the local SPA. No third-party origins; no unsafe-inline.
 # connect-src covers same-origin fetch + SSE. img blob:/data: for local previews.
+# worker-src 'self' for PDF.js preview worker (same-origin vendor bundle).
 CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
     "script-src 'self'; "
@@ -18,7 +19,7 @@ CONTENT_SECURITY_POLICY = (
     "base-uri 'none'; "
     "frame-ancestors 'none'; "
     "form-action 'self'; "
-    "worker-src 'none'; "
+    "worker-src 'self'; "
     "manifest-src 'self'"
 )
 

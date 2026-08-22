@@ -92,6 +92,16 @@ def test_ask_archive_uses_evidence(isolated_ask, monkeypatch):
     assert "181" in result["sources"][0]["snippet"] or "CRE8" in result["sources"][0]["snippet"]
 
 
+def test_ask_archive_clamps_model_reply(isolated_ask, monkeypatch):
+    async def fake_complete(prompt: str, *, instructions: str) -> str:
+        return "Z" * 20_000
+
+    monkeypatch.setattr("paperless_agent.ask.complete_text", fake_complete)
+    result = asyncio.run(ask_archive("What invoices do I have and for how much?"))
+    assert result["status"] == "success"
+    assert len(result["reply"]) <= 12_000
+
+
 def test_ask_archive_empty_question():
     result = asyncio.run(ask_archive("   "))
     assert result["status"] == "error"

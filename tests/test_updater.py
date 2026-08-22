@@ -13,6 +13,7 @@ import paperless_agent
 from app.main import app
 from paperless_agent.updater import (
     _github_get,
+    _pick_appimage_asset,
     apply_tarball,
     apply_update,
     is_newer,
@@ -296,3 +297,22 @@ def test_apply_update_installs_verified_release(isolated_root, monkeypatch):
     assert result["installed_version"] == "9.9.9"
     assert result["verified_sha256"] == digest
     assert (isolated_root / "pyproject.toml").exists()
+
+
+def test_pick_appimage_prefers_x86_64():
+    chosen = _pick_appimage_asset(
+        [
+            {"name": "PaperlessAgent-1.0.0-aarch64.AppImage"},
+            {"name": "PaperlessAgent-1.0.0-x86_64.AppImage"},
+        ]
+    )
+    assert chosen is not None
+    assert chosen["name"].endswith("x86_64.AppImage")
+
+
+def test_apply_update_refuses_appimage(monkeypatch):
+    monkeypatch.setattr("paperless_agent.updater.running_as_appimage", lambda: True)
+    result = apply_update()
+    assert result["status"] == "error"
+    assert result["installable"] is False
+    assert "AppImage" in result["error"]

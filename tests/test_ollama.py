@@ -16,6 +16,7 @@ from paperless_agent.ollama_setup import (
     current_compute_label,
     enable_ollama,
     ensure_ollama_ready,
+    env_path,
     format_http_error,
     infer_model_processor,
     missing_models,
@@ -286,6 +287,34 @@ def test_upsert_env_values_preserves_comments(tmp_path):
     assert text.count("PAPERLESS_LLM_PROVIDER=") == 1
     mode = path.stat().st_mode & 0o777
     assert mode == 0o600
+
+
+def test_env_path_defaults_to_project_root(tmp_path, monkeypatch):
+    monkeypatch.delenv("APPIMAGE", raising=False)
+    monkeypatch.delenv("PAPERLESS_APPIMAGE", raising=False)
+    root = tmp_path / "proj"
+    root.mkdir()
+    monkeypatch.setattr(config, "PROJECT_ROOT", root)
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
+    assert env_path() == root / ".env"
+
+
+def test_env_path_uses_data_dir_when_appimage(tmp_path, monkeypatch):
+    monkeypatch.setenv("PAPERLESS_APPIMAGE", "1")
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path / "ro")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
+    assert env_path() == tmp_path / "data" / ".env"
+
+
+def test_env_path_uses_data_dir_when_project_not_writable(tmp_path, monkeypatch):
+    monkeypatch.delenv("APPIMAGE", raising=False)
+    monkeypatch.delenv("PAPERLESS_APPIMAGE", raising=False)
+    root = tmp_path / "ro"
+    root.mkdir()
+    monkeypatch.setattr(config, "PROJECT_ROOT", root)
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr("paperless_agent.ollama_setup.os.access", lambda *_a, **_k: False)
+    assert env_path() == tmp_path / "data" / ".env"
 
 
 def test_enable_ollama_updates_runtime_and_env(tmp_path, monkeypatch):

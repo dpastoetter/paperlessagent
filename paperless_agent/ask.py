@@ -7,9 +7,9 @@ from typing import Any
 from paperless_agent import config
 from paperless_agent.llm import complete_text
 from paperless_agent.prompt_safety import (
-    BEGIN_UNTRUSTED_EVIDENCE,
-    END_UNTRUSTED_EVIDENCE,
+    MAX_ASK_REPLY_CHARS,
     UNTRUSTED_CONTENT_POLICY,
+    clamp_text,
     wrap_untrusted,
 )
 from paperless_agent.tools.metadata_db import search_metadata
@@ -62,8 +62,7 @@ def _format_chunks(chunks: list[dict[str, Any]]) -> str:
         )
         body = wrap_untrusted(
             (chunk.get("text") or "").strip(),
-            begin=BEGIN_UNTRUSTED_EVIDENCE,
-            end=END_UNTRUSTED_EVIDENCE,
+            kind="evidence",
             label=f"chunk-{i}",
         )
         lines.append(f"{header}\n{body}")
@@ -84,8 +83,7 @@ def _format_documents(documents: list[dict[str, Any]]) -> str:
         )
         summary = wrap_untrusted(
             (doc.get("summary") or "").strip(),
-            begin=BEGIN_UNTRUSTED_EVIDENCE,
-            end=END_UNTRUSTED_EVIDENCE,
+            kind="evidence",
             label=f"summary-{i}",
         )
         lines.append(f"{meta}\n  summary:\n{summary}")
@@ -338,7 +336,7 @@ async def ask_archive(
     sources = _collect_sources(chunks, documents)
     return {
         "status": "success",
-        "reply": reply,
+        "reply": clamp_text(reply, MAX_ASK_REPLY_CHARS) or "",
         "sources": sources,
         "retrieval_count": len(chunks),
         "metadata_count": len(documents),

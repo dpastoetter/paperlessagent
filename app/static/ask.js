@@ -2,11 +2,12 @@ import { api, escapeHtml, refreshHealth, toast } from "./api.js";
 import { setHashQuery } from "./router.js";
 
 export const ASK_HISTORY_MAX_TURNS = 6;
+export const ASK_EXAMPLES_STORAGE_KEY = "pa-ask-examples";
 export const ASK_EXAMPLES = [
-  "Show invoices from Acme this year",
-  "What is my latest insurance policy number?",
-  "Summarize documents about Stadtwerke",
-  "Which tax documents mention 2024?",
+  "What invoices did I receive this year?",
+  "Find my most recent insurance documents",
+  "Summarize letters from the last few months",
+  "Which documents mention taxes or annual statements?",
 ];
 
 const state = {
@@ -14,6 +15,27 @@ const state = {
   busy: false,
   draft: "",
 };
+
+/** Browser preference — default on. */
+export function areAskExamplesEnabled() {
+  try {
+    const stored = localStorage.getItem(ASK_EXAMPLES_STORAGE_KEY);
+    if (stored === null) return true;
+    return stored !== "0" && stored !== "false";
+  } catch (_err) {
+    return true;
+  }
+}
+
+/** Persist preference and refresh the Ask empty state when idle. */
+export function setAskExamplesEnabled(enabled) {
+  try {
+    localStorage.setItem(ASK_EXAMPLES_STORAGE_KEY, enabled ? "1" : "0");
+  } catch (_err) {
+    // private mode — preference won't persist
+  }
+  if (!state.turns.length) renderThread();
+}
 
 /** @typedef {{ id: string, question: string, reply?: string, sources?: any[], evidence?: string, status?: string, error?: string, loading?: boolean }} AskTurn */
 
@@ -137,8 +159,17 @@ function turnHtml(turn) {
 }
 
 function examplesHtml() {
-  return `<div class="ask-empty" id="ask-empty">
-    <p class="ask-empty-lead">Research your filed documents. Try one of these:</p>
+  if (!areAskExamplesEnabled()) {
+    return `<div class="empty-state ask-empty" id="ask-empty">
+      <svg class="icon" aria-hidden="true"><use href="#i-ask" /></svg>
+      <p>Research your archive</p>
+      <p class="fine">Ask a question below.</p>
+    </div>`;
+  }
+  return `<div class="empty-state ask-empty" id="ask-empty">
+    <svg class="icon" aria-hidden="true"><use href="#i-ask" /></svg>
+    <p>Research your archive</p>
+    <p class="fine">Try one of these:</p>
     <ul class="ask-examples">
       ${ASK_EXAMPLES.map(
         (q) =>
@@ -148,10 +179,20 @@ function examplesHtml() {
   </div>`;
 }
 
+export function syncAskComposerSize(el = document.getElementById("question")) {
+  if (!el) return;
+  el.style.height = "auto";
+  const cap = Number.parseFloat(getComputedStyle(el).maxHeight);
+  const maxPx = Number.isFinite(cap) && cap > 0 ? cap : 128;
+  el.style.height = `${Math.min(el.scrollHeight, maxPx)}px`;
+}
+
 function renderThread() {
   const root = document.getElementById("ask-thread");
   const clearBtn = document.getElementById("ask-clear");
   if (!root) return;
+
+  root.classList.toggle("ask-thread--empty", state.turns.length === 0);
 
   if (!state.turns.length) {
     root.innerHTML = examplesHtml();
@@ -188,6 +229,7 @@ export function clearAskConversation() {
   state.busy = false;
   const input = document.getElementById("question");
   if (input) input.value = "";
+  syncAskComposerSize(input);
   const submit = document.getElementById("ask-submit");
   if (submit) submit.disabled = false;
   renderThread();
@@ -201,7 +243,10 @@ async function submitQuestion(rawQuestion) {
   const input = document.getElementById("question");
   const submit = document.getElementById("ask-submit");
   state.draft = question;
-  if (input) input.value = "";
+  if (input) {
+    input.value = "";
+    syncAskComposerSize(input);
+  }
 
   const turnId = `t-${Date.now()}`;
   const history = historyPayloadFromTurns(state.turns);
@@ -229,7 +274,10 @@ async function submitQuestion(rawQuestion) {
       turn.status = "error";
       turn.error = data.reply || data.error || "No answer returned";
       turn.evidence = classifyClientEvidence(data);
-      if (input) input.value = state.draft;
+      if (input) {
+        input.value = state.draft;
+        syncAskComposerSize(input);
+      }
       announce("Ask failed");
     } else {
       turn.status = "success";
@@ -250,7 +298,10 @@ async function submitQuestion(rawQuestion) {
       turn.error = String(err.message || err);
       turn.evidence = "none";
     }
-    if (input) input.value = state.draft;
+    if (input) {
+      input.value = state.draft;
+      syncAskComposerSize(input);
+    }
     renderThread();
     announce("Ask failed");
   } finally {
@@ -288,6 +339,7 @@ export async function fetchDocumentBlob(url) {
   const objectUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
   return {
     objectUrl,
+    bytes,
     mime,
     isPdf,
     revoke: () => {
@@ -327,7 +379,27 @@ export async function openDocumentFile(url) {
   }
 }
 
+export function askShellHtml() {
+  return `<div class="ask-workspace">
+          <div id="ask-thread" class="ask-thread ask-thread--empty" aria-label="Archive research thread"></div>
+          <p id="ask-live" class="sr-only" aria-live="polite"></p>
+
+          <form id="ask-form" class="ask-composer">
+            <textarea id="question" rows="1" aria-label="Question" placeholder="Ask about invoices, policies, counterparties…"></textarea>
+            <button type="submit" class="btn primary" id="ask-submit">Ask</button>
+          </form>
+        </div>`;
+}
+
+export function mountAskShell() {
+  const host = document.getElementById("ask");
+  if (!host || host.querySelector("#ask-form")) return host;
+  host.innerHTML = askShellHtml();
+  return host;
+}
+
 export function initAsk() {
+  mountAskShell();
   renderThread();
 
   const form = document.getElementById("ask-form");
@@ -338,6 +410,9 @@ export function initAsk() {
     e.preventDefault();
     submitQuestion(input?.value);
   });
+
+  input?.addEventListener("input", () => syncAskComposerSize(input));
+  syncAskComposerSize(input);
 
   input?.addEventListener("keydown", (e) => {
     if (e.key !== "Enter") return;

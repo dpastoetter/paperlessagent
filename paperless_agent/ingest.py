@@ -16,7 +16,7 @@ from paperless_agent.job_control import (
 from paperless_agent.llm import complete_text
 from paperless_agent.ocr import recover_document_text
 from paperless_agent.pipeline.agents import file_and_persist, parse_json_blob
-from paperless_agent.progress import emit_step, llm_busy_detail, step_label
+from paperless_agent.progress import emit_step, emit_step_sync, llm_busy_detail, step_label
 from paperless_agent.prompt_safety import (
     UNTRUSTED_CONTENT_POLICY,
     clamp_extracted_fields,
@@ -336,14 +336,9 @@ async def ingest_document(source_path: str) -> dict[str, Any]:
     }
 
     # Duplicate check + human-in-the-loop gate before any filesystem writes.
+    # Strip order is Save → Review → Index; emit in that order so the nodes
+    # light left-to-right even though the write still waits on approval.
     raise_if_cancelled()
-    await emit_step(
-        "review",
-        label=step_label("review"),
-        status="running",
-        detail="Checking for duplicates…",
-        filename=filename,
-    )
     checksum = file_checksum(source_path)
     text_hash = content_hash(full_text if isinstance(full_text, str) else None)
     duplicates = find_duplicates(checksum, full_text if isinstance(full_text, str) else None)
@@ -378,20 +373,33 @@ async def ingest_document(source_path: str) -> dict[str, Any]:
         )
         dup_note = f", {len(duplicates)} possible duplicate(s)" if duplicates else ""
         await emit_step(
+            "file",
+            label=step_label("file"),
+            status="skipped",
+            detail="After you approve",
+            filename=filename,
+        )
+        await emit_step(
+            "review",
+            label=step_label("review"),
+            status="running",
+            detail="Queued for your approval",
+            filename=filename,
+        )
+        await emit_step(
             "review",
             label=step_label("review"),
             status="done",
             detail=f"Waiting for your approval{dup_note}",
             filename=filename,
         )
-        for step_id in ("file", "index"):
-            await emit_step(
-                step_id,
-                label=step_label(step_id),
-                status="skipped",
-                detail="After you approve",
-                filename=filename,
-            )
+        await emit_step(
+            "index",
+            label=step_label("index"),
+            status="skipped",
+            detail="After you approve",
+            filename=filename,
+        )
         return {
             "status": "pending_review",
             "review_id": queued["review_id"],
@@ -403,13 +411,14 @@ async def ingest_document(source_path: str) -> dict[str, Any]:
             ),
         }
 
-    await emit_step(
-        "review",
-        label=step_label("review"),
-        status="done",
-        detail="Auto-approved (no duplicates)",
-        filename=filename,
-    )
+    def mark_review_auto_approved() -> None:
+        emit_step_sync(
+            "review",
+            label=step_label("review"),
+            status="done",
+            detail="Auto-approved (no duplicates)",
+            filename=filename,
+        )
 
     result = file_and_persist(
         source_path=source_path,
@@ -425,6 +434,7 @@ async def ingest_document(source_path: str) -> dict[str, Any]:
         full_text=full_text if isinstance(full_text, str) else None,
         checksum=checksum,
         content_hash=text_hash,
+        after_file=mark_review_auto_approved,
     )
     return {
         **result,

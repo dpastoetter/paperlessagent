@@ -306,6 +306,9 @@ def load_settings(*, reload: bool = False) -> dict[str, Any]:
             ) from exc
 
         ensure_settings_dirs(settings)
+        if "review" not in raw or "ocr" not in raw:
+            _write_file(settings)
+            logger.info("Migrated settings.json with missing review/ocr keys at %s", path)
         _cache = settings
         return deepcopy(_cache)
 

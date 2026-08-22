@@ -20,6 +20,7 @@ from typing import Any
 import httpx
 
 from paperless_agent import config
+from paperless_agent.config import running_as_appimage
 from paperless_agent.version import get_current_version
 
 logger = logging.getLogger(__name__)
@@ -178,6 +179,22 @@ def _pick_archive_asset(assets: list[dict[str, Any]]) -> dict[str, Any] | None:
     return preferred[0] if preferred else archives[0]
 
 
+def _pick_appimage_asset(assets: list[dict[str, Any]]) -> dict[str, Any] | None:
+    images = [
+        asset
+        for asset in assets
+        if isinstance(asset.get("name"), str) and asset["name"].lower().endswith(".appimage")
+    ]
+    if not images:
+        return None
+    preferred = [
+        asset
+        for asset in images
+        if "x86_64" in asset["name"].lower() or "x86-64" in asset["name"].lower()
+    ]
+    return preferred[0] if preferred else images[0]
+
+
 def _resolve_commit_sha(client: httpx.Client, tag: str) -> str | None:
     if not tag:
         return None
@@ -308,12 +325,15 @@ def _fetch_latest_release() -> dict[str, Any] | None:
 def check_for_update() -> dict[str, Any]:
     """Compare the installed version against the latest GitHub release."""
     current = get_current_version()
+    installable = not running_as_appimage()
     base = {
         "status": "success",
         "repo": UPDATE_REPO,
         "current_version": current,
         "update_available": False,
         "verifiable": False,
+        "installable": installable,
+        "appimage": running_as_appimage(),
     }
     try:
         latest = _fetch_latest_release()
@@ -328,6 +348,15 @@ def check_for_update() -> dict[str, Any]:
         return {**base, "message": "No releases or tags published on GitHub yet."}
 
     artifact = latest.get("artifact") or {}
+    raw_assets = latest.get("assets") or []
+    assets = raw_assets if isinstance(raw_assets, list) else []
+    appimage = _pick_appimage_asset(assets)
+    appimage_url = None
+    appimage_name = None
+    if appimage is not None:
+        appimage_name = appimage.get("name")
+        url = appimage.get("browser_download_url") or appimage.get("url")
+        appimage_url = url if isinstance(url, str) and url else None
     return {
         **base,
         "latest_version": latest["tag"].lstrip("v"),
@@ -344,6 +373,8 @@ def check_for_update() -> dict[str, Any]:
         "artifact_name": artifact.get("filename"),
         "expected_sha256": artifact.get("expected_sha256"),
         "download_url": artifact.get("download_url"),
+        "appimage_name": appimage_name,
+        "appimage_url": appimage_url,
     }
 
 
@@ -509,6 +540,16 @@ def apply_tarball(
 
 def apply_update() -> dict[str, Any]:
     """Download the latest verified release and install it over the current version."""
+    if running_as_appimage():
+        return {
+            "status": "error",
+            "installable": False,
+            "error": (
+                "This AppImage cannot be updated in place. "
+                "Download the latest PaperlessAgent-*-x86_64.AppImage from GitHub "
+                "Releases and replace this file."
+            ),
+        }
     info = check_for_update()
     if info.get("status") != "success":
         return info

@@ -10,12 +10,15 @@ def test_pipeline_agent_structure():
     agent = build_pipeline_agent()
     assert agent.name == "paperless_ingest"
     assert len(agent.tools) == 3
+    assert "untrusted" in agent.instruction.lower()
     assert pipeline_agent.name == "paperless_ingest"
 
 
 def test_query_agent_tools():
     assert query_agent.name == "paperless_query"
     assert len(query_agent.tools) == 3
+    assert "untrusted" in query_agent.instruction.lower()
+    assert "retrieve_chunks" in query_agent.instruction
 
 
 def test_parse_json_blob():

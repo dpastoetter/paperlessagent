@@ -1,0 +1,44 @@
+# Manual Linux AppImage build (no GitHub Release).
+# Actions are pinned to full commit SHAs (see CI workflow for the same pins).
+
+name: AppImage
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  appimage:
+    name: Linux AppImage (x86_64)
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Install Poppler and patchelf
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq poppler-utils patchelf
+
+      - name: Build AppImage
+        run: |
+          set -euo pipefail
+          chmod +x scripts/build-appimage.sh
+          ./scripts/build-appimage.sh
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-appimage
+          path: |
+            dist/PaperlessAgent-*-x86_64.AppImage
+            dist/PaperlessAgent-*-x86_64.AppImage.sha256
+          if-no-files-found: error
+          retention-days: 14

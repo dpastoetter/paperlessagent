@@ -6,6 +6,7 @@ import {
   isTypingTarget,
   nextIndexAfterRemoval,
   overridesEqual,
+  shouldPreserveReviewEditor,
 } from "../../app/static/review.js";
 
 describe("nextIndexAfterRemoval", () => {
@@ -87,5 +88,17 @@ describe("isTypingTarget", () => {
     textarea.remove();
     select.remove();
     div.remove();
+  });
+});
+
+describe("shouldPreserveReviewEditor", () => {
+  it("keeps the editor when the same review stays selected", () => {
+    expect(shouldPreserveReviewEditor("a", "a", true)).toBe(true);
+  });
+
+  it("rebuilds when the queue was empty or selection changes", () => {
+    expect(shouldPreserveReviewEditor(null, "a", true)).toBe(false);
+    expect(shouldPreserveReviewEditor("a", "b", true)).toBe(false);
+    expect(shouldPreserveReviewEditor("a", "a", false)).toBe(false);
   });
 });

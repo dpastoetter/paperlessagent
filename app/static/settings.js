@@ -15,202 +15,12 @@ import {
   setText,
   toast,
 } from "./api.js";
+import { areAskExamplesEnabled, setAskExamplesEnabled } from "./ask.js";
 import { hooks, setKnownCategories, workflowState } from "./state.js";
 import { renderWorkflow } from "./events.js";
 
 let oauthState = null;
 let oauthPollTimer = null;
-let lastSettingsSnapshot = null;
-let pathValidationCache = new Map();
-
-export function summarizeAiStatus({ provider, openaiReady, ollamaReady, disclaimerAccepted }) {
-  if (provider === "ollama") {
-    return ollamaReady
-      ? { state: "ok", label: "Ready" }
-      : { state: "warn", label: "Needs attention" };
-  }
-  if (provider === "openai" || provider === "gemini" || !provider) {
-    if (!disclaimerAccepted) return { state: "warn", label: "Needs attention" };
-    return openaiReady
-      ? { state: "ok", label: "Ready" }
-      : { state: "warn", label: "Needs attention" };
-  }
-  return { state: "warn", label: "Needs attention" };
-}
-
-export function summarizeAutoProcessing(pollIntervalSeconds) {
-  const on = Number(pollIntervalSeconds) > 0;
-  return { state: on ? "ok" : "off", label: on ? "On" : "Off" };
-}
-
-export function findDuplicateFolders(categories) {
-  const map = new Map();
-  for (const cat of categories || []) {
-    const folder = String(cat.folder || "").trim();
-    if (!folder) continue;
-    const key = folder.replace(/\/+$/, "");
-    if (!map.has(key)) map.set(key, []);
-    map.get(key).push(cat.name || "(unnamed)");
-  }
-  const dups = [];
-  for (const [folder, names] of map.entries()) {
-    if (names.length > 1) dups.push({ folder, names });
-  }
-  return dups;
-}
-
-export function pathValidationLabel(result) {
-  if (!result) return { state: "unknown", label: "—" };
-  if (result.error || result.status === "error") return { state: "err", label: "Problem" };
-  if (result.exists && result.is_dir) return { state: "ok", label: "Valid" };
-  if (result.exists && !result.is_dir) return { state: "err", label: "Not a folder" };
-  return { state: "warn", label: "Missing" };
-}
-
-async function validatePath(path) {
-  const trimmed = String(path || "").trim();
-  if (!trimmed) return { error: "empty", exists: false, is_dir: false };
-  if (pathValidationCache.has(trimmed)) return pathValidationCache.get(trimmed);
-  try {
-    const data = await api("/api/settings/validate-path", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: trimmed }),
-    });
-    pathValidationCache.set(trimmed, data);
-    return data;
-  } catch (err) {
-    const fail = { error: String(err.message || err), exists: false, is_dir: false };
-    pathValidationCache.set(trimmed, fail);
-    return fail;
-  }
-}
-
-function setSummaryItem(key, { state, label }) {
-  const li = document.querySelector(`#settings-summary-list li[data-key="${key}"]`);
-  if (!li) return;
-  const value = li.querySelector(".settings-summary-value");
-  if (!value) return;
-  value.textContent = label;
-  value.dataset.state = state || "unknown";
-}
-
-function updatePrivacyCopy({ provider, remoteOllama, disclaimerAccepted }) {
-  const status = document.getElementById("privacy-status");
-  const copy = document.getElementById("privacy-copy");
-  if (provider === "ollama" && !remoteOllama) {
-    if (status) status.textContent = "Local processing — document content stays on this computer for AI.";
-    if (copy) {
-      copy.textContent =
-        "Local Ollama runs OCR, filing, and Ask on this machine. Archive files remain under your configured folders.";
-    }
-    return;
-  }
-  if (provider === "ollama" && remoteOllama) {
-    if (status) {
-      status.textContent = disclaimerAccepted
-        ? "Remote Ollama — document content is sent to another computer on your network."
-        : "Remote Ollama requires cloud-processing approval.";
-    }
-    if (copy) {
-      copy.textContent =
-        "Remote Ollama leaves this machine. Approve the disclaimer under AI & OCR before enabling.";
-    }
-    return;
-  }
-  if (status) {
-    status.textContent = disclaimerAccepted
-      ? "Cloud AI — document content is sent to the configured cloud provider for processing."
-      : "Cloud AI locked until you approve cloud processing.";
-  }
-  if (copy) {
-    copy.textContent =
-      "Storage can stay local while ChatGPT / OpenAI / Gemini process page images and text. Switch to Local Ollama to keep AI on-device.";
-  }
-}
-
-export async function renderSettingsSummary({
-  settings = null,
-  health = null,
-  auth = null,
-  ollama = null,
-} = {}) {
-  const snap = settings || lastSettingsSnapshot || {};
-  const provider = health?.llm_provider || lastProvider || "";
-  const remote = provider === "ollama" && ollamaRemoteMode;
-  const ai = summarizeAiStatus({
-    provider,
-    openaiReady: Boolean(auth?.openai_ready),
-    ollamaReady: Boolean(ollama?.ready ?? health?.ollama?.ready),
-    disclaimerAccepted: cloudDisclaimerAccepted,
-  });
-  setSummaryItem("ai", ai);
-  setSummaryItem("ocr", {
-    state: ai.state,
-    label: ai.state === "ok" ? "Ready" : "Needs attention",
-  });
-  setSummaryItem("auto", summarizeAutoProcessing(snap?.batch?.poll_interval_seconds));
-
-  const source = snap.source_dir || document.getElementById("setup-source")?.value || "";
-  const sourceResult = await validatePath(source);
-  const sourceLabel = pathValidationLabel(sourceResult);
-  setSummaryItem("inbox", {
-    state: sourceLabel.state === "ok" ? "ok" : "warn",
-    label: sourceLabel.state === "ok" ? "Valid" : "Problem",
-  });
-  const sourceValid = document.getElementById("setup-source-valid");
-  if (sourceValid) {
-    sourceValid.textContent = sourceLabel.label;
-    sourceValid.dataset.state = sourceLabel.state;
-  }
-
-  const categories = snap.categories || collectSetupPayload().categories || [];
-  let archiveOk = categories.length > 0;
-  for (const cat of categories) {
-    const result = await validatePath(cat.folder);
-    const label = pathValidationLabel(result);
-    if (label.state !== "ok") archiveOk = false;
-  }
-  setSummaryItem("archives", {
-    state: archiveOk ? "ok" : "warn",
-    label: archiveOk ? "Valid" : "Problem",
-  });
-
-  updateDuplicateFolderWarning(categories);
-  updatePrivacyCopy({
-    provider,
-    remoteOllama: remote,
-    disclaimerAccepted: cloudDisclaimerAccepted,
-  });
-
-  const aiAlert = document.getElementById("settings-ai-alert");
-  if (aiAlert) {
-    if (remote && !document.getElementById("ollama-base-url")?.value?.trim()) {
-      aiAlert.hidden = false;
-      aiAlert.textContent = "Remote Ollama needs a base URL (see Advanced).";
-    } else if (provider === "ollama" && ollama?.missing_models?.length) {
-      aiAlert.hidden = false;
-      aiAlert.textContent = `Missing models: ${ollama.missing_models.join(", ")} (see Advanced to pull).`;
-    } else {
-      aiAlert.hidden = true;
-      aiAlert.textContent = "";
-    }
-  }
-}
-
-function updateDuplicateFolderWarning(categories) {
-  const el = document.getElementById("setup-dup-warning");
-  if (!el) return;
-  const dups = findDuplicateFolders(categories);
-  if (!dups.length) {
-    el.hidden = true;
-    el.textContent = "";
-    return;
-  }
-  const parts = dups.map((d) => `${d.names.join(" & ")} → ${d.folder}`);
-  el.hidden = false;
-  el.textContent = `Possible duplicate folders: ${parts.join("; ")}. This is allowed, but may be confusing.`;
-}
 
 function stopOauthPoll() {
   if (oauthPollTimer) {
@@ -244,7 +54,6 @@ async function selectCloudProvider() {
     toast("Switched to ChatGPT / OpenAI", "ok");
     await refreshHealth();
     await refreshAuth();
-    await renderSettingsSummary({}).catch(() => {});
   } catch (err) {
     toast(String(err.message || err), "error");
   }
@@ -295,7 +104,6 @@ async function selectOllamaProvider({ enable = true, pullMissing = false, remote
       await refreshOllamaStatus();
     }
     await refreshHealth();
-    await renderSettingsSummary({}).catch(() => {});
   } catch (err) {
     toast(String(err.message || err), "error");
   }
@@ -317,9 +125,7 @@ function setDangerStatus(message, tone = "") {
   else delete el.dataset.tone;
 }
 
-function categoryRowHtml(cat = { name: "", folder: "" }, pathState = "unknown") {
-  const pathLabel =
-    pathState === "ok" ? "Valid" : pathState === "err" ? "Problem" : pathState === "warn" ? "Missing" : "";
+function categoryRowHtml(cat = { name: "", folder: "" }) {
   return `<div class="cat-row">
     <label class="field">
       <span>Name</span>
@@ -328,19 +134,16 @@ function categoryRowHtml(cat = { name: "", folder: "" }, pathState = "unknown") 
     <label class="field grow">
       <span>Folder</span>
       <input type="text" class="cat-folder" value="${escapeHtml(cat.folder || "")}" placeholder="/path/to/archive/invoice" />
-      <span class="path-valid cat-path-valid" data-state="${escapeHtml(pathState)}">${escapeHtml(pathLabel)}</span>
     </label>
     <button type="button" class="btn ghost compact cat-remove">Remove</button>
   </div>`;
 }
 
-function renderCategories(categories, pathStates = {}) {
+function renderCategories(categories) {
   const root = document.getElementById("setup-categories");
   if (!root) return;
   const list = categories && categories.length ? categories : [{ name: "other", folder: "" }];
-  root.innerHTML = list
-    .map((c) => categoryRowHtml(c, pathStates[c.folder] || "unknown"))
-    .join("");
+  root.innerHTML = list.map((c) => categoryRowHtml(c)).join("");
 }
 
 function collectSetupPayload() {
@@ -367,7 +170,6 @@ function collectSetupPayload() {
 }
 
 function applySettingsToForm(settings) {
-  lastSettingsSnapshot = settings || {};
   document.getElementById("setup-source").value = settings.source_dir || "";
   renderCategories(settings.categories || []);
   setKnownCategories((settings.categories || []).map((c) => c.name).filter(Boolean));
@@ -379,29 +181,27 @@ function applySettingsToForm(settings) {
   const ocrMode = (settings.ocr || {}).mode || "balanced";
   const ocrSelect = document.getElementById("setup-ocr-mode");
   if (ocrSelect) ocrSelect.value = ocrMode;
+  setSetupStatus(setupStatusLine(settings), "ok");
+}
+
+export function setupStatusLine(settings) {
+  const batch = settings.batch || {};
+  const interval = batch.poll_interval_seconds ?? batch.delay_seconds ?? 30;
   const catCount = (settings.categories || []).length;
   const scan =
     Number(interval) > 0 ? `scans every ${interval}s` : "manual scan only";
-  setSetupStatus(
-    `Source: ${settings.source_dir || "—"} · ${catCount} categor${catCount === 1 ? "y" : "ies"} · ${scan} · OCR ${ocrMode}`,
-    "ok",
-  );
-  updateDuplicateFolderWarning(settings.categories || []);
+  const ocrMode = (settings.ocr || {}).mode || "balanced";
+  const reviewMode =
+    (settings.review || {}).require_approval === false
+      ? "auto-file"
+      : "review required";
+  return `Source: ${settings.source_dir || "—"} · ${catCount} categor${catCount === 1 ? "y" : "ies"} · ${scan} · OCR ${ocrMode} · ${reviewMode}`;
 }
 
 export async function refreshSetup() {
-  pathValidationCache.clear();
   const data = await api("/api/settings");
-  const settings = data.settings || {};
-  applySettingsToForm(settings);
-  const pathStates = {};
-  for (const cat of settings.categories || []) {
-    const result = await validatePath(cat.folder);
-    pathStates[cat.folder] = pathValidationLabel(result).state;
-  }
-  renderCategories(settings.categories || [], pathStates);
-  await renderSettingsSummary({ settings }).catch(() => {});
-  return settings;
+  applySettingsToForm(data.settings || {});
+  return data.settings;
 }
 
 const THEME_PRESETS = ["graphite", "carbon", "slate", "paper"];
@@ -451,7 +251,10 @@ export function applyMockScene() {
 
   // Prefill the Ask view with a canned question and answer.
   const question = document.getElementById("question");
-  if (question) question.value = "Which invoices did I get from Acme this quarter?";
+  if (question) {
+    question.value = "Which invoices did I get from Acme this quarter?";
+    question.dispatchEvent(new Event("input"));
+  }
   hooks.renderAskResult(window.PA_MOCK.ask);
 }
 
@@ -466,6 +269,10 @@ function setUpdateStatus(message, tone = "") {
 function showUpdateButtons({ apply = false, restart = false } = {}) {
   document.getElementById("update-apply").classList.toggle("hidden", !apply);
   document.getElementById("update-restart").classList.toggle("hidden", !restart);
+}
+
+export function updateApplyAllowed(data) {
+  return Boolean(data?.update_available && data?.verifiable && data?.installable !== false);
 }
 
 export async function refreshUpdateVersion() {
@@ -535,33 +342,308 @@ export async function refreshAutostart() {
   return data.autostart;
 }
 
+export function settingsShellHtml() {
+  return `<section class="card auth" id="auth-section" data-ready="false" data-provider="">
+          <div class="auth-bar">
+            <div>
+              <p class="section-kicker">AI</p>
+              <h2>AI provider</h2>
+              <p id="auth-status" class="auth-line">Checking provider…</p>
+            </div>
+            <div class="actions provider-switch" role="group" aria-label="AI provider">
+              <button id="provider-cloud" type="button" class="btn secondary" data-active="false">Cloud (ChatGPT)</button>
+              <button id="provider-ollama" type="button" class="btn secondary" data-active="false">Local Ollama</button>
+              <button id="provider-ollama-remote" type="button" class="btn secondary" data-active="false">Remote Ollama</button>
+            </div>
+          </div>
+
+          <div id="ollama-panel" class="auth-details ollama-panel hidden">
+            <p id="ollama-status" class="auth-line">Checking local Ollama…</p>
+            <p id="ollama-hint" class="fine"></p>
+            <div id="ollama-remote-fields" class="ollama-remote-fields hidden">
+              <label class="field">
+                <span>Ollama base URL</span>
+                <input id="ollama-base-url" type="url" placeholder="http://192.168.1.10:11434" autocomplete="off" />
+              </label>
+              <p class="fine">
+                Remote Ollama sends page images and text to that host — same privacy rules as cloud AI.
+                Approve the disclaimer below before enabling.
+              </p>
+            </div>
+            <div class="actions ollama-actions">
+              <button id="ollama-start" type="button" class="btn secondary" disabled>Start Ollama</button>
+              <button id="ollama-enable" type="button" class="btn primary">Use Ollama</button>
+              <button id="ollama-pull" type="button" class="btn secondary">Pull required models</button>
+              <button id="ollama-unload" type="button" class="btn ghost">Unload model</button>
+              <button id="ollama-restart" type="button" class="btn ghost">Restart Ollama</button>
+              <button id="ollama-refresh" type="button" class="btn ghost">Refresh</button>
+            </div>
+            <p class="fine">
+              Needs a multimodal chat model (default <code>gemma3</code>) plus
+              <code>nomic-embed-text</code> for search.
+              <a class="text-link" href="https://ollama.com/download" target="_blank" rel="noopener">Download Ollama</a>
+            </p>
+          </div>
+
+          <div id="cloud-auth-panel" class="cloud-auth-panel" data-locked="true">
+            <div id="cloud-disclaimer" class="cloud-disclaimer" data-accepted="false">
+              <div class="disclaimer-copy">
+                <p class="section-kicker">Before you continue</p>
+                <p class="disclaimer-lead">Cloud AI sends your documents off this machine.</p>
+                <p class="disclaimer-body">
+                  Page images and extracted text go to ChatGPT, OpenAI, or Gemini for OCR,
+                  filing, and Ask. Storage can stay local — processing does not.
+                  Use <span class="disclaimer-em">Local Ollama</span> to keep AI on-device.
+                  <span class="disclaimer-em">Remote Ollama</span> also leaves this machine.
+                </p>
+              </div>
+              <label class="disclaimer-check">
+                <input type="checkbox" id="cloud-disclaimer-accept" />
+                <span class="disclaimer-check-box" aria-hidden="true"></span>
+                <span class="disclaimer-check-label">I approve cloud processing for my documents</span>
+              </label>
+            </div>
+
+            <div class="auth-bar cloud-auth-bar">
+              <div class="actions">
+                <button id="oauth-start" type="button" class="btn primary" disabled>Sign in with ChatGPT</button>
+                <button id="auth-toggle" type="button" class="btn ghost" disabled>More options</button>
+                <button id="auth-logout" type="button" class="btn ghost">Log out</button>
+              </div>
+            </div>
+
+            <div id="auth-details" class="auth-details hidden">
+              <div id="oauth-panel" class="oauth hidden">
+                <p id="oauth-hint" class="fine"></p>
+                <a id="oauth-link" class="text-link" href="#" target="_blank" rel="noopener">Open ChatGPT login</a>
+                <label class="field">
+                  <span>Paste callback URL if redirect fails</span>
+                  <textarea id="oauth-paste" rows="2" placeholder="http://localhost:1455/auth/callback?code=…"></textarea>
+                </label>
+                <button id="oauth-complete" type="button" class="btn primary">Complete sign-in</button>
+              </div>
+
+              <form id="api-key-form" class="key-row">
+                <label class="field grow">
+                  <span>OpenAI API key</span>
+                  <input type="password" id="api-key" placeholder="sk-…" autocomplete="off" disabled />
+                </label>
+                <button type="submit" class="btn secondary" disabled>Save key</button>
+                <button id="auth-refresh" type="button" class="btn ghost">Refresh</button>
+              </form>
+              <details class="debug">
+                <summary>Auth details</summary>
+                <pre id="auth-out" class="out"></pre>
+              </details>
+            </div>
+          </div>
+        </section>
+
+        <section class="card auth setup" id="setup-section">
+          <div class="auth-bar">
+            <div>
+              <p class="section-kicker">Filing</p>
+              <h2>Filing &amp; scanning</h2>
+              <p id="setup-status" class="auth-line">Configure source folder, categories, and inbox scanning.</p>
+            </div>
+            <div class="actions">
+              <button id="setup-save" type="button" class="btn primary">Save setup</button>
+            </div>
+          </div>
+
+          <div id="setup-details" class="auth-details">
+            <label class="field">
+              <span>Source folder (inbox)</span>
+              <input type="text" id="setup-source" placeholder="/path/to/inbox" autocomplete="off" />
+            </label>
+
+            <div class="setup-cats">
+              <div class="setup-cats-head">
+                <h3>Document categories</h3>
+                <button id="setup-add-category" type="button" class="btn ghost compact">Add category</button>
+              </div>
+              <p class="fine">Map each category name to an archive folder. An <code>other</code> category is required.</p>
+              <div id="setup-categories" class="cat-list"></div>
+            </div>
+
+            <div class="setup-batch">
+              <h3>Inbox scanning</h3>
+              <p class="fine">How often the agent should look for new files in the source folder and process them automatically.</p>
+              <div class="batch-row">
+                <label class="field narrow">
+                  <span>Poll interval (seconds)</span>
+                  <input type="number" id="setup-poll-interval" min="0" step="1" value="30" />
+                </label>
+                <p class="fine batch-hint">Use <code>0</code> for manual processing only (Process inbox button).</p>
+              </div>
+            </div>
+
+            <div class="setup-batch">
+              <h3>OCR accuracy</h3>
+              <p class="fine">
+                How aggressively to reuse a PDF’s embedded text versus calling AI vision OCR.
+                Scanned pages without a usable text layer still use vision in every mode.
+              </p>
+              <label class="field">
+                <span>Mode</span>
+                <select id="setup-ocr-mode">
+                  <option value="fast">Fast — use embedded text when present; vision only if nearly empty</option>
+                  <option value="balanced" selected>Balanced — use good embedded text; vision for weak/garbled pages</option>
+                  <option value="maximum">Maximum — always vision OCR every page</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="setup-batch">
+              <h3>Human review</h3>
+              <label class="check-field">
+                <input type="checkbox" id="setup-require-approval" checked />
+                <span>Require approval before filing — every proposal waits in Review until you approve it</span>
+              </label>
+              <p class="fine">When off, documents are filed automatically. Suspected duplicates always stop for review.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="card auth hidden" id="autostart-section">
+          <div class="auth-bar">
+            <div>
+              <p class="section-kicker">System</p>
+              <h2>Autostart</h2>
+              <p id="autostart-status" class="auth-line">Checking autostart…</p>
+            </div>
+          </div>
+          <label class="check-field">
+            <input type="checkbox" id="autostart-toggle" />
+            <span>Start PaperlessAgent when the system boots</span>
+          </label>
+          <p id="autostart-hint" class="fine">
+            Installs a systemd user service, enables it across reboots, and keeps the web UI available at boot.
+          </p>
+        </section>
+
+        <section class="card auth" id="appearance-section">
+          <div class="auth-bar">
+            <div>
+              <p class="section-kicker">Appearance</p>
+              <h2>Look &amp; feel</h2>
+              <p class="auth-line">Pick a preset. Applies instantly and is remembered in this browser.</p>
+            </div>
+          </div>
+          <div class="theme-grid" id="theme-grid">
+            <button type="button" class="theme-card" data-theme-preset="graphite">
+              <span class="theme-preview" data-preview="graphite" aria-hidden="true">
+                <span class="tp-side"></span>
+                <span class="tp-body">
+                  <span class="tp-accent"></span>
+                  <span class="tp-line"></span>
+                  <span class="tp-line short"></span>
+                </span>
+              </span>
+              <span class="theme-name">Graphite</span>
+              <span class="theme-desc">Dark · steel cyan</span>
+            </button>
+            <button type="button" class="theme-card" data-theme-preset="carbon">
+              <span class="theme-preview" data-preview="carbon" aria-hidden="true">
+                <span class="tp-side"></span>
+                <span class="tp-body">
+                  <span class="tp-accent"></span>
+                  <span class="tp-line"></span>
+                  <span class="tp-line short"></span>
+                </span>
+              </span>
+              <span class="theme-name">Carbon</span>
+              <span class="theme-desc">Black · amber</span>
+            </button>
+            <button type="button" class="theme-card" data-theme-preset="slate">
+              <span class="theme-preview" data-preview="slate" aria-hidden="true">
+                <span class="tp-side"></span>
+                <span class="tp-body">
+                  <span class="tp-accent"></span>
+                  <span class="tp-line"></span>
+                  <span class="tp-line short"></span>
+                </span>
+              </span>
+              <span class="theme-name">Slate</span>
+              <span class="theme-desc">Light · teal</span>
+            </button>
+            <button type="button" class="theme-card" data-theme-preset="paper">
+              <span class="theme-preview" data-preview="paper" aria-hidden="true">
+                <span class="tp-side"></span>
+                <span class="tp-body">
+                  <span class="tp-accent"></span>
+                  <span class="tp-line"></span>
+                  <span class="tp-line short"></span>
+                </span>
+              </span>
+              <span class="theme-name">Paper</span>
+              <span class="theme-desc">Warm · terracotta</span>
+            </button>
+          </div>
+
+          <div class="mock-block">
+            <label class="check-field">
+              <input type="checkbox" id="ask-examples-toggle" checked />
+              <span>Show example questions on the Ask empty state</span>
+            </label>
+            <p class="fine">Suggested prompts under Ask when the thread is empty. Stored in this browser only.</p>
+          </div>
+
+          <div class="mock-block">
+            <label class="check-field">
+              <input type="checkbox" id="mock-toggle" />
+              <span>Mockup mode — fill every view with demo data for screenshots</span>
+            </label>
+            <p class="fine">Client-side only: nothing is read from or written to your archive while enabled. Also available via <code>?mock=1</code> in the URL.</p>
+          </div>
+        </section>
+
+        <section class="card auth" id="update-section">
+          <div class="auth-bar">
+            <div>
+              <p class="section-kicker">Updates</p>
+              <h2>Software update</h2>
+              <p id="update-status" class="auth-line">Version —</p>
+            </div>
+            <div class="actions">
+              <button id="update-check" type="button" class="btn secondary">
+                <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg>
+                Check for updates
+              </button>
+              <button id="update-apply" type="button" class="btn primary hidden">Download &amp; install</button>
+              <button id="update-restart" type="button" class="btn primary hidden">Restart now</button>
+            </div>
+          </div>
+          <p class="fine">Updates are downloaded from <a id="update-repo-link" class="text-link" href="#" target="_blank" rel="noopener">GitHub</a>. Your documents, settings, and credentials are kept.</p>
+          <pre id="update-notes" class="out hidden"></pre>
+        </section>
+
+        <section class="card auth danger-zone">
+          <div class="auth-bar">
+            <div>
+              <p class="section-kicker">Danger</p>
+              <h2>Danger zone</h2>
+              <p class="auth-line">Delete tracked archive files (inside configured archive folders only), supported inbox scans, metadata, and the RAG index. Category folders are never wiped recursively. Setup settings are kept.</p>
+            </div>
+            <div class="actions">
+              <button id="clear-all-data" type="button" class="btn ghost danger">
+                Remove all stored data
+              </button>
+            </div>
+          </div>
+          <p id="danger-status" class="status-line" aria-live="polite"></p>
+        </section>`;
+}
+
+export function mountSettingsShell() {
+  const host = document.getElementById("settings");
+  if (!host || host.querySelector("#auth-section")) return host;
+  host.innerHTML = settingsShellHtml();
+  return host;
+}
+
 export function initSettings() {
-  document.getElementById("settings-nav")?.addEventListener("click", (event) => {
-    const link = event.target.closest("a[href^='#']");
-    if (!link) return;
-    const id = link.getAttribute("href")?.slice(1);
-    const target = id ? document.getElementById(id) : null;
-    if (!target) return;
-    event.preventDefault();
-    target.scrollIntoView({ behavior: "smooth", block: "start" });
-    target.focus?.({ preventScroll: true });
-  });
-
-  document.querySelectorAll(".settings-advanced").forEach((details) => {
-    const sync = () => {
-      details.setAttribute("aria-expanded", details.open ? "true" : "false");
-    };
-    sync();
-    details.addEventListener("toggle", sync);
-  });
-
-  document.getElementById("setup-categories")?.addEventListener("change", () => {
-    updateDuplicateFolderWarning(collectSetupPayload().categories);
-  });
-  document.getElementById("setup-categories")?.addEventListener("input", () => {
-    updateDuplicateFolderWarning(collectSetupPayload().categories);
-  });
-
+  mountSettingsShell();
   document.getElementById("cloud-disclaimer-accept")?.addEventListener("change", async (event) => {
     const checked = Boolean(event.target?.checked);
     try {
@@ -587,7 +669,6 @@ export function initSettings() {
         toast("Cloud sign-in and API keys are locked until you approve again", "warn");
         showAuthDetails(false);
       }
-      await renderSettingsSummary({}).catch(() => {});
     } catch (err) {
       event.target.checked = !checked;
       toast(String(err.message || err), "error");
@@ -881,6 +962,31 @@ export function initSettings() {
     btn.closest(".cat-row")?.remove();
   });
 
+  document.getElementById("setup-require-approval")?.addEventListener("change", async (e) => {
+    const box = e.target;
+    const wanted = Boolean(box?.checked);
+    try {
+      const payload = collectSetupPayload();
+      const data = await api("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      applySettingsToForm(data.settings || payload);
+      toast(
+        wanted
+          ? "New scans wait in Review"
+          : "New scans will file automatically",
+        "ok",
+      );
+    } catch (err) {
+      if (box) box.checked = !wanted;
+      const msg = String(err.message || err);
+      setSetupStatus(msg, "err");
+      toast(msg, "error");
+    }
+  });
+
   document.getElementById("setup-save").addEventListener("click", async () => {
     const btn = document.getElementById("setup-save");
     btn.disabled = true;
@@ -892,17 +998,7 @@ export function initSettings() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      pathValidationCache.clear();
       applySettingsToForm(data.settings || payload);
-      const settings = data.settings || payload;
-      const pathStates = {};
-      for (const cat of settings.categories || []) {
-        const result = await validatePath(cat.folder);
-        pathStates[cat.folder] = pathValidationLabel(result).state;
-      }
-      renderCategories(settings.categories || [], pathStates);
-      await renderSettingsSummary({ settings }).catch(() => {});
-      setSetupStatus("Setup saved.", "ok");
       toast("Setup saved", "ok");
     } catch (err) {
       setSetupStatus(String(err.message || err), "err");
@@ -917,6 +1013,14 @@ export function initSettings() {
     if (!btn) return;
     applyTheme(btn.dataset.themePreset);
   });
+
+  const askExamplesToggle = document.getElementById("ask-examples-toggle");
+  if (askExamplesToggle) {
+    askExamplesToggle.checked = areAskExamplesEnabled();
+    askExamplesToggle.addEventListener("change", (e) => {
+      setAskExamplesEnabled(e.target.checked);
+    });
+  }
 
   document.getElementById("mock-toggle").addEventListener("change", (e) => {
     window.PA_MOCK?.setEnabled(e.target.checked);
@@ -944,7 +1048,17 @@ export function initSettings() {
         return;
       }
       if (data.update_available) {
-        if (data.verifiable) {
+        if (data.installable === false) {
+          const link = data.appimage_url || data.html_url;
+          setUpdateStatus(
+            `Update available: v${data.current_version} → v${data.latest_version}. ` +
+              "This AppImage cannot update in place — download the new AppImage from GitHub" +
+              (link ? ` (${link})` : "") +
+              ".",
+            "warn",
+          );
+          showUpdateButtons({});
+        } else if (updateApplyAllowed(data)) {
           setUpdateStatus(
             `Update available: v${data.current_version} → v${data.latest_version} (SHA-256 verified)`,
             "warn",

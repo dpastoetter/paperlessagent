@@ -15,7 +15,23 @@ from paperless_agent.ollama_url import (
 
 load_dotenv()
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+def resolve_project_root() -> Path:
+    """Install prefix; AppImage sets PAPERLESS_PROJECT_ROOT to the overlay."""
+    override = os.getenv("PAPERLESS_PROJECT_ROOT", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    return Path(__file__).resolve().parent.parent
+
+
+def running_as_appimage() -> bool:
+    """True when launched from an AppImage (runtime APPIMAGE path or our flag)."""
+    if os.getenv("APPIMAGE", "").strip():
+        return True
+    return os.getenv("PAPERLESS_APPIMAGE", "").strip().lower() in {"1", "true", "yes"}
+
+
+PROJECT_ROOT = resolve_project_root()
 DATA_DIR = Path(os.getenv("DATA_DIR", PROJECT_ROOT / "data")).expanduser().resolve()
 INBOX_DIR = DATA_DIR / "inbox"
 ARCHIVE_DIR = DATA_DIR / "archive"

@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
-from app.deps import client_host, request_is_https, require_cloud_disclaimer_or_403
+from app.deps import peer_host, request_is_https, require_cloud_disclaimer_or_403
 from app.schemas import (
     ApiKeyRequest,
     CloudDisclaimerRequest,
@@ -67,8 +67,10 @@ router = APIRouter(tags=["auth"])
 @router.get("/api/auth/session/status")
 def api_session_status(request: Request) -> dict[str, Any]:
     """Whether API auth is required and whether this browser already has a session."""
-    peer = client_host(request)
-    required = auth_required_for_request(client_host=peer) and bool(get_api_token())
+    required = auth_required_for_request(
+        peer_host=peer_host(request),
+        host_header=request.headers.get("host"),
+    ) and bool(get_api_token())
     cookie = request.cookies.get(COOKIE_NAME)
     return {
         "status": "success",

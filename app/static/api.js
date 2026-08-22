@@ -1,3 +1,5 @@
+import { setBackgroundInert } from "./keyboard.js";
+
 export function formatApiError(data, fallback = "Request failed") {
   const detail = data?.detail ?? data?.error;
   if (typeof detail === "string" && detail.trim()) return detail;
@@ -58,7 +60,7 @@ export async function api(path, options = {}) {
   // from cross-site form posts (browsers cannot attach it without CORS).
   headers.set("X-Requested-With", "PaperlessAgent");
   // Auth is the HttpOnly pa_session cookie (set via POST /api/auth/session or
-  // loopback bootstrap). Never put PAPERLESS_API_TOKEN in JS / sessionStorage.
+  // direct loopback bootstrap). Never put PAPERLESS_API_TOKEN in JS / sessionStorage.
   let body = options.body;
   if (
     body != null &&
@@ -95,21 +97,43 @@ export async function ensureBrowserSession() {
     showSessionUnlock();
     return false;
   } catch (_err) {
+    // Fail open for local use; never leave a stuck unlock overlay / inert shell.
+    hideSessionUnlock();
     return true;
   }
 }
 
 function showSessionUnlock() {
   const panel = document.getElementById("session-unlock");
-  if (panel) panel.classList.remove("hidden");
+  if (!panel) return;
+  panel.hidden = false;
+  panel.classList.remove("hidden");
+  const input = document.getElementById("session-unlock-token");
+  if (input) input.disabled = false;
+  setBackgroundInert(true, { mode: "shell" });
+  window.requestAnimationFrame(() => {
+    input?.focus();
+  });
 }
 
 function hideSessionUnlock() {
   const panel = document.getElementById("session-unlock");
-  if (panel) panel.classList.add("hidden");
+  if (panel) {
+    panel.hidden = true;
+    panel.classList.add("hidden");
+  }
+  const input = document.getElementById("session-unlock-token");
+  if (input) {
+    input.disabled = true;
+    input.value = "";
+  }
+  // Always clear shell inert — even if the panel was already hidden.
+  setBackgroundInert(false, { mode: "shell" });
 }
 
 export function initSessionUnlock() {
+  // Ensure the unlock overlay cannot block local use before session check finishes.
+  hideSessionUnlock();
   const form = document.getElementById("session-unlock-form");
   if (!form) return;
   form.addEventListener("submit", async (e) => {
@@ -313,7 +337,7 @@ export function setProviderUi(provider, { remoteOllama = false } = {}) {
   lastProvider = provider || "";
   ollamaRemoteMode = provider === "ollama" && Boolean(remoteOllama);
   const section =
-    document.getElementById("settings-ai") || document.getElementById("auth-section");
+    document.getElementById("auth-section") || document.getElementById("settings-ai");
   const ollamaPanel = document.getElementById("ollama-panel");
   const cloudPanel = document.getElementById("cloud-auth-panel");
   const remoteFields = document.getElementById("ollama-remote-fields");
@@ -327,12 +351,18 @@ export function setProviderUi(provider, { remoteOllama = false } = {}) {
   // Remote Ollama reuses the cloud privacy disclaimer (documents leave this machine).
   if (cloudPanel) cloudPanel.classList.toggle("hidden", isOllama && !ollamaRemoteMode);
   if (remoteFields) remoteFields.classList.toggle("hidden", !ollamaRemoteMode);
-  if (cloudBtn) cloudBtn.dataset.active = !isOllama ? "true" : "false";
-  if (ollamaBtn) ollamaBtn.dataset.active = isOllama && !ollamaRemoteMode ? "true" : "false";
-  if (remoteBtn) remoteBtn.dataset.active = ollamaRemoteMode ? "true" : "false";
-
-  const advanced = document.getElementById("settings-ai-advanced");
-  if (advanced && ollamaRemoteMode) advanced.open = true;
+  if (cloudBtn) {
+    cloudBtn.dataset.active = !isOllama ? "true" : "false";
+    cloudBtn.setAttribute("aria-pressed", !isOllama ? "true" : "false");
+  }
+  if (ollamaBtn) {
+    ollamaBtn.dataset.active = isOllama && !ollamaRemoteMode ? "true" : "false";
+    ollamaBtn.setAttribute("aria-pressed", isOllama && !ollamaRemoteMode ? "true" : "false");
+  }
+  if (remoteBtn) {
+    remoteBtn.dataset.active = ollamaRemoteMode ? "true" : "false";
+    remoteBtn.setAttribute("aria-pressed", ollamaRemoteMode ? "true" : "false");
+  }
 
   const enableBtn = document.getElementById("ollama-enable");
   if (enableBtn) enableBtn.textContent = ollamaRemoteMode ? "Use remote Ollama" : "Use Ollama";
@@ -352,7 +382,7 @@ export function renderOllamaStatus(ollama) {
   const statusEl = document.getElementById("ollama-status");
   const hintEl = document.getElementById("ollama-hint");
   const section =
-    document.getElementById("settings-ai") || document.getElementById("auth-section");
+    document.getElementById("auth-section") || document.getElementById("settings-ai");
   const pullBtn = document.getElementById("ollama-pull");
   const startBtn = document.getElementById("ollama-start");
   if (!ollama) {
@@ -449,7 +479,7 @@ export function renderAuthStatus(auth) {
     return;
   }
   const section =
-    document.getElementById("settings-ai") || document.getElementById("auth-section");
+    document.getElementById("auth-section") || document.getElementById("settings-ai");
   const el = document.getElementById("auth-status");
   if (!auth) {
     if (el) el.textContent = "Auth status unavailable";

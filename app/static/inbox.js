@@ -33,6 +33,93 @@ const state = {
   nextId: 1,
 };
 
+export function inboxShellHtml() {
+  return `<div class="inbox-grid">
+          <section class="card inbox-add">
+            <h2 class="card-title">
+              <svg class="icon" aria-hidden="true"><use href="#i-upload" /></svg>
+              Add scans
+            </h2>
+            <form id="upload-form" class="upload" aria-label="Add scans to inbox">
+              <div class="drop-zone" id="drop-zone" data-state="idle">
+                <input type="file" id="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,.bmp,image/*" multiple />
+                <label class="drop-visual" for="file">
+                  <span class="drop-mark" aria-hidden="true">+</span>
+                  <span class="drop-cue">Drop scans or browse</span>
+                  <span class="drop-sub">PDF or image · multiple files OK</span>
+                </label>
+              </div>
+
+              <div id="staging-panel" class="staging-panel" hidden>
+                <div class="staging-head">
+                  <p id="staging-meta" class="staging-totals"></p>
+                  <div class="staging-head-actions">
+                    <button type="button" class="btn ghost compact" id="clear-staged">Clear staged</button>
+                    <button type="button" class="btn ghost compact" id="retry-failed" hidden>Retry failed</button>
+                  </div>
+                </div>
+                <ul id="staging-list" class="staging-list" aria-label="Staged scans"></ul>
+                <button type="button" class="btn secondary stretch" id="upload-staged">Upload scans</button>
+              </div>
+              <p id="upload-live" class="sr-only" aria-live="polite"></p>
+            </form>
+
+            <p id="inbox-summary" class="status-line">Inbox: checking…</p>
+            <p id="process-status" class="status-line" aria-live="polite"></p>
+            <p id="process-review-link" class="process-review-link" hidden>
+              <a class="btn primary compact" href="#/review">Review documents</a>
+            </p>
+
+            <div class="inbox-actions">
+              <button id="process-inbox" type="button" class="btn primary stretch" disabled>
+                <svg class="icon" aria-hidden="true"><use href="#i-play" /></svg>
+                Process inbox
+              </button>
+              <div class="inbox-actions-secondary">
+                <button id="refresh-inbox" type="button" class="btn ghost">
+                  <svg class="icon" aria-hidden="true"><use href="#i-refresh" /></svg>
+                  Refresh
+                </button>
+                <button id="clear-inbox" type="button" class="btn ghost danger" disabled>Remove all</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="card workflow" id="workflow" data-state="idle">
+            <header class="workflow-head">
+              <div>
+                <p class="section-kicker">Workflow</p>
+                <p id="workflow-title" class="workflow-title">Waiting for files…</p>
+              </div>
+              <p id="workflow-count" class="workflow-count"></p>
+            </header>
+            <p id="workflow-now" class="workflow-now" data-idle="true">
+              <strong class="workflow-now-step"></strong><span class="workflow-now-detail"></span><span class="workflow-now-elapsed"></span>
+            </p>
+            <ol id="pipeline" class="pipeline" aria-label="Ingest pipeline steps"></ol>
+            <div class="job-queue-wrap">
+              <p class="section-kicker">Queue</p>
+              <ul id="job-queue" class="job-queue">
+                <li class="queue-empty">No active job</li>
+              </ul>
+            </div>
+          </section>
+        </div>
+
+        <details class="debug card">
+          <summary>Console</summary>
+          <pre id="inbox-out" class="out"></pre>
+          <pre id="process-out" class="out"></pre>
+        </details>`;
+}
+
+export function mountInboxShell() {
+  const host = document.getElementById("inbox");
+  if (!host || host.querySelector("#upload-form")) return host;
+  host.innerHTML = inboxShellHtml();
+  return host;
+}
+
 export function setProcessStatus(message, tone = "") {
   const el = document.getElementById("process-status");
   if (!el) return;
@@ -408,6 +495,7 @@ function setProcessOutcomeUi({ pendingCount, filedNames, errors, processed }) {
 }
 
 export function initInbox() {
+  mountInboxShell();
   const fileInput = document.getElementById("file");
   const dropZone = document.getElementById("drop-zone");
 

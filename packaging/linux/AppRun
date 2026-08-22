@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# PaperlessAgent AppImage entrypoint.
+# Do not prepend a global LD_LIBRARY_PATH: host WebKitGTK/GTK must win for the
+# desktop window. Bundled pdftoppm/pdfinfo use RPATH instead.
+set -euo pipefail
+
+SELF="$(readlink -f "$0")"
+HERE="${APPDIR:-$(dirname "$SELF")}"
+
+export APPDIR="$HERE"
+export PAPERLESS_APPIMAGE="${PAPERLESS_APPIMAGE:-1}"
+export PAPERLESS_PROJECT_ROOT="${PAPERLESS_PROJECT_ROOT:-$HERE/opt/paperlessagent}"
+export DATA_DIR="${DATA_DIR:-$HOME/.local/share/paperlessagent}"
+export PYTHONNOUSERSITE=1
+export PYTHONPATH="${PAPERLESS_PROJECT_ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+
+export PATH="$HERE/usr/bin:${PATH:-}"
+
+cd "$PAPERLESS_PROJECT_ROOT"
+
+exec "$HERE/usr/bin/python3" -m paperless_agent.desktop "$@"

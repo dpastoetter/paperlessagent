@@ -23,8 +23,8 @@ def test_step_labels_are_human_readable():
         "ai_ocr",
         "extract",
         "name",
-        "review",
         "file",
+        "review",
         "index",
     ]
     assert all(s.get("description") for s in PIPELINE_STEPS)

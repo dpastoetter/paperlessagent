@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ from google.adk.agents import Agent
 from paperless_agent.job_control import raise_if_cancelled
 from paperless_agent.llm import get_model
 from paperless_agent.progress import emit_step_sync, llm_busy_detail, step_label
+from paperless_agent.prompt_safety import UNTRUSTED_CONTENT_POLICY
 from paperless_agent.settings import get_category_names, get_source_dir
 from paperless_agent.tools.filesystem import (
     move_to_archive,
@@ -39,6 +41,8 @@ def file_and_persist(
     full_text: str | None = None,
     checksum: str | None = None,
     content_hash: str | None = None,
+    *,
+    after_file: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """
     File the source into the archive, save SQLite metadata, and RAG-index it.
@@ -138,6 +142,8 @@ def file_and_persist(
         detail=moved.get("archive_path"),
         filename=source_name,
     )
+    if after_file is not None:
+        after_file()
 
     document_id = saved["document_id"]
     text_for_index = full_text or summary or ""
@@ -180,7 +186,7 @@ def file_and_persist(
 
 def build_pipeline_agent() -> Agent:
     """
-    Single ADK agent for `adk web` debugging.
+    Single ADK agent for local `adk web` debugging (loopback only).
 
     Production ingest uses paperless_agent.ingest.ingest_document to avoid
     SequentialAgent session-state template failures with Codex streaming.
@@ -193,6 +199,7 @@ def build_pipeline_agent() -> Agent:
         description="Ingests a scanned document into the local paperless archive.",
         instruction=(
             "You ingest one scanned document into a personal archive.\n"
+            f"{UNTRUSTED_CONTENT_POLICY}\n"
             f"Allowed doc_type values: {type_list}.\n"
             f"Tools only accept source paths inside the inbox: {inbox}. "
             "Paths outside that directory are rejected by the tools themselves.\n"

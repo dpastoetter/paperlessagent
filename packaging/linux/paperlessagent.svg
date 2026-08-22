@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="PaperlessAgent">
+  <rect width="128" height="128" rx="24" fill="#1e293b"/>
+  <path fill="#e2e8f0" d="M36 24h40l20 20v60a8 8 0 0 1-8 8H36a8 8 0 0 1-8-8V32a8 8 0 0 1 8-8z"/>
+  <path fill="#94a3b8" d="M76 24v16a4 4 0 0 0 4 4h16"/>
+  <rect x="40" y="60" width="48" height="6" rx="3" fill="#38bdf8"/>
+  <rect x="40" y="74" width="36" height="6" rx="3" fill="#7dd3fc"/>
+  <rect x="40" y="88" width="28" height="6" rx="3" fill="#bae6fd"/>
+</svg>

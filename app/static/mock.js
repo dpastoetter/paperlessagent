@@ -14,9 +14,6 @@
     // private mode
   }
   const enabled = param !== null ? param !== "0" : stored === "1";
-  const needsAttention =
-    param === "attention" ||
-    new URLSearchParams(window.location.search).get("needs_attention") === "1";
 
   const DOCS = [
     {
@@ -332,9 +329,8 @@
       "id",
       "other",
     ].map((name) => ({ name, folder: `/home/demo/Paperless/archive/${name}` })),
-    batch: { poll_interval_seconds: needsAttention ? 0 : 30 },
+    batch: { poll_interval_seconds: 30 },
     review: { require_approval: true },
-    ocr: { mode: "balanced" },
   };
 
   const ASK = {
@@ -371,14 +367,14 @@
   const AUTH = {
     status: "success",
     auth_mode: "chatgpt_oauth",
-    openai_ready: !needsAttention,
-    chatgpt_email: needsAttention ? null : "demo@paperless.app",
-    chatgpt_plan: needsAttention ? null : "plus",
+    openai_ready: true,
+    chatgpt_email: "demo@paperless.app",
+    chatgpt_plan: "plus",
   };
 
   const OLLAMA = {
     active: false,
-    ready: !needsAttention,
+    ready: false,
     reachable: true,
     listening: true,
     can_start: false,
@@ -386,10 +382,10 @@
     is_local: true,
     base_url: "http://localhost:11434",
     version: "0.6.0",
-    installed_models: needsAttention ? [] : ["gemma3:latest", "nomic-embed-text:latest"],
+    installed_models: ["gemma3:latest", "nomic-embed-text:latest"],
     chat_model: "gemma3",
     embedding_model: "nomic-embed-text",
-    missing_models: needsAttention ? ["gemma3", "nomic-embed-text"] : [],
+    missing_models: [],
     pull_command: "",
     compute: "cpu",
     compute_label: "CPU",
@@ -413,15 +409,10 @@
     [/^\/api\/diagnostics/, () => ({
       status: "ok",
       version: "0.0.0-mock",
-      llm_provider: needsAttention ? "ollama" : "openai",
-      model: needsAttention ? "gemma3" : "gpt-5",
+      llm_provider: "openai",
+      model: "gpt-5",
       auth: AUTH,
-      ollama: needsAttention ? { ...OLLAMA, active: true } : undefined,
-      cloud_disclaimer: {
-        version: "1",
-        accepted: !needsAttention,
-        accepted_at: needsAttention ? null : "2026-01-01T00:00:00+00:00",
-      },
+      cloud_disclaimer: { version: "1", accepted: true, accepted_at: "2026-01-01T00:00:00+00:00" },
       usage: {
         requests: 12,
         chat_requests: 10,
@@ -429,19 +420,15 @@
         prompt_tokens: 8400,
         completion_tokens: 2100,
         total_tokens: 10500,
-        last_provider: needsAttention ? "ollama" : "openai",
-        last_model: needsAttention ? "gemma3" : "gpt-5",
+        last_provider: "openai",
+        last_model: "gpt-5",
         last_kind: "chat",
         updated_at: "2026-01-01T00:00:00+00:00",
       },
     })],
     [/^\/api\/auth\/status/, () => ({
       ...AUTH,
-      cloud_disclaimer: {
-        version: "1",
-        accepted: !needsAttention,
-        accepted_at: needsAttention ? null : "2026-01-01T00:00:00+00:00",
-      },
+      cloud_disclaimer: { version: "1", accepted: true, accepted_at: "2026-01-01T00:00:00+00:00" },
     })],
     [
       /^\/api\/privacy\/cloud-disclaimer/,
@@ -587,27 +574,6 @@
       autostart: { supported: true, enabled: true, active: true, url: "http://127.0.0.1:8080" },
     })],
     [/^\/api\/settings$/, () => ({ status: "success", settings: SETTINGS })],
-    [
-      /^\/api\/settings\/validate-path/,
-      (_path, options = {}) => {
-        let body = {};
-        try {
-          body = typeof options.body === "string" ? JSON.parse(options.body) : options.body || {};
-        } catch (_err) {
-          body = {};
-        }
-        const path = String(body.path || "");
-        const missing = needsAttention && /inbox|archive/.test(path) === false;
-        const ok = Boolean(path) && !missing && !path.includes("missing");
-        return {
-          status: ok ? "success" : "error",
-          path,
-          exists: ok,
-          is_dir: ok,
-          error: ok ? null : "Path not found",
-        };
-      },
-    ],
     // Intentionally do NOT mock /api/update/status — Software update must show
     // the real installed version vs GitHub, even in mockup mode.
     [/^\/api\/ask$/, () => ASK],
@@ -645,7 +611,6 @@
 
   window.PA_MOCK = {
     enabled,
-    needsAttention,
     respond,
     setEnabled,
     ask: ASK,

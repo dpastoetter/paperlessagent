@@ -172,11 +172,28 @@ def assert_bind_allowed(host: str | None) -> None:
     )
 
 
-def auth_required_for_request(*, client_host: str | None) -> bool:
-    """Bearer/cookie auth is required when a token is configured or the peer is remote."""
+def is_direct_loopback_request(*, peer_host: str | None, host_header: str | None) -> bool:
+    """True only for a browser hitting the app directly on loopback.
+
+    Requires a loopback TCP peer *and* a loopback Host header. A peer listed in
+    PAPERLESS_TRUSTED_PROXIES is the reverse-proxy hop, not the user — even when
+    that hop is 127.0.0.1. X-Forwarded-* is ignored (never an auth signal).
+    """
+    if not peer_host or not host_header:
+        return False
+    if is_trusted_proxy(peer_host):
+        return False
+    return is_loopback_hostname(peer_host) and is_loopback_hostname(host_header)
+
+
+def auth_required_for_request(*, peer_host: str | None, host_header: str | None = None) -> bool:
+    """Bearer/cookie auth is required unless this is a genuine direct loopback client.
+
+    A configured API token always requires auth. X-Forwarded-* is never used here.
+    """
     if get_api_token():
         return True
-    return not is_loopback_hostname(client_host)
+    return not is_direct_loopback_request(peer_host=peer_host, host_header=host_header)
 
 
 def extract_bearer_token(authorization: str | None) -> str | None:
@@ -237,21 +254,19 @@ def forwarded_client_host(
     x_forwarded_for: str | None,
 ) -> str | None:
     """
-    Resolve the browser/client host.
+    Resolve the browser/client host for logging / HTTPS detection.
 
-    X-Forwarded-For is only honored when the immediate peer is in
-    PAPERLESS_TRUSTED_PROXIES; otherwise the peer address is used as-is.
+    X-Forwarded-For is only honored when the immediate TCP peer is in
+    PAPERLESS_TRUSTED_PROXIES. The chain is walked right-to-left: trusted
+    proxies at the near end are discarded and the first untrusted hop is
+    the client. This value must never be used to grant authentication.
     """
     if not is_trusted_proxy(peer_host):
         return peer_host
     if not x_forwarded_for:
         return peer_host
-    # Left-most is the original client in the common proxy chain form.
-    for part in x_forwarded_for.split(","):
-        candidate = part.strip()
-        if not candidate:
-            continue
-        # Skip proxies we already trust so we land on the external client.
+    hops = [part.strip() for part in x_forwarded_for.split(",") if part.strip()]
+    for candidate in reversed(hops):
         if is_trusted_proxy(candidate):
             continue
         return candidate
@@ -271,5 +286,5 @@ def request_appears_https(
         return False
     if not x_forwarded_proto:
         return False
-    proto = x_forwarded_proto.split(",", 1)[0].strip().lower()
+    proto = x_forwarded_proto.split(",")[-1].strip().lower()
     return proto == "https"

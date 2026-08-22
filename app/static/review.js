@@ -6,9 +6,13 @@ import {
   referenceIdsToString,
   toast,
 } from "./api.js";
+import { isTypingTarget } from "./keyboard.js";
 import { knownCategories, hooks } from "./state.js";
 import { fetchDocumentBlob, openDocumentFile } from "./ask.js";
+import { mountPdfPreview } from "./pdf-preview.js";
 import { currentView } from "./router.js";
+
+export { isTypingTarget };
 
 /** @typedef {{ filename: string|null, doc_type: string|null, doc_date: string|null, subject: string|null, counterparties: string|null, reference_ids: string[], summary: string|null, amount: number|null, currency: string|null }} ReviewOverrides */
 
@@ -17,23 +21,26 @@ const state = {
   selectedId: /** @type {string|null} */ (null),
   baseline: /** @type {ReviewOverrides|null} */ (null),
   preview: /** @type {{ revoke: () => void } | null} */ (null),
+  previewUnmount: /** @type {null | (() => void)} */ (null),
   previewCollapsed: false,
   loadToken: 0,
 };
 
 export function updateReviewBadge(count) {
   const badge = document.getElementById("review-badge");
-  if (!badge) return;
-  badge.textContent = String(count);
-  badge.classList.toggle("hidden", !count);
-}
-
-export function isTypingTarget(el) {
-  if (!el || !(el instanceof Element)) return false;
-  const tag = el.tagName;
-  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
-  if (el.isContentEditable) return true;
-  return Boolean(el.closest("input, textarea, select, [contenteditable='true']"));
+  const nav = document.getElementById("nav-review");
+  if (badge) {
+    badge.textContent = String(count);
+    badge.classList.toggle("hidden", !count);
+    badge.setAttribute("aria-hidden", "true");
+  }
+  if (nav) {
+    nav.setAttribute(
+      "aria-label",
+      count > 0 ? `Review, ${count} pending` : "Review",
+    );
+    nav.title = count > 0 ? `Review (${count} pending)` : "Review";
+  }
 }
 
 export function nextIndexAfterRemoval(lengthBefore, removedIndex) {
@@ -116,11 +123,11 @@ function categoryOptionsHtml(selected) {
 function reviewFinancialFieldsHtml(p) {
   const show = isFinancialDocType(p.doc_type);
   return `<div class="review-fields-financial"${show ? "" : ' data-hidden="true"'}>
-      <label class="field narrow">
+      <label class="field">
         <span>Amount</span>
         <input type="number" step="0.01" class="rv-amount" value="${escapeHtml(p.amount ?? "")}" placeholder="0.00" />
       </label>
-      <label class="field narrow">
+      <label class="field">
         <span>Currency</span>
         <input type="text" class="rv-currency" value="${escapeHtml(p.currency || "")}" placeholder="EUR" maxlength="8" />
       </label>
@@ -196,6 +203,10 @@ function proposalToBaseline(p) {
 }
 
 function revokePreview() {
+  if (state.previewUnmount) {
+    state.previewUnmount();
+    state.previewUnmount = null;
+  }
   if (state.preview) {
     state.preview.revoke();
     state.preview = null;
@@ -253,34 +264,36 @@ function editorHtml(item) {
   const p = item.proposal || {};
   return `${duplicateNoticeHtml(item.duplicates)}
     <div class="review-fields" id="review-editor">
-      <label class="field grow">
+      <div class="review-fields-grid">
+      <label class="field full">
         <span>Filename</span>
         <input type="text" class="rv-filename" value="${escapeHtml(p.filename || "")}" />
       </label>
-      <label class="field narrow">
+      <label class="field">
         <span>Category</span>
         <select class="rv-doc-type">${categoryOptionsHtml(p.doc_type || "other")}</select>
       </label>
-      <label class="field narrow">
+      <label class="field">
         <span>Date</span>
         <input type="text" class="rv-doc-date" value="${escapeHtml(p.doc_date || "")}" placeholder="YYYY-MM-DD" />
       </label>
-      <label class="field grow">
+      <label class="field full">
         <span>Subject</span>
         <input type="text" class="rv-subject" value="${escapeHtml(p.subject || "")}" placeholder="What the document is about" />
       </label>
-      <label class="field grow">
+      <label class="field full">
         <span>People / organizations</span>
         <input type="text" class="rv-counterparties" value="${escapeHtml(p.counterparties || "")}" placeholder="Sender, doctor, insurer, employer…" />
       </label>
-      <label class="field grow">
+      <label class="field full">
         <span>Reference numbers</span>
         <input type="text" class="rv-reference-ids" value="${escapeHtml(referenceIdsToString(p.reference_ids))}" placeholder="Invoice #, policy #, case ref…" />
       </label>
       ${reviewFinancialFieldsHtml(p)}
-      <label class="field full">
+      </div>
+      <label class="field full field-summary">
         <span>Summary</span>
-        <textarea class="rv-summary" rows="3">${escapeHtml(p.summary || "")}</textarea>
+        <textarea class="rv-summary" rows="1">${escapeHtml(p.summary || "")}</textarea>
       </label>
     </div>
     <footer class="review-actions">
@@ -307,7 +320,7 @@ function workbenchShellHtml() {
           <span class="review-queue-title">Queue</span>
           <span class="review-queue-count" id="review-queue-count"></span>
         </div>
-        <div class="review-queue-list" id="review-queue-list" role="list"></div>
+        <div class="review-queue-list" id="review-queue-list"></div>
       </aside>
       <div class="review-main">
         <section class="review-preview-pane${state.previewCollapsed ? " is-collapsed" : ""}" id="review-preview-pane">
@@ -372,7 +385,7 @@ async function loadPreview(item) {
     }
     state.preview = blob;
     if (blob.isPdf || (blob.mime || "").includes("pdf")) {
-      frame.innerHTML = `<iframe class="review-preview-iframe" title="PDF preview of ${escapeHtml(name)}" src="${blob.objectUrl}"></iframe>`;
+      state.previewUnmount = mountPdfPreview(frame, blob.bytes);
     } else if ((blob.mime || "").startsWith("image/")) {
       frame.innerHTML = `<img class="review-preview-image" alt="Scan preview of ${escapeHtml(name)}" src="${blob.objectUrl}" />`;
     } else {
@@ -390,7 +403,7 @@ async function loadPreview(item) {
   }
 }
 
-function renderWorkbenchChrome() {
+function renderQueueChrome() {
   const item = selectedItem();
   const idx = selectedIndex();
   const total = state.reviews.length;
@@ -398,7 +411,6 @@ function renderWorkbenchChrome() {
   const countEl = document.getElementById("review-queue-count");
   const filenameEl = document.getElementById("review-preview-filename");
   const countLabel = document.getElementById("review-preview-count");
-  const host = document.getElementById("review-editor-host");
   const pane = document.getElementById("review-preview-pane");
   const toggle = document.getElementById("review-preview-toggle");
 
@@ -423,18 +435,6 @@ function renderWorkbenchChrome() {
     if (label) label.textContent = state.previewCollapsed ? "Show preview" : "Hide preview";
   }
 
-  if (host) {
-    if (!item) {
-      host.innerHTML = emptyStateHtml();
-      state.baseline = null;
-    } else {
-      host.innerHTML = editorHtml(item);
-      state.baseline = proposalToBaseline(item.proposal || {});
-      syncReviewFinancialFields(host);
-      updateDirtyIndicator();
-    }
-  }
-
   const prevBtn = document.getElementById("review-prev");
   const nextBtn = document.getElementById("review-next");
   const openBtn = document.getElementById("review-open");
@@ -444,6 +444,31 @@ function renderWorkbenchChrome() {
   if (openBtn) openBtn.disabled = disabled || Boolean(window.PA_MOCK?.enabled);
 }
 
+function renderEditorHost() {
+  const host = document.getElementById("review-editor-host");
+  const item = selectedItem();
+  if (!host) return;
+  if (!item) {
+    host.innerHTML = emptyStateHtml();
+    state.baseline = null;
+    return;
+  }
+  host.innerHTML = editorHtml(item);
+  state.baseline = proposalToBaseline(item.proposal || {});
+  syncReviewFinancialFields(host);
+  updateDirtyIndicator();
+}
+
+function renderWorkbenchChrome() {
+  renderQueueChrome();
+  renderEditorHost();
+}
+
+/** Keep the open editor when the queue grows around the same selected review. */
+export function shouldPreserveReviewEditor(prevSelectedId, nextSelectedId, hasWorkbench) {
+  return Boolean(hasWorkbench && prevSelectedId && prevSelectedId === nextSelectedId);
+}
+
 function renderEmptyRoot(root) {
   revokePreview();
   state.selectedId = null;
@@ -451,10 +476,13 @@ function renderEmptyRoot(root) {
   root.innerHTML = emptyStateHtml();
 }
 
-function renderReviews(payload) {
+function renderReviews(payload, options = {}) {
   const root = document.getElementById("reviews");
   if (!root) return;
   const reviews = payload.reviews || [];
+  const preferId = options.preferId || null;
+  const prevSelectedId = state.selectedId;
+  const hadWorkbench = Boolean(document.getElementById("review-workbench"));
   state.reviews = reviews;
   updateReviewBadge(reviews.length);
 
@@ -463,25 +491,33 @@ function renderReviews(payload) {
     return;
   }
 
-  if (!state.selectedId || !reviews.some((r) => r.id === state.selectedId)) {
+  if (preferId && reviews.some((r) => r.id === preferId)) {
+    state.selectedId = preferId;
+  } else if (!state.selectedId || !reviews.some((r) => r.id === state.selectedId)) {
     state.selectedId = reviews[0].id;
   }
 
-  if (!document.getElementById("review-workbench")) {
+  if (!hadWorkbench) {
     root.innerHTML = workbenchShellHtml();
+    renderWorkbenchChrome();
+    const item = selectedItem();
+    if (item) loadPreview(item);
+    return;
   }
+
+  if (shouldPreserveReviewEditor(prevSelectedId, state.selectedId, true)) {
+    renderQueueChrome();
+    return;
+  }
+
   renderWorkbenchChrome();
   const item = selectedItem();
   if (item) loadPreview(item);
 }
 
 export async function refreshReviews(options = {}) {
-  const preferId = options.preferId || null;
   const data = await api("/api/reviews");
-  if (preferId && (data.reviews || []).some((r) => r.id === preferId)) {
-    state.selectedId = preferId;
-  }
-  renderReviews(data);
+  renderReviews(data, options);
   return data;
 }
 
@@ -624,7 +660,6 @@ export function initReview() {
 
   document.addEventListener("keydown", (e) => {
     if (currentView() !== "review") return;
-    if (isTypingTarget(e.target)) return;
     if (!state.reviews.length) return;
 
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
@@ -632,6 +667,7 @@ export function initReview() {
       approveSelected();
       return;
     }
+    if (isTypingTarget(e.target)) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
     if (key === "j") {

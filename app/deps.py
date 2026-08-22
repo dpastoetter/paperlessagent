@@ -47,9 +47,10 @@ def peer_host(request: Request) -> str | None:
 
 def client_host(request: Request) -> str | None:
     """
-    End-user client host for auth decisions.
+    End-user client host for logging / forwarded HTTPS detection.
 
-    Honors X-Forwarded-For only when the peer is listed in PAPERLESS_TRUSTED_PROXIES.
+    Honors X-Forwarded-For only when the TCP peer is listed in
+    PAPERLESS_TRUSTED_PROXIES. Never use this for authentication decisions.
     """
     return forwarded_client_host(
         peer_host=peer_host(request),

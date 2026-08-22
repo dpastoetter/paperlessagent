@@ -23,6 +23,23 @@ def test_render_unit_file_includes_paths(tmp_path, monkeypatch):
     assert "WantedBy=default.target" in text
 
 
+def test_render_unit_file_appimage(tmp_path, monkeypatch):
+    image = tmp_path / "PaperlessAgent-x86_64.AppImage"
+    image.write_bytes(b"fake")
+    data = tmp_path / "data"
+    data.mkdir()
+    monkeypatch.setenv("APPIMAGE", str(image))
+    monkeypatch.setenv("PAPERLESS_APPIMAGE", "1")
+    monkeypatch.setattr(system_service.config, "PROJECT_ROOT", tmp_path / "opt")
+    monkeypatch.setattr(system_service.config, "DATA_DIR", data)
+
+    text = system_service.render_unit_file()
+    assert f"ExecStart={image} --headless --host 127.0.0.1 --port 8080" in text
+    assert f"WorkingDirectory={data}" in text
+    assert "Environment=PAPERLESS_APPIMAGE=1" in text
+    assert "uvicorn" not in text
+
+
 def test_autostart_status_unsupported_on_non_linux(monkeypatch):
     monkeypatch.setattr(system_service, "_is_linux", lambda: False)
     status = system_service.autostart_status()
@@ -67,6 +84,37 @@ def test_set_autostart_enable_writes_unit_and_enables(tmp_path, monkeypatch):
     assert ["daemon-reload"] in calls
     assert ["enable", system_service.UNIT_NAME] in calls
     assert ["start", system_service.UNIT_NAME] in calls
+
+
+def test_autostart_status_appimage_skips_venv(tmp_path, monkeypatch):
+    image = tmp_path / "PaperlessAgent.AppImage"
+    image.write_bytes(b"x")
+    monkeypatch.setenv("APPIMAGE", str(image))
+    monkeypatch.setenv("PAPERLESS_APPIMAGE", "1")
+    monkeypatch.setattr(system_service, "_systemd_available", lambda: True)
+    monkeypatch.setattr(system_service, "_unit_enabled", lambda: False)
+    monkeypatch.setattr(system_service, "_unit_active", lambda: False)
+    monkeypatch.setattr(system_service, "_linger_enabled", lambda: False)
+    monkeypatch.setattr(system_service.config, "PROJECT_ROOT", tmp_path / "missing")
+    monkeypatch.setattr(system_service.config, "DATA_DIR", tmp_path / "data")
+
+    status = system_service.autostart_status()
+    assert status["supported"] is True
+    assert status["error"] is None
+
+
+def test_autostart_status_appimage_missing_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPIMAGE", str(tmp_path / "missing.AppImage"))
+    monkeypatch.setenv("PAPERLESS_APPIMAGE", "1")
+    monkeypatch.setattr(system_service, "_systemd_available", lambda: True)
+    monkeypatch.setattr(system_service, "_linger_enabled", lambda: False)
+    monkeypatch.setattr(system_service.config, "PROJECT_ROOT", tmp_path / "missing")
+    monkeypatch.setattr(system_service.config, "DATA_DIR", tmp_path / "data")
+
+    status = system_service.autostart_status()
+    assert status["supported"] is True
+    assert status["error"]
+    assert "APPIMAGE" in status["error"]
 
 
 def test_set_autostart_disable_calls_systemctl(tmp_path, monkeypatch):

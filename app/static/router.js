@@ -50,7 +50,10 @@ export function renderRoute() {
     el.classList.toggle("active", el.dataset.view === view);
   }
   for (const el of document.querySelectorAll(".nav-item")) {
-    el.classList.toggle("active", el.dataset.view === view);
+    const active = el.dataset.view === view;
+    el.classList.toggle("active", active);
+    if (active) el.setAttribute("aria-current", "page");
+    else el.removeAttribute("aria-current");
   }
   document.title = `${view[0].toUpperCase()}${view.slice(1)} · PaperlessAgent`;
 }

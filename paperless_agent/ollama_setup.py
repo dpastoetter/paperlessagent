@@ -62,7 +62,18 @@ _ready_cache: tuple[float, str, str | None, dict[str, Any]] | None = None
 
 
 def env_path() -> Path:
-    return config.PROJECT_ROOT / ".env"
+    """Persist provider settings next to user data when the install is read-only."""
+    data_env = Path(config.DATA_DIR).expanduser() / ".env"
+    if config.running_as_appimage():
+        return data_env
+    project_env = Path(config.PROJECT_ROOT) / ".env"
+    try:
+        writable = os.access(config.PROJECT_ROOT, os.W_OK)
+    except OSError:
+        writable = False
+    if not writable:
+        return data_env
+    return project_env
 
 
 def model_name_matches(installed: str, wanted: str) -> bool:

@@ -29,6 +29,7 @@ def test_csp_is_strict_and_blocks_third_party():
     assert "base-uri 'none'" in csp
     assert "unsafe-inline" not in csp
     assert "fonts.googleapis" not in csp
+    assert "worker-src 'self'" in csp
     assert "https:" not in csp
 
 

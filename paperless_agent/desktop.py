@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
+import signal
 import socket
+import subprocess
 import sys
 import threading
 import time
+import webbrowser
 from pathlib import Path
 
 import httpx
@@ -25,6 +29,9 @@ HEALTH_POLL_S = 0.15
 
 
 def _project_root() -> Path:
+    override = os.getenv("PAPERLESS_PROJECT_ROOT", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
     return Path(__file__).resolve().parent.parent
 
 
@@ -134,17 +141,65 @@ def _stop_uvicorn(server: uvicorn.Server) -> None:
     server.should_exit = True
 
 
+def _wait_for_server(server: uvicorn.Server) -> None:
+    """Block until SIGINT/SIGTERM or the embedded uvicorn loop exits."""
+
+    def _stop(_signum: int | None = None, _frame: object = None) -> None:
+        server.should_exit = True
+
+    signal.signal(signal.SIGINT, _stop)
+    signal.signal(signal.SIGTERM, _stop)
+    while not server.should_exit:
+        time.sleep(0.25)
+
+
+def _open_in_browser(url: str) -> None:
+    opener = shutil.which("xdg-open") or shutil.which("gio")
+    if opener:
+        subprocess.Popen(  # noqa: S603
+            [opener, url] if opener.endswith("xdg-open") else [opener, "open", url],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return
+    webbrowser.open(url)
+
+
+def _try_native_window(url: str, width: int, height: int) -> bool:
+    """Open pywebview; return False when WebKitGTK / pywebview is unavailable."""
+    try:
+        import webview
+    except ImportError:
+        return False
+    try:
+        webview.create_window(
+            "PaperlessAgent",
+            url,
+            width=width,
+            height=height,
+            min_size=(900, 600),
+        )
+        webview.start()
+    except Exception:  # noqa: BLE001 — GI/WebKit failures must fall back
+        return False
+    return True
+
+
 def run_desktop(
     *,
     host: str = DEFAULT_HOST,
     port: int | None = None,
     width: int = DEFAULT_WIDTH,
     height: int = DEFAULT_HEIGHT,
+    headless: bool = False,
 ) -> int:
     """
     Open the PaperlessAgent UI in a native window.
 
     Starts a local uvicorn server when nothing healthy is already listening.
+    ``headless`` keeps the server in the foreground (systemd / AppImage autostart).
+    When pywebview or WebKitGTK is missing, the default browser is opened instead.
     """
     _prepare_environment()
     root = _project_root()
@@ -174,30 +229,20 @@ def run_desktop(
                 _stop_uvicorn(owned_server)
             raise
 
-    try:
-        import webview
-    except ImportError as exc:
-        raise SystemExit(
-            "pywebview is required for the desktop window. "
-            "Install with: pip install -e '.[desktop]' -c constraints.txt "
-            "(or: pip install -r requirements-desktop.txt). "
-            "Also needs WebKitGTK on Linux "
-            "(gir1.2-webkit2-4.1 or gir1.2-webkit2-4.0)."
-        ) from exc
-
     url = f"http://{host}:{active_port}/"
-    webview.create_window(
-        "PaperlessAgent",
-        url,
-        width=width,
-        height=height,
-        min_size=(900, 600),
-    )
+    if not headless:
+        if _try_native_window(url, width, height):
+            if owned_server is not None:
+                _stop_uvicorn(owned_server)
+            return 0
+        _open_in_browser(url)
+
+    if owned_server is None:
+        return 0
     try:
-        webview.start()
+        _wait_for_server(owned_server)
     finally:
-        if owned_server is not None:
-            _stop_uvicorn(owned_server)
+        _stop_uvicorn(owned_server)
     return 0
 
 
@@ -216,8 +261,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--width", type=int, default=DEFAULT_WIDTH)
     parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run the local server without a native window (systemd / AppImage autostart)",
+    )
     args = parser.parse_args(argv)
-    return run_desktop(host=args.host, port=args.port, width=args.width, height=args.height)
+    return run_desktop(
+        host=args.host,
+        port=args.port,
+        width=args.width,
+        height=args.height,
+        headless=args.headless,
+    )
 
 
 if __name__ == "__main__":

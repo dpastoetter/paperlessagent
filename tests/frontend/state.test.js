@@ -18,6 +18,15 @@ describe("state", () => {
 
   it("ships default pipeline steps and workflow state", () => {
     expect(DEFAULT_PIPELINE_STEPS[0].id).toBe("read");
+    expect(DEFAULT_PIPELINE_STEPS.map((s) => s.id)).toEqual([
+      "read",
+      "ai_ocr",
+      "extract",
+      "name",
+      "file",
+      "review",
+      "index",
+    ]);
     expect(workflowState.steps.length).toBe(DEFAULT_PIPELINE_STEPS.length);
     expect(typeof hooks.refreshInbox).toBe("function");
   });

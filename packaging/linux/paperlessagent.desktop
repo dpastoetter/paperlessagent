@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=PaperlessAgent
+Comment=Local-first document agent
+Exec=paperlessagent
+Icon=paperlessagent
+Terminal=false
+Categories=Office;Scanning;Utility;
+StartupNotify=true
+MimeType=application/pdf;image/png;image/jpeg;image/tiff;image/webp;
+Keywords=OCR;PDF;documents;archive;RAG;

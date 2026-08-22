@@ -41,6 +41,9 @@ dev = [
 [tool.setuptools.packages.find]
 include = ["paperless_agent*", "query_agent*", "app*"]
 
+[tool.setuptools.package-data]
+app = ["static/**/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

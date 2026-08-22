@@ -28,9 +28,9 @@ import {
   refreshAutostart,
   refreshSetup,
   refreshUpdateVersion,
-  renderSettingsSummary,
   setSetupStatus,
 } from "./settings.js";
+import { initKeyboard } from "./keyboard.js";
 
 hooks.setProcessInboxBusy = setProcessInboxBusy;
 hooks.refreshInbox = refreshInbox;
@@ -47,6 +47,7 @@ initDocuments();
 initAsk();
 initSettings();
 initWorkflowEvents();
+initKeyboard();
 
 /* ————— Boot (same sequence as the former monolithic app.js) ————— */
 
@@ -65,16 +66,9 @@ if (window.PA_MOCK?.enabled) {
 ensureBrowserSession().then((ready) => {
   if (!ready) return;
   refreshHealth()
-    .then(async (health) => {
-      let auth = null;
-      if (health?.llm_provider !== "ollama") {
-        auth = await refreshAuth().catch(() => null);
-      }
-      await renderSettingsSummary({
-        health,
-        auth,
-        ollama: health?.ollama,
-      }).catch(() => {});
+    .then((health) => {
+      if (health?.llm_provider === "ollama") return null;
+      return refreshAuth();
     })
     .catch(() => {});
   startHealthPolling();

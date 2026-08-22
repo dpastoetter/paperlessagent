@@ -11,6 +11,7 @@ from paperless_agent.local_security import (
     assert_bind_allowed,
     forwarded_client_host,
     generate_api_token,
+    is_direct_loopback_request,
     is_loopback_hostname,
     is_wildcard_or_non_loopback_bind,
     request_appears_https,
@@ -180,18 +181,19 @@ def test_index_sets_random_session_cookie_on_loopback(isolated_data, monkeypatch
     assert session_is_valid(cookie)
 
 
-def test_query_token_exchanges_then_redirects(isolated_data, monkeypatch):
+def test_query_token_is_ignored(isolated_data, monkeypatch):
     token = generate_api_token()
     monkeypatch.setenv("PAPERLESS_API_TOKEN", token)
+    monkeypatch.setenv("PAPERLESS_ALLOWED_HOSTS", "paperless.example.com")
     clear_all_sessions()
-    client = TestClient(app)
-    resp = client.get(f"/?token={token}", follow_redirects=False)
-    assert resp.status_code == 303
-    assert resp.headers.get("location") == "/"
-    cookie = resp.cookies.get(COOKIE_NAME)
-    assert cookie
-    assert cookie != token
-    assert session_is_valid(cookie)
+    # Non-loopback peer so localhost auto-login cannot mask a query exchange.
+    client = TestClient(app, client=("203.0.113.9", 50000))
+    headers = {"Host": "paperless.example.com"}
+    resp = client.get(f"/?token={token}", headers=headers, follow_redirects=False)
+    assert resp.status_code == 200
+    assert resp.headers.get("location") is None
+    assert not resp.cookies.get(COOKIE_NAME)
+    assert client.get("/api/inbox", headers=headers).status_code == 401
 
 
 def test_forwarded_headers_only_from_trusted_proxies(monkeypatch):
@@ -204,7 +206,7 @@ def test_forwarded_headers_only_from_trusted_proxies(monkeypatch):
         )
         == "8.8.8.8"
     )
-    # Trusted peer — take first non-proxy hop.
+    # Trusted peer — walk right-to-left, skip trusted hops, take the client.
     assert (
         forwarded_client_host(
             peer_host="10.0.0.1",
@@ -222,3 +224,65 @@ def test_forwarded_headers_only_from_trusted_proxies(monkeypatch):
         url_scheme="http",
         x_forwarded_proto="https",
     )
+    # Spoofed loopback on the left must not win over the real client on the right.
+    monkeypatch.setenv("PAPERLESS_TRUSTED_PROXIES", "127.0.0.1")
+    assert (
+        forwarded_client_host(
+            peer_host="127.0.0.1",
+            x_forwarded_for="127.0.0.2, 203.0.113.9",
+        )
+        == "203.0.113.9"
+    )
+
+
+def test_direct_loopback_request_ignores_forwarded_headers(monkeypatch):
+    monkeypatch.delenv("PAPERLESS_TRUSTED_PROXIES", raising=False)
+    assert is_direct_loopback_request(peer_host="127.0.0.1", host_header="localhost")
+    assert is_direct_loopback_request(peer_host="testclient", host_header="testserver")
+    assert not is_direct_loopback_request(
+        peer_host="127.0.0.1", host_header="paperless.example.com"
+    )
+    assert not is_direct_loopback_request(peer_host="203.0.113.9", host_header="localhost")
+
+    monkeypatch.setenv("PAPERLESS_TRUSTED_PROXIES", "127.0.0.1,::1")
+    # nginx on loopback is a trusted hop — never treat it as the user.
+    assert not is_direct_loopback_request(peer_host="127.0.0.1", host_header="localhost")
+    assert not is_direct_loopback_request(
+        peer_host="127.0.0.1", host_header="paperless.example.com"
+    )
+
+
+def test_spoofed_xff_does_not_issue_session_behind_proxy(isolated_data, monkeypatch):
+    token = generate_api_token()
+    monkeypatch.setenv("PAPERLESS_API_TOKEN", token)
+    monkeypatch.setenv("PAPERLESS_TRUSTED_PROXIES", "127.0.0.1")
+    monkeypatch.setenv("PAPERLESS_ALLOWED_HOSTS", "paperless.example.com")
+    clear_all_sessions()
+    client = TestClient(app, client=("127.0.0.1", 50000))
+    spoof = {
+        "Host": "paperless.example.com",
+        "X-Forwarded-For": "127.0.0.2",
+    }
+    resp = client.get("/", headers=spoof)
+    assert resp.status_code == 200
+    assert not resp.cookies.get(COOKIE_NAME)
+    assert client.get("/api/inbox", headers=spoof).status_code == 401
+
+    # Host: localhost is allowlisted but still must not auto-login via the proxy.
+    local_host = {"Host": "localhost", "X-Forwarded-For": "127.0.0.2"}
+    resp = client.get("/", headers=local_host)
+    assert not resp.cookies.get(COOKIE_NAME)
+    assert client.get("/api/inbox", headers=local_host).status_code == 401
+
+
+def test_spoofed_xff_does_not_skip_auth_without_token(isolated_data, monkeypatch):
+    monkeypatch.delenv("PAPERLESS_API_TOKEN", raising=False)
+    monkeypatch.setenv("PAPERLESS_TRUSTED_PROXIES", "127.0.0.1")
+    monkeypatch.setenv("PAPERLESS_ALLOWED_HOSTS", "paperless.example.com")
+    client = TestClient(app, client=("127.0.0.1", 50000))
+    resp = client.get(
+        "/api/inbox",
+        headers={"Host": "paperless.example.com", "X-Forwarded-For": "127.0.0.2"},
+    )
+    assert resp.status_code == 403
+    assert "PAPERLESS_API_TOKEN" in resp.json()["detail"]

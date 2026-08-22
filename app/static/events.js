@@ -529,8 +529,19 @@ function setActiveFileSteps(filename) {
   renderWorkflow();
 }
 
+/** Refresh the review queue as soon as a file is waiting, not only when the job ends. */
+export function shouldRefreshReviews(event) {
+  if (!event) return false;
+  if (event.type === "file_finished" && event.status === "review") return true;
+  if (event.type === "job_finished") return true;
+  return false;
+}
+
 function handleWorkflowEvent(event) {
   const type = event.type;
+  if (shouldRefreshReviews(event) && type === "file_finished") {
+    hooks.refreshReviews().catch(() => {});
+  }
   if (type === "hello" && Array.isArray(event.steps) && event.steps.length) {
     workflowState.steps = event.steps;
     resetStepStatuses("idle");

@@ -2,18 +2,33 @@ import { describe, expect, it } from "vitest";
 
 import {
   ASK_EXAMPLES,
+  ASK_EXAMPLES_STORAGE_KEY,
   ASK_HISTORY_MAX_TURNS,
+  areAskExamplesEnabled,
   classifyClientEvidence,
   evidenceLabel,
   historyPayloadFromTurns,
   sanitizeDocumentOpenUrl,
+  setAskExamplesEnabled,
   stripSourcesSection,
+  syncAskComposerSize,
 } from "../../app/static/ask.js";
 
 describe("Ask helpers", () => {
   it("exposes example questions for the empty state", () => {
     expect(ASK_EXAMPLES.length).toBeGreaterThanOrEqual(4);
-    expect(ASK_EXAMPLES.some((q) => /Acme/i.test(q))).toBe(true);
+    expect(ASK_EXAMPLES.every((q) => typeof q === "string" && q.length > 8)).toBe(true);
+    expect(ASK_EXAMPLES.some((q) => /invoice/i.test(q))).toBe(true);
+  });
+
+  it("defaults ask example suggestions on and persists the toggle", () => {
+    localStorage.removeItem(ASK_EXAMPLES_STORAGE_KEY);
+    expect(areAskExamplesEnabled()).toBe(true);
+    setAskExamplesEnabled(false);
+    expect(localStorage.getItem(ASK_EXAMPLES_STORAGE_KEY)).toBe("0");
+    expect(areAskExamplesEnabled()).toBe(false);
+    setAskExamplesEnabled(true);
+    expect(areAskExamplesEnabled()).toBe(true);
   });
 
   it("strips trailing Sources sections from model replies", () => {
@@ -57,5 +72,19 @@ describe("Ask helpers", () => {
     expect(evidenceLabel("weak", true)).toMatch(/Limited supporting evidence/i);
     expect(evidenceLabel("none", false)).toMatch(/No relevant documents/i);
     expect(evidenceLabel("strong", true)).toBe("");
+  });
+
+  it("sizes the composer to content up to the CSS max height", () => {
+    expect(() => syncAskComposerSize(null)).not.toThrow();
+    const el = document.createElement("textarea");
+    el.style.maxHeight = "128px";
+    Object.defineProperty(el, "scrollHeight", { configurable: true, value: 48 });
+    document.body.appendChild(el);
+    syncAskComposerSize(el);
+    expect(el.style.height).toBe("48px");
+    Object.defineProperty(el, "scrollHeight", { configurable: true, value: 400 });
+    syncAskComposerSize(el);
+    expect(el.style.height).toBe("128px");
+    el.remove();
   });
 });

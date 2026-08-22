@@ -168,3 +168,63 @@ def test_invalid_settings_are_not_replaced_with_defaults(isolated_settings):
     with pytest.raises(SettingsError, match="other"):
         load_settings()
     assert json.loads(path.read_text(encoding="utf-8")) == bad
+
+
+def test_load_settings_migrates_missing_review_and_ocr(isolated_settings):
+    path = isolated_settings / "settings.json"
+    stub = {
+        "source_dir": str(isolated_settings / "inbox"),
+        "categories": [
+            {
+                "name": "other",
+                "folder": str(isolated_settings / "archive" / "other"),
+            },
+        ],
+        "batch": {"poll_interval_seconds": 30},
+    }
+    path.write_text(json.dumps(stub), encoding="utf-8")
+    clear_settings_cache()
+    settings = load_settings()
+    assert settings["review"]["require_approval"] is True
+    assert settings["ocr"]["mode"] == "balanced"
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert on_disk["review"]["require_approval"] is True
+    assert on_disk["ocr"]["mode"] == "balanced"
+
+
+def test_load_settings_keeps_require_approval_false_when_ocr_missing(
+    isolated_settings,
+):
+    path = isolated_settings / "settings.json"
+    stub = {
+        "source_dir": str(isolated_settings / "inbox"),
+        "categories": [
+            {
+                "name": "other",
+                "folder": str(isolated_settings / "archive" / "other"),
+            },
+        ],
+        "batch": {"poll_interval_seconds": 0},
+        "review": {"require_approval": False},
+    }
+    path.write_text(json.dumps(stub), encoding="utf-8")
+    clear_settings_cache()
+    settings = load_settings()
+    assert settings["review"]["require_approval"] is False
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert on_disk["review"]["require_approval"] is False
+    assert on_disk["ocr"]["mode"] == "balanced"
+
+
+def test_put_require_approval_false_persists_to_disk(isolated_settings):
+    from app.main import CSRF_HEADER_NAME, CSRF_HEADER_VALUE
+
+    client = TestClient(app)
+    client.headers.update({CSRF_HEADER_NAME: CSRF_HEADER_VALUE})
+    settings = client.get("/api/settings").json()["settings"]
+    settings["review"]["require_approval"] = False
+    resp = client.put("/api/settings", json=settings)
+    assert resp.status_code == 200
+    assert resp.json()["settings"]["review"]["require_approval"] is False
+    on_disk = json.loads((isolated_settings / "settings.json").read_text(encoding="utf-8"))
+    assert on_disk["review"]["require_approval"] is False

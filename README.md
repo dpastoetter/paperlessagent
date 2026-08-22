@@ -8,20 +8,22 @@ Built with [Google ADK](https://adk.dev/) (Python) + FastAPI. Works with **OpenA
 
 ## Features
 
-- **Ingest pipeline**: Open file → Transcribe → Find details → Name file → Review → Save → Make searchable, with a live workflow strip (Server-Sent Events) and hover descriptions on each step
+- **Ingest pipeline**: Open file → Transcribe → Find details → Name file → Save → Review → Make searchable, with a live workflow strip (Server-Sent Events) and hover descriptions on each step
 - **Adaptive OCR**: per-page text-layer vs AI vision (`fast` / `balanced` / `maximum`); cloud providers run vision pages concurrently
 - **Per-file cancel & retry**: stop a stuck or slow file mid-pipeline; retry failed or cancelled items from the inbox queue (readable error toasts for API failures)
-- **Human-in-the-loop review**: every proposed filing waits in a review queue where you can correct filename, category, date, parties, reference IDs, amount (financial docs only), and summary before approving — nothing touches your filesystem until you say so (optional; can be switched to fully automatic)
+- **Human-in-the-loop review**: proposed filings wait in a review queue where you can correct filename, category, date, parties, reference IDs, amount (financial docs only), and summary before approving — nothing is written until you say so. Turn this off under **Settings → Filing** (the checkbox saves immediately); suspected duplicates still always stop for review
 - **Smart metadata extraction**: category-aware fields — `subject`, `parties`, and `reference_ids` for all document types; amount/currency only for invoices, receipts, bank/tax/utility/insurance documents. Missing `doc_type` defaults to `other`; common aliases (`document_type`, `category`) are accepted
 - **Duplicate detection**: SHA-256 file checksums, normalized content hashes, and text-similarity matching flag re-scans and near-duplicates before they are filed
-- **Ask your archive**: grounded RAG + FTS5 keyword search with source citations (no “recent docs” padding when retrieval misses)
+- **Ask your archive**: grounded RAG + FTS5 keyword search with source citations, a chat-style composer, and optional example questions (no “recent docs” padding when retrieval misses)
 - **Local storage**: configurable inbox and per-category archive folders, `data/paperless.db` (SQLite + FTS5), `data/chroma/` (vectors)
 - **Inbox polling**: automatic processing of new scans on a configurable interval
 - **Local Ollama tooling**: start the daemon, pull models, show CPU/GPU usage for loaded models, unload or restart Ollama from Settings
 - **Boot autostart (Linux)**: optional systemd user service so the web UI comes up after login or reboot
-- **Web app**: modular ES-module UI with four theme presets (dark/light), toast notifications, and a mockup mode for clean screenshots
+- **Web app**: full-height workbench for Inbox, Review, Archive, Ask, and Settings; keyboard shortcuts (`?` help, `/` Archive search); PDF preview in Review and Archive; four theme presets; toasts; mockup mode for screenshots
+- **Linux AppImage**: download a single `x86_64` binary from GitHub Releases (bundles Python and Poppler; data stays in `~/.local/share/paperlessagent`)
 - **Self-update**: check and install new releases from GitHub directly from Settings
 - **CI & coverage**: `./scripts/ci.sh` runs format, lint, mypy, Vitest, and pytest with a coverage floor
+
 ## Screenshots
 
 All screenshots use the built-in mockup mode (Settings → Look & feel), which fills the UI with demo data.
@@ -42,9 +44,31 @@ Product deck (open in a browser): [`docs/deck/index.html`](docs/deck/index.html)
 
 Cloning the repo alone is not enough — Python dependencies must be installed into a local virtualenv (`.venv`). Without that step you will see missing activate scripts and/or `ModuleNotFoundError: No module named 'fastapi'` when starting the app (often because a system-wide `uvicorn` is used instead of the venv one).
 
-The recommended installers download the **latest verified GitHub Release** tarball (same artifact as the in-app updater), sync into the install directory (preserving `.env`, `.venv`, `data/`, and `.git`), create `.venv`, install dependencies, and write a starter `.env`.
+The recommended Linux desktop install is the **AppImage** (no Python/venv setup). The source installers download the **latest verified GitHub Release** tarball (same artifact as the in-app updater), sync into the install directory (preserving `.env`, `.venv`, `data/`, and `.git`), create `.venv`, install dependencies, and write a starter `.env`.
 
-### Linux
+### Linux AppImage
+
+Download the `x86_64` AppImage from [GitHub Releases](https://github.com/dpastoetter/paperlessagent/releases/latest) (glibc 2.35+ — Ubuntu 22.04, Fedora 36, Debian 12, and newer). Poppler is bundled. The native window needs **WebKitGTK** on the host; if it is missing, the AppImage starts the local server and opens your default browser.
+
+```bash
+# Fedora / RHEL
+sudo dnf install webkit2gtk4.1
+# Debian / Ubuntu
+sudo apt install gir1.2-webkit2-4.1
+```
+
+```bash
+# Pick the PaperlessAgent-<version>-x86_64.AppImage asset from
+# https://github.com/dpastoetter/paperlessagent/releases/latest
+chmod +x PaperlessAgent-*-x86_64.AppImage
+./PaperlessAgent-*-x86_64.AppImage
+```
+
+The release asset is versioned (`PaperlessAgent-<version>-x86_64.AppImage`). User data, `.env`, and the SQLite/Chroma stores live in `~/.local/share/paperlessagent` — not inside the image. To update, download the new AppImage and replace the file (Settings can *check* for updates but cannot rewrite a mounted AppImage). Autostart from Settings writes a systemd user unit that launches this AppImage with `--headless`.
+
+**Uninstall:** delete the AppImage and, if you want to drop local data, `rm -rf ~/.local/share/paperlessagent`. Disable Settings → Autostart first (or `systemctl --user disable paperlessagent.service`).
+
+### Linux (source + venv)
 
 Prerequisites: **Python 3.10+** (with `venv`), **curl**, **tar**, and **Poppler** (`pdftoppm`) for PDF OCR:
 
@@ -147,7 +171,7 @@ From a venv install, after `pip install -e '.[desktop]' -c constraints.txt` (nee
 python -m paperless_agent.desktop
 ```
 
-The desktop wrapper respects `PAPERLESS_HOST`, `PAPERLESS_PORT`, and `PAPERLESS_LOG_LEVEL`.
+The desktop wrapper respects `PAPERLESS_HOST`, `PAPERLESS_PORT`, and `PAPERLESS_LOG_LEVEL`. Pass `--headless` to keep the server in the foreground without a window (used by the AppImage systemd unit).
 
 ### Manual setup
 
@@ -267,7 +291,7 @@ Uvicorn should bind to `127.0.0.1` (the default). The API has no user login; mut
 
 A token over plain HTTP on a LAN can be intercepted; network mode therefore requires TLS on the app itself. Prefer keeping the app on loopback and terminating TLS on a reverse proxy instead (see [Network access (TLS reverse proxy)](#network-access-tls-reverse-proxy)).
 
-With a token configured, every `/api/*` route except health/session bootstrap requires either `Authorization: Bearer <PAPERLESS_API_TOKEN>` (machine clients) or an HttpOnly `pa_session` cookie. Browser sessions are **random ids** created by `POST /api/auth/session` (or automatically on loopback); the long-lived API secret is never injected into JavaScript or reused as the cookie value. Prefer the unlock panel over `?token=` (query strings end up in logs). Host headers are allowlisted (`PAPERLESS_ALLOWED_HOSTS`, defaulting to localhost / loopback) to harden against DNS rebinding. `X-Forwarded-*` is ignored unless the peer is listed in `PAPERLESS_TRUSTED_PROXIES`.
+With a token configured, every `/api/*` route except health/session bootstrap requires either `Authorization: Bearer <PAPERLESS_API_TOKEN>` (machine clients) or an HttpOnly `pa_session` cookie. Browser sessions are **random ids** created by `POST /api/auth/session` (or automatically for a **direct** loopback browser — loopback TCP peer and loopback Host, never via a reverse proxy). The long-lived API secret is never injected into JavaScript, reused as the cookie value, or accepted in a URL query string. Host headers are allowlisted (`PAPERLESS_ALLOWED_HOSTS`, defaulting to localhost / loopback) to harden against DNS rebinding. `X-Forwarded-*` is used only to recover the client IP / HTTPS scheme from a listed `PAPERLESS_TRUSTED_PROXIES` hop; it is never an authentication signal.
 
 ```bash
 python -c "from paperless_agent.local_security import generate_api_token; print(generate_api_token())"
@@ -309,7 +333,8 @@ server {
   location / {
     proxy_pass http://127.0.0.1:8080;
     proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    # Overwrite (do not append) so clients cannot spoof X-Forwarded-For.
+    proxy_set_header X-Forwarded-For $remote_addr;
     proxy_set_header X-Forwarded-Proto $scheme;
   }
 }
@@ -317,7 +342,7 @@ server {
 
 4. Example **Traefik** (label-style): route HTTPS entrypoint → `http://127.0.0.1:8080`, and only then set `PAPERLESS_TRUSTED_PROXIES` to the Traefik container/host IP.
 
-Do **not** set `PAPERLESS_TRUSTED_PROXIES=0.0.0.0/0`. Only list the proxy addresses that terminate TLS.
+Do **not** set `PAPERLESS_TRUSTED_PROXIES=0.0.0.0/0`. Only list the proxy addresses that terminate TLS. Public/proxied browsers always use the session unlock panel (or Bearer token); localhost auto-login does not apply behind the proxy.
 
 If you truly need uvicorn itself on a non-loopback address, use network mode with app-level TLS:
 
@@ -355,7 +380,7 @@ Autostart requires Linux with `systemctl --user`. It is hidden on other platform
 4. Check **Review**: correct the proposal if needed, then **Approve & file** (duplicates are flagged with a match score)
 5. Find the filed document in **Archive**, or ask questions in **Ask**
 
-Filing rules (source folder, category → folder mapping, poll interval, review requirement) live in **Settings → Filing & scanning** and are stored in `data/settings.json`.
+Filing rules (source folder, category → folder mapping, poll interval, OCR accuracy, review requirement) live in **Settings → Filing & scanning** and are stored in `data/settings.json`. The **Require human review** checkbox applies as soon as you toggle it (folders and poll interval still use **Save setup**). Older settings files missing a `review` or `ocr` key are filled in on load.
 
 **Danger zone → Remove all stored data** deletes only (1) files tracked in the metadata DB whose paths still lie inside a configured archive root, (2) supported inbox scan files (PDF/images), and (3) the app-owned SQLite + Chroma stores under `DATA_DIR`. It never recursively wipes a category folder or the inbox directory. The API requires the confirmation phrase `DELETE ALL PAPERLESSAGENT DATA` (UI two-click confirm is not enough). Settings also refuse dangerous roots (`/`, `$HOME`, `~/Downloads`, `~/Documents`, the project root, system paths, and `DATA_DIR` itself).
 
@@ -368,7 +393,9 @@ Filing rules (source folder, category → folder mapping, poll interval, review 
 | **Unload model** | Settings → Local Ollama | Drops loaded Ollama weights to free memory |
 | **Restart Ollama** | Settings → Local Ollama | Restarts the daemon; blocked while processing unless the active file is cancelled |
 
-Progress updates stream over `GET /api/process/events` (SSE). The workflow UI mounts once and patches in place to avoid flicker during rapid updates. Hover a pipeline step for a short description of what that stage does (and live detail while it is running).
+Progress updates stream over `GET /api/process/events` (SSE). The workflow UI mounts once and patches in place to avoid flicker during rapid updates. Hover a pipeline step for a short description of what that stage does (and live detail while it is running). The strip stays on one row (labels wrap inside equal-height boxes; no horizontal scrollbar).
+
+LLM prompts wrap OCR and retrieved snippets in **per-request** `BEGIN_UNTRUSTED_*_<token>` markers so a document cannot close the untrusted region by embedding a fixed delimiter. Extracted metadata and Ask replies are length-clamped in code.
 
 ### Metadata & review fields
 
@@ -435,13 +462,19 @@ If you switch embedding providers or models (Gemini / OpenAI / Ollama / local ON
 
 **Settings → Software update** checks the GitHub releases of this repository and can download and install the latest version in place. Your documents, database, settings, and credentials (`data/`, `.env`) are never touched by an update.
 
-Installs are **fail-closed on integrity checks**: the updater only applies a release that includes a `.tar.gz` asset with a SHA-256 digest (GitHub asset `digest` and/or a `SHA256SUMS` file). Tag-only or checksum-less releases are shown but refused at install time. Update checks retry on transient network failures.
+Installs are **fail-closed on integrity checks**: the updater only applies a release that includes a `.tar.gz` asset with a SHA-256 digest (GitHub asset `digest` and/or a `SHA256SUMS` file). Tag-only or checksum-less releases are shown but refused at install time. Update checks retry on transient network failures. **AppImage installs cannot be updated in place** (the squashfs is read-only) — Settings still reports a newer tag and links the GitHub AppImage asset; replace the file yourself.
 
 Override the release source with `PAPERLESS_UPDATE_REPO=owner/repo` if you fork the project.
 
-Pushing a version tag (`v*`) runs GitHub Actions, which builds the tarball and `SHA256SUMS`, then publishes/updates the GitHub Release. The packager archives the **exact tagged commit** (not a dirty working tree), verifies the file list against `git ls-tree`, and embeds `.release-commit` plus `.release-files` so installs/updates can confirm the SHA and prune stale paths.
+GitHub Actions **packages the Linux AppImage as part of the release SDLC**: quality gate → dependency audit → AppImage (Ubuntu 22.04 / glibc 2.35+) → tarball + checksums → attach everything to the GitHub Release. That runs when you:
 
-**Release checklist:** land every change on `main` first, bump `version` in `pyproject.toml` (the single source for package metadata, OpenAPI/`FastAPI.version`, and the in-app updater), regenerate pins if dependencies changed (`./scripts/lock-deps.sh`), commit, then create the matching tag on that commit (`git tag v0.2.0 && git push origin v0.2.0`). Tagging an older commit is how earlier releases missed later work.
+- push a version tag (`git tag v0.2.9 && git push origin v0.2.9`)
+- publish a GitHub Release in the UI (or `gh release create`) for a `v*` tag
+- run **Actions → Release → Run workflow** with the tag (rebuild / replace assets)
+
+The packager archives the **exact tagged commit** (not a dirty working tree), verifies the file list against `git ls-tree`, and embeds `.release-commit` plus `.release-files` so installs/updates can confirm the SHA and prune stale paths.
+
+**Release checklist:** land every change on `main` first, bump `version` in `pyproject.toml` (the single source for package metadata, OpenAPI/`FastAPI.version`, and the in-app updater), regenerate pins if dependencies changed (`./scripts/lock-deps.sh`), commit, then create the matching tag on that commit (`git tag v0.2.0 && git push origin v0.2.0`) — or **GitHub → Releases → Draft a new release** using that tag. Tagging an older commit is how earlier releases missed later work.
 
 Local dry-run:
 
@@ -451,6 +484,10 @@ git checkout v0.2.0
 # or before the tag exists:
 ./scripts/make-release-assets.sh v0.2.0 HEAD
 # dist/ contains paperlessagent-0.2.0.tar.gz, install.sh, install.ps1, SHA256SUMS
+
+# Linux x86_64 AppImage (needs poppler-utils + patchelf):
+./scripts/build-appimage.sh v0.2.0
+# dist/PaperlessAgent-0.2.0-x86_64.AppImage
 ```
 
 ## Mockup mode
@@ -492,12 +529,17 @@ The pre-commit gate refuses commits containing `.env` files, databases, `data/` 
 
 Installers still call `pip install -r requirements.txt` / `requirements-desktop.txt`, which are thin wrappers around those constrained editable installs (not a second dependency list).
 
-Pull requests and pushes to `main` run [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (`scripts/ci.sh`, `scripts/dependency-audit.sh` / pip-audit+OSV + npm audit, and CodeQL). Tag releases run the same quality and dependency gates on the **exact tagged commit** before publishing ([`.github/workflows/release.yml`](.github/workflows/release.yml)). Workflows pin Actions to full commit SHAs and grant `contents: write` only to the release publish job.
+Pull requests and pushes to `main` run [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (`scripts/ci.sh`, `scripts/dependency-audit.sh` / pip-audit+OSV + npm audit, and CodeQL). Version tags and published GitHub Releases run the same quality and dependency gates on the **exact tagged commit**, then pack the Linux AppImage and publish assets ([`.github/workflows/release.yml`](.github/workflows/release.yml)). Workflows pin Actions to full commit SHAs and grant `contents: write` only to the release publish job.
 
-### ADK agents (debug)
+### ADK agents (debug, localhost only)
+
+Production ingest and Ask do **not** use these agents. They exist for local `adk web` /
+`adk run` while developing. `adk web` already defaults to `127.0.0.1`. Do **not**
+pass `--host 0.0.0.0`, open the port on the LAN, or put it behind the PaperlessAgent
+TLS proxy — the debug UI can invoke inbox/file/RAG tools through the model.
 
 ```bash
-adk web --port 8000
+adk web --host 127.0.0.1 --port 8000
 # or
 adk run paperless_agent
 adk run query_agent
@@ -516,6 +558,7 @@ paperless_agent/       # ingest pipeline, review queue, dedup, updater, auth/llm
   ingest.py            #   OCR → extract → name → review gate → file + index
   ocr.py               #   adaptive text-layer / vision OCR, PDF render, image prep
   llm.py               #   OpenAI / Codex OAuth / Gemini / Ollama backends + cancel
+  prompt_safety.py     #   untrusted-content markers + output clamps
   providers/           #   LlmProvider interface (text, vision, embeddings, health, usage)
   progress.py          #   SSE progress + pipeline step labels/descriptions
   job_control.py       #   per-file cancel events for ingest
@@ -528,8 +571,9 @@ query_agent/           # RAG Q&A agent
 app/                   # FastAPI app (main.py + routers/) and ES-module UI (static/)
   routers/             #   documents, reviews, settings, processing, auth, updates
   schemas.py           #   request/response models
-  static/              #   api.js, inbox.js, review.js, settings.js, events.js, …
-scripts/               # install.sh, install.ps1, make-release-assets.sh, ci.sh, precommit.sh, watch_inbox.py
+  static/              #   api.js, inbox.js, review.js, settings.js, events.js, keyboard.js, pdf-preview.js, …
+scripts/               # install.sh, install.ps1, make-release-assets.sh, build-appimage.sh, ci.sh, precommit.sh, watch_inbox.py
+packaging/linux/       # AppImage AppRun, .desktop, icon
 tests/                 # pytest (Python) + tests/frontend (Vitest)
 docs/screenshots/      # README screenshots (generated with mockup mode)
 docs/deck/             # product slide deck (open index.html in a browser)

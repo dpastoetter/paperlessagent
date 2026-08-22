@@ -18,7 +18,7 @@ from app.deps import (
     CSRF_HEADER_VALUE,
     MAX_UPLOAD_BYTES,
     MUTATING_METHODS,
-    client_host,
+    peer_host,
     request_has_valid_token,
     request_is_https,
 )
@@ -33,13 +33,12 @@ from paperless_agent.local_security import (
     auth_required_for_request,
     get_api_token,
     host_header_allowed,
-    is_loopback_hostname,
+    is_direct_loopback_request,
 )
 from paperless_agent.review import recover_stale_processing
 from paperless_agent.sessions import (
     attach_session_cookie,
     create_session,
-    exchange_api_token,
     session_is_valid,
 )
 from paperless_agent.settings import load_settings
@@ -99,9 +98,12 @@ async def security_boundary(request: Request, call_next):
                 )
             )
 
-    peer = client_host(request)
+    tcp_peer = peer_host(request)
     needs_auth = path.startswith("/api/") and path not in AUTH_EXEMPT_PATHS
-    if needs_auth and auth_required_for_request(client_host=peer):
+    if needs_auth and auth_required_for_request(
+        peer_host=tcp_peer,
+        host_header=request.headers.get("host"),
+    ):
         if not get_api_token():
             return apply_browser_security_headers(
                 JSONResponse(
@@ -152,31 +154,25 @@ app.include_router(build_api_router())
 
 
 @app.get("/", response_model=None)
-def index(request: Request) -> HTMLResponse | RedirectResponse:
+def index(request: Request) -> HTMLResponse:
     """
     Serve the SPA.
 
     Never injects PAPERLESS_API_TOKEN into HTML/JS. Issues a random HttpOnly
-    session cookie for loopback peers, or exchanges a one-time ?token= query
-    into a session and redirects (prefer POST /api/auth/session instead).
+    session cookie only for a genuine direct loopback connection (loopback TCP
+    peer and loopback Host, not via a trusted proxy). Proxied/public clients
+    must use POST /api/auth/session. Query-string tokens are not accepted.
     """
     expected = get_api_token()
-    query_token = request.query_params.get("token")
     existing = request.cookies.get(COOKIE_NAME)
-
-    # Prefer POST /api/auth/session; ?token= remains a one-shot exchange that
-    # never puts the long-lived secret into the cookie or page body.
-    if expected and query_token:
-        raw = exchange_api_token(query_token)
-        if raw:
-            redirect = RedirectResponse(url="/", status_code=303)
-            attach_session_cookie(redirect, raw, secure=request_is_https(request))
-            return redirect
 
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     response = HTMLResponse(html)
 
-    if expected and is_loopback_hostname(client_host(request)):
+    if expected and is_direct_loopback_request(
+        peer_host=peer_host(request),
+        host_header=request.headers.get("host"),
+    ):
         if not session_is_valid(existing):
             attach_session_cookie(response, create_session(), secure=request_is_https(request))
         return response

@@ -54,10 +54,29 @@ describe("router", () => {
     expect(document.querySelector('.view[data-view="ask"]').classList.contains("active")).toBe(
       true,
     );
-    expect(document.querySelector('.nav-item[data-view="ask"]').classList.contains("active")).toBe(
-      true,
-    );
+    const askNav = document.querySelector('.nav-item[data-view="ask"]');
+    expect(askNav.classList.contains("active")).toBe(true);
+    expect(askNav.getAttribute("aria-current")).toBe("page");
+    expect(
+      document.querySelector('.nav-item[data-view="inbox"]').getAttribute("aria-current"),
+    ).toBeNull();
     expect(document.title).toContain("Ask");
+  });
+
+  it("moves aria-current when the route changes", () => {
+    window.location.hash = "#/inbox";
+    renderRoute();
+    expect(
+      document.querySelector('.nav-item[data-view="inbox"]').getAttribute("aria-current"),
+    ).toBe("page");
+    window.location.hash = "#/archive";
+    renderRoute();
+    expect(
+      document.querySelector('.nav-item[data-view="inbox"]').getAttribute("aria-current"),
+    ).toBeNull();
+    expect(
+      document.querySelector('.nav-item[data-view="archive"]').getAttribute("aria-current"),
+    ).toBe("page");
   });
 
   it("initRouter listens for hashchange", () => {

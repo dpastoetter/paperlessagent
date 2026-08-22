@@ -6,13 +6,90 @@ import {
 } from "./api.js";
 import { knownCategories } from "./state.js";
 import { fetchDocumentBlob, openDocumentFile } from "./ask.js";
+import { mountPdfPreview } from "./pdf-preview.js";
 import { currentView, parseHashQuery, setHashQuery } from "./router.js";
+import { registerArchiveDrawerOverlay } from "./keyboard.js";
 
 export const ARCHIVE_PAGE_SIZE = 40;
 export const ARCHIVE_DEBOUNCE_MS = 300;
 export const ARCHIVE_MIN_QUERY_LEN = 2;
 
 const FILTER_KEYS = ["q", "doc_type", "counterparty", "date_from", "date_to"];
+
+export function archiveShellHtml() {
+  return `<form id="search-form" class="archive-toolbar search" role="search">
+          <div class="archive-toolbar-top">
+            <label class="field grow">
+              <span>Search</span>
+              <input type="search" id="search-q" placeholder="Acme, invoice, tax…" autocomplete="off" />
+            </label>
+            <button type="button" class="btn ghost compact" id="archive-filters-toggle" aria-expanded="false" aria-controls="archive-filters-panel">
+              <span class="archive-filters-toggle-label">Filters</span>
+              <span class="archive-filter-count" id="archive-filter-count" hidden></span>
+            </button>
+            <button type="submit" class="btn secondary">
+              <svg class="icon" aria-hidden="true"><use href="#i-search" /></svg>
+              Search
+            </button>
+            <button type="button" class="btn ghost" id="search-clear" hidden>Clear filters</button>
+          </div>
+          <div class="archive-filters-panel" id="archive-filters-panel">
+            <label class="field narrow">
+              <span>Category</span>
+              <select id="search-type">
+                <option value="">Any</option>
+              </select>
+            </label>
+            <label class="field narrow">
+              <span>People / organization</span>
+              <input type="text" id="search-counterparty" placeholder="Acme, Dr. Weber…" autocomplete="off" />
+            </label>
+            <label class="field narrow">
+              <span>Date from</span>
+              <input type="date" id="search-date-from" />
+            </label>
+            <label class="field narrow">
+              <span>Date to</span>
+              <input type="date" id="search-date-to" />
+            </label>
+          </div>
+          <div class="archive-toolbar-status">
+            <span id="archive-result-count" class="archive-result-count">—</span>
+            <span id="archive-status" class="archive-status sr-only" aria-live="polite"></span>
+          </div>
+        </form>
+
+        <div class="archive-workspace">
+          <div class="archive-list-pane">
+            <div id="docs" class="docs" aria-label="Archive results"></div>
+            <div class="archive-list-footer" id="archive-list-footer" hidden>
+              <button type="button" class="btn ghost" id="archive-load-more">Load more</button>
+            </div>
+          </div>
+        </div>`;
+}
+
+export function archiveDrawerHtml() {
+  return `<div id="archive-drawer-backdrop" class="archive-drawer-backdrop" hidden></div>
+        <aside id="archive-drawer" class="archive-drawer" role="dialog" aria-modal="true" aria-labelledby="archive-drawer-title" hidden>
+          <header class="archive-drawer-head">
+            <button type="button" class="btn ghost compact" id="archive-drawer-close" aria-label="Close document details">Close</button>
+          </header>
+          <div id="archive-drawer-body" class="archive-drawer-body"></div>
+        </aside>`;
+}
+
+export function mountArchiveShell() {
+  const host = document.getElementById("archive");
+  const view = document.getElementById("view-archive");
+  if (host && !host.querySelector("#search-form")) {
+    host.innerHTML = archiveShellHtml();
+  }
+  if (view && !document.getElementById("archive-drawer")) {
+    view.insertAdjacentHTML("beforeend", archiveDrawerHtml());
+  }
+  return host;
+}
 
 const state = {
   filters: emptyFilters(),
@@ -28,6 +105,7 @@ const state = {
   detailLoading: false,
   detailError: /** @type {string|null} */ (null),
   preview: /** @type {{ revoke: () => void } | null} */ (null),
+  previewUnmount: /** @type {null | (() => void)} */ (null),
   previewToken: 0,
   focusReturnId: /** @type {string|null} */ (null),
   filtersOpen: false,
@@ -131,6 +209,10 @@ function categoryOptionsHtml(selected) {
 }
 
 function revokePreview() {
+  if (state.previewUnmount) {
+    state.previewUnmount();
+    state.previewUnmount = null;
+  }
   if (state.preview) {
     state.preview.revoke();
     state.preview = null;
@@ -211,10 +293,9 @@ function rowHtml(d, selected) {
   const amount = isFinancialDocType(d.doc_type) ? formatAmount(d.amount, d.currency) : "";
   const subtle = d.filename || d.original_name || "";
   return `<button type="button" class="doc-row${selected ? " is-selected" : ""}"
-      role="option"
       id="doc-row-${escapeHtml(d.id)}"
       data-doc-id="${escapeHtml(d.id)}"
-      aria-selected="${selected ? "true" : "false"}">
+      ${selected ? 'aria-current="true"' : ""}>
     <span class="doc-row-main">
       <span class="doc-title-row">
         <span class="doc-badge">${escapeHtml(badge)}</span>
@@ -322,7 +403,7 @@ async function loadPreview(doc) {
     }
     state.preview = blob;
     if (blob.isPdf || (blob.mime || "").includes("pdf")) {
-      frame.innerHTML = `<iframe class="archive-preview-iframe" title="PDF preview of ${escapeHtml(name)}" src="${blob.objectUrl}"></iframe>`;
+      state.previewUnmount = mountPdfPreview(frame, blob.bytes);
     } else if ((blob.mime || "").startsWith("image/")) {
       frame.innerHTML = `<img class="archive-preview-image" alt="Preview of ${escapeHtml(name)}" src="${blob.objectUrl}" />`;
     } else {
@@ -428,6 +509,10 @@ async function openDocumentDetail(docId, { focus = true } = {}) {
   renderList();
   renderDrawer();
   syncHash();
+  registerArchiveDrawerOverlay({
+    open: true,
+    onClose: () => closeDocumentDetail(),
+  });
 
   if (focus) {
     window.requestAnimationFrame(() => {
@@ -461,6 +546,7 @@ export function closeDocumentDetail({ restoreFocus = true } = {}) {
   renderList();
   renderDrawer();
   syncHash();
+  registerArchiveDrawerOverlay({ open: false });
   if (restoreFocus && returnId) {
     window.requestAnimationFrame(() => {
       document.getElementById(`doc-row-${returnId}`)?.focus();
@@ -596,6 +682,7 @@ export function syncDocumentFilters() {
 }
 
 export function initDocuments() {
+  mountArchiveShell();
   writeToolbarFilters(state.filters);
   renderList();
   renderDrawer();
@@ -677,14 +764,6 @@ export function initDocuments() {
         if (btn) btn.disabled = false;
       }
     }
-  });
-
-  document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
-    if (currentView() !== "archive") return;
-    if (!state.selectedId) return;
-    e.preventDefault();
-    closeDocumentDetail();
   });
 
   window.addEventListener("hashchange", () => {

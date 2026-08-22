@@ -10,8 +10,10 @@ import pytest
 
 from paperless_agent.desktop import (
     _pick_port,
+    _project_root,
     health_url,
     is_server_healthy,
+    main,
     wait_for_health,
 )
 
@@ -55,3 +57,21 @@ def test_wait_for_health_times_out():
     # Port is not listening after the socket closes — health must time out.
     with pytest.raises(TimeoutError, match="did not become ready"):
         wait_for_health("127.0.0.1", port, timeout=0.4)
+
+
+def test_project_root_honors_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("PAPERLESS_PROJECT_ROOT", str(tmp_path))
+    assert _project_root() == tmp_path.resolve()
+
+
+def test_main_passes_headless(monkeypatch):
+    captured: dict = {}
+
+    def fake_run(**kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr("paperless_agent.desktop.run_desktop", fake_run)
+    assert main(["--headless", "--port", "9999"]) == 0
+    assert captured["headless"] is True
+    assert captured["port"] == 9999
