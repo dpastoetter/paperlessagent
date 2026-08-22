@@ -481,26 +481,26 @@ Override the release source with `DEEPCATALOG_UPDATE_REPO=owner/repo` if you for
 
 GitHub Actions **packages the Linux AppImage as part of the release SDLC**: quality gate → dependency audit → AppImage (Ubuntu 22.04 / glibc 2.35+) → tarball + checksums → attach everything to the GitHub Release. That runs when you:
 
-- push a version tag (`git tag v0.3.1 && git push origin v0.3.1`)
+- push a version tag (`git tag v0.4.0 && git push origin v0.4.0`)
 - publish a GitHub Release in the UI (or `gh release create`) for a `v*` tag
 - run **Actions → Release → Run workflow** with the tag (rebuild / replace assets)
 
 The packager archives the **exact tagged commit** (not a dirty working tree), verifies the file list against `git ls-tree`, and embeds `.release-commit` plus `.release-files` so installs/updates can confirm the SHA and prune stale paths.
 
-**Release checklist:** land every change on `main` first, bump `version` in `pyproject.toml` (the single source for package metadata, OpenAPI/`FastAPI.version`, and the in-app updater), regenerate pins if dependencies changed (`./scripts/lock-deps.sh`), commit, then create the matching tag on that commit (`git tag v0.2.0 && git push origin v0.2.0`) — or **GitHub → Releases → Draft a new release** using that tag. Tagging an older commit is how earlier releases missed later work.
+**Release checklist:** land every change on `main` first, bump `version` in `pyproject.toml` (the single source for package metadata, OpenAPI/`FastAPI.version`, and the in-app updater), regenerate pins if dependencies changed (`./scripts/lock-deps.sh`), commit, then create the matching tag on that commit (`git tag v0.4.0 && git push origin v0.4.0`) — or **GitHub → Releases → Draft a new release** using that tag. Tagging an older commit is how earlier releases missed later work.
 
 Local dry-run:
 
 ```bash
-git checkout v0.2.0
-./scripts/make-release-assets.sh v0.2.0
+git checkout v0.4.0
+./scripts/make-release-assets.sh v0.4.0
 # or before the tag exists:
-./scripts/make-release-assets.sh v0.2.0 HEAD
-# dist/ contains deepcatalog-0.2.0.tar.gz, install.sh, install.ps1, SHA256SUMS
+./scripts/make-release-assets.sh v0.4.0 HEAD
+# dist/ contains deepcatalog-0.4.0.tar.gz, install.sh, install.ps1, SHA256SUMS
 
 # Linux x86_64 AppImage (needs poppler-utils + patchelf):
-./scripts/build-appimage.sh v0.2.0
-# dist/DeepCatalog-0.2.0-x86_64.AppImage
+./scripts/build-appimage.sh v0.4.0
+# dist/DeepCatalog-0.4.0-x86_64.AppImage
 ```
 
 ## Mockup mode
