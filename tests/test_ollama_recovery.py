@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from paperless_agent import ollama_setup
+from deepcatalog import ollama_setup
 
 
 def test_list_running_models_parses_ps_response():
@@ -13,7 +13,7 @@ def test_list_running_models_parses_ps_response():
     mock_resp.json.return_value = {"models": [{"name": "gemma3:4b"}]}
     mock_resp.raise_for_status = MagicMock()
 
-    with patch("paperless_agent.ollama_setup.httpx.Client") as client_cls:
+    with patch("deepcatalog.ollama_setup.httpx.Client") as client_cls:
         client = client_cls.return_value.__enter__.return_value
         client.get.return_value = mock_resp
         result = ollama_setup.list_running_models()
@@ -28,16 +28,16 @@ def test_unload_model_posts_keep_alive_zero():
     embed_resp = MagicMock()
     embed_resp.raise_for_status = MagicMock()
 
-    with patch("paperless_agent.ollama_setup.httpx.Client") as client_cls:
+    with patch("deepcatalog.ollama_setup.httpx.Client") as client_cls:
         client = client_cls.return_value.__enter__.return_value
         client.post.side_effect = [chat_resp, embed_resp]
         with (
             patch(
-                "paperless_agent.ollama_setup.resolve_runtime_model",
+                "deepcatalog.ollama_setup.resolve_runtime_model",
                 side_effect=lambda name, **_: name,
             ),
             patch(
-                "paperless_agent.ollama_setup.list_running_models",
+                "deepcatalog.ollama_setup.list_running_models",
                 return_value={"status": "success", "models": []},
             ),
         ):

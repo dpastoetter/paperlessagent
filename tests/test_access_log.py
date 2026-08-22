@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from paperless_agent.access_log import (
+from deepcatalog.access_log import (
     AccessLogQueryFilter,
     strip_query_for_log,
 )

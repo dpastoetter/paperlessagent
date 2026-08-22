@@ -38,7 +38,7 @@ jobs:
         with:
           name: linux-appimage
           path: |
-            dist/PaperlessAgent-*-x86_64.AppImage
-            dist/PaperlessAgent-*-x86_64.AppImage.sha256
+            dist/DeepCatalog-*-x86_64.AppImage
+            dist/DeepCatalog-*-x86_64.AppImage.sha256
           if-no-files-found: error
           retention-days: 14

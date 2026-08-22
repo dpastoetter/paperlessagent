@@ -7,16 +7,16 @@ import logging
 from fastapi.testclient import TestClient
 
 from app.main import CSRF_HEADER_NAME, CSRF_HEADER_VALUE, app
-from paperless_agent import auth_rate_limit as arl
-from paperless_agent.auth_rate_limit import (
+from deepcatalog import auth_rate_limit as arl
+from deepcatalog.auth_rate_limit import (
     AUTH_FAILURE_LIMIT,
     RATE_LIMIT_DETAIL,
     SESSION_ATTEMPT_LIMIT,
     SESSION_FAILURE_LIMIT,
     AuthRateLimiter,
 )
-from paperless_agent.local_security import generate_api_token
-from paperless_agent.sessions import clear_all_sessions
+from deepcatalog.local_security import generate_api_token
+from deepcatalog.sessions import clear_all_sessions
 
 
 class _Clock:
@@ -98,7 +98,7 @@ def test_api_auth_failures_lock_then_expire():
 
 
 def test_auth_failure_logs_do_not_include_secrets(caplog):
-    caplog.set_level(logging.WARNING, logger="paperless_agent.auth_rate_limit")
+    caplog.set_level(logging.WARNING, logger="deepcatalog.auth_rate_limit")
     limiter = AuthRateLimiter()
     secret = "super-secret-api-token-value"
     limiter.record_session_failure("10.0.0.9")
@@ -113,7 +113,7 @@ def test_auth_failure_logs_do_not_include_secrets(caplog):
 
 def test_session_http_rate_limit(isolated_data, monkeypatch):
     token = generate_api_token()
-    monkeypatch.setenv("PAPERLESS_API_TOKEN", token)
+    monkeypatch.setenv("DEEPCATALOG_API_TOKEN", token)
     monkeypatch.setattr(arl, "SESSION_FAILURE_LIMIT", 3)
     clear_all_sessions()
     client = TestClient(app)
@@ -130,7 +130,7 @@ def test_session_http_rate_limit(isolated_data, monkeypatch):
 
 def test_api_401_rate_limit_is_per_ip(isolated_data, monkeypatch):
     token = generate_api_token()
-    monkeypatch.setenv("PAPERLESS_API_TOKEN", token)
+    monkeypatch.setenv("DEEPCATALOG_API_TOKEN", token)
     monkeypatch.setattr(arl, "AUTH_FAILURE_LIMIT", 3)
     clear_all_sessions()
     client = TestClient(app)
@@ -150,7 +150,7 @@ def test_api_401_rate_limit_is_per_ip(isolated_data, monkeypatch):
 
 def test_valid_api_usage_is_not_rate_limited(isolated_data, monkeypatch):
     token = generate_api_token()
-    monkeypatch.setenv("PAPERLESS_API_TOKEN", token)
+    monkeypatch.setenv("DEEPCATALOG_API_TOKEN", token)
     monkeypatch.setattr(arl, "AUTH_FAILURE_LIMIT", 3)
     client = TestClient(app)
     headers = {"Authorization": f"Bearer {token}"}

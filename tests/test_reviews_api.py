@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from paperless_agent.review import create_review
-from paperless_agent.settings import get_source_dir
+from deepcatalog.review import create_review
+from deepcatalog.settings import get_source_dir
 
 
 def _queue_scan(name: str = "scan.pdf", **proposal_overrides) -> tuple[str, str]:

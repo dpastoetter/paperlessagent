@@ -6,15 +6,15 @@ import sqlite3
 
 import pytest
 
-from paperless_agent.tools import metadata_db
+from deepcatalog.tools import metadata_db
 
 
 @pytest.fixture()
 def legacy_db(tmp_path, monkeypatch):
     db_path = tmp_path / "legacy.db"
     monkeypatch.setattr(metadata_db, "DB_PATH", db_path)
-    monkeypatch.setattr("paperless_agent.config.DB_PATH", db_path)
-    monkeypatch.setattr("paperless_agent.config.DATA_DIR", tmp_path)
+    monkeypatch.setattr("deepcatalog.config.DB_PATH", db_path)
+    monkeypatch.setattr("deepcatalog.config.DATA_DIR", tmp_path)
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             """

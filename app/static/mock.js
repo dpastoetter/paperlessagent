@@ -9,7 +9,7 @@
   const param = new URLSearchParams(window.location.search).get("mock");
   let stored = null;
   try {
-    stored = localStorage.getItem("pa-mock");
+    stored = localStorage.getItem("dc-mock");
   } catch (_err) {
     // private mode
   }
@@ -20,7 +20,7 @@
       id: "demo-doc-1",
       filename: "2024-06-03_Invoice_AcmeCorp_EUR1240.pdf",
       original_name: "scan_20240603_1412.pdf",
-      path: "/home/demo/Paperless/archive/invoice/2024/2024-06-03_Invoice_AcmeCorp_EUR1240.pdf",
+      path: "/home/demo/DeepCatalog/archive/invoice/2024/2024-06-03_Invoice_AcmeCorp_EUR1240.pdf",
       doc_type: "invoice",
       doc_date: "2024-06-03",
       subject: "Consulting services May 2024",
@@ -35,7 +35,7 @@
       id: "demo-doc-2",
       filename: "2024-05-28_Contract_Stadtwerke.pdf",
       original_name: "vertrag_stadtwerke.pdf",
-      path: "/home/demo/Paperless/archive/contract/2024/2024-05-28_Contract_Stadtwerke.pdf",
+      path: "/home/demo/DeepCatalog/archive/contract/2024/2024-05-28_Contract_Stadtwerke.pdf",
       doc_type: "contract",
       doc_date: "2024-05-28",
       subject: "Electricity supply agreement",
@@ -50,7 +50,7 @@
       id: "demo-doc-3",
       filename: "2024-05-12_Tax_Finanzamt_EUR842.pdf",
       original_name: "steuerbescheid_2023.pdf",
-      path: "/home/demo/Paperless/archive/tax/2024/2024-05-12_Tax_Finanzamt_EUR842.pdf",
+      path: "/home/demo/DeepCatalog/archive/tax/2024/2024-05-12_Tax_Finanzamt_EUR842.pdf",
       doc_type: "tax",
       doc_date: "2024-05-12",
       subject: "Income tax assessment 2023",
@@ -65,7 +65,7 @@
       id: "demo-doc-4",
       filename: "2024-04-19_Medical_MRI-right-knee_Dr-Weber.pdf",
       original_name: "befund_scan.pdf",
-      path: "/home/demo/Paperless/archive/medical/2024/2024-04-19_Medical_MRI-right-knee_Dr-Weber.pdf",
+      path: "/home/demo/DeepCatalog/archive/medical/2024/2024-04-19_Medical_MRI-right-knee_Dr-Weber.pdf",
       doc_type: "medical",
       doc_date: "2024-04-19",
       subject: "MRI right knee results",
@@ -80,7 +80,7 @@
       id: "demo-doc-5",
       filename: "2024-03-30_Receipt_Bauhaus_EUR67p80.jpg",
       original_name: "IMG_2041.jpg",
-      path: "/home/demo/Paperless/archive/receipt/2024/2024-03-30_Receipt_Bauhaus_EUR67p80.jpg",
+      path: "/home/demo/DeepCatalog/archive/receipt/2024/2024-03-30_Receipt_Bauhaus_EUR67p80.jpg",
       doc_type: "receipt",
       doc_date: "2024-03-30",
       subject: "Paint and brushes purchase",
@@ -94,7 +94,7 @@
       id: "demo-doc-6",
       filename: "2024-06-10_Invoice_NordSoft_EUR490.pdf",
       original_name: "nordsoft_june.pdf",
-      path: "/home/demo/Paperless/archive/invoice/2024/2024-06-10_Invoice_NordSoft_EUR490.pdf",
+      path: "/home/demo/DeepCatalog/archive/invoice/2024/2024-06-10_Invoice_NordSoft_EUR490.pdf",
       doc_type: "invoice",
       doc_date: "2024-06-10",
       subject: "SaaS subscription June 2024",
@@ -108,7 +108,7 @@
       id: "demo-doc-7",
       filename: "2024-02-14_Letter_Landlord_rent-increase.pdf",
       original_name: "schreiben_vermieter.pdf",
-      path: "/home/demo/Paperless/archive/letter/2024/2024-02-14_Letter_Landlord_rent-increase.pdf",
+      path: "/home/demo/DeepCatalog/archive/letter/2024/2024-02-14_Letter_Landlord_rent-increase.pdf",
       doc_type: "letter",
       doc_date: "2024-02-14",
       subject: "Notice of rent adjustment",
@@ -122,7 +122,7 @@
       id: "demo-doc-8",
       filename: "2024-01-22_Receipt_DB_EUR48p60.pdf",
       original_name: "bahn_ticket.pdf",
-      path: "/home/demo/Paperless/archive/receipt/2024/2024-01-22_Receipt_DB_EUR48p60.pdf",
+      path: "/home/demo/DeepCatalog/archive/receipt/2024/2024-01-22_Receipt_DB_EUR48p60.pdf",
       doc_type: "receipt",
       doc_date: "2024-01-22",
       subject: "Train ticket München–Nürnberg",
@@ -136,7 +136,7 @@
       id: "demo-doc-9",
       filename: "2023-12-01_Contract_HealthInsurance.pdf",
       original_name: "kv_vertrag.pdf",
-      path: "/home/demo/Paperless/archive/contract/2023/2023-12-01_Contract_HealthInsurance.pdf",
+      path: "/home/demo/DeepCatalog/archive/contract/2023/2023-12-01_Contract_HealthInsurance.pdf",
       doc_type: "contract",
       doc_date: "2023-12-01",
       subject: "Private health insurance policy",
@@ -150,7 +150,7 @@
       id: "demo-doc-10",
       filename: "2024-05-02_Invoice_AcmeCorp_EUR220.pdf",
       original_name: "acme_may_addon.pdf",
-      path: "/home/demo/Paperless/archive/invoice/2024/2024-05-02_Invoice_AcmeCorp_EUR220.pdf",
+      path: "/home/demo/DeepCatalog/archive/invoice/2024/2024-05-02_Invoice_AcmeCorp_EUR220.pdf",
       doc_type: "invoice",
       doc_date: "2024-05-02",
       subject: "Emergency support callout",
@@ -164,7 +164,7 @@
       id: "demo-doc-11",
       filename: "2024-03-08_Medical_Bloodwork_LabNord.pdf",
       original_name: "labor_befund.pdf",
-      path: "/home/demo/Paperless/archive/medical/2024/2024-03-08_Medical_Bloodwork_LabNord.pdf",
+      path: "/home/demo/DeepCatalog/archive/medical/2024/2024-03-08_Medical_Bloodwork_LabNord.pdf",
       doc_type: "medical",
       doc_date: "2024-03-08",
       subject: "Routine bloodwork results",
@@ -178,7 +178,7 @@
       id: "demo-doc-12",
       filename: "2024-04-01_Tax_VAT-Q1_EUR310.pdf",
       original_name: "ust_q1.pdf",
-      path: "/home/demo/Paperless/archive/tax/2024/2024-04-01_Tax_VAT-Q1_EUR310.pdf",
+      path: "/home/demo/DeepCatalog/archive/tax/2024/2024-04-01_Tax_VAT-Q1_EUR310.pdf",
       doc_type: "tax",
       doc_date: "2024-04-01",
       subject: "VAT return Q1 2024",
@@ -192,7 +192,7 @@
       id: "demo-doc-13",
       filename: "2023-11-18_ID_Passport-scan.pdf",
       original_name: "pass_scan.pdf",
-      path: "/home/demo/Paperless/archive/id/2023/2023-11-18_ID_Passport-scan.pdf",
+      path: "/home/demo/DeepCatalog/archive/id/2023/2023-11-18_ID_Passport-scan.pdf",
       doc_type: "id",
       doc_date: "2023-11-18",
       subject: "Passport scan",
@@ -206,7 +206,7 @@
       id: "demo-doc-14",
       filename: "2024-06-18_Receipt_Rewe_EUR34p12.jpg",
       original_name: "rewe_receipt.jpg",
-      path: "/home/demo/Paperless/archive/receipt/2024/2024-06-18_Receipt_Rewe_EUR34p12.jpg",
+      path: "/home/demo/DeepCatalog/archive/receipt/2024/2024-06-18_Receipt_Rewe_EUR34p12.jpg",
       doc_type: "receipt",
       doc_date: "2024-06-18",
       subject: "Groceries",
@@ -270,7 +270,7 @@
   const REVIEWS = [
     {
       id: "demo-review-1",
-      source_path: "/home/demo/Paperless/inbox/scan_20240614_0932.pdf",
+      source_path: "/home/demo/DeepCatalog/inbox/scan_20240614_0932.pdf",
       original_name: "scan_20240614_0932.pdf",
       status: "pending",
       created_at: "2024-06-14T09:32:00Z",
@@ -297,7 +297,7 @@
     },
     {
       id: "demo-review-2",
-      source_path: "/home/demo/Paperless/inbox/chess_board.jpg",
+      source_path: "/home/demo/DeepCatalog/inbox/chess_board.jpg",
       original_name: "chess_board.jpg",
       status: "pending",
       created_at: "2024-06-15T18:20:00Z",
@@ -318,7 +318,7 @@
   ];
 
   const SETTINGS = {
-    source_dir: "/home/demo/Paperless/inbox",
+    source_dir: "/home/demo/DeepCatalog/inbox",
     categories: [
       "invoice",
       "receipt",
@@ -328,7 +328,7 @@
       "medical",
       "id",
       "other",
-    ].map((name) => ({ name, folder: `/home/demo/Paperless/archive/${name}` })),
+    ].map((name) => ({ name, folder: `/home/demo/DeepCatalog/archive/${name}` })),
     batch: { poll_interval_seconds: 30 },
     review: { require_approval: true },
     ocr: { mode: "balanced" },
@@ -369,7 +369,7 @@
     status: "success",
     auth_mode: "chatgpt_oauth",
     openai_ready: true,
-    chatgpt_email: "demo@paperless.app",
+    chatgpt_email: "demo@deepcatalog.app",
     chatgpt_plan: "plus",
   };
 
@@ -546,7 +546,7 @@
     [/^\/api\/documents\?|^\/api\/documents$/, (path) => mockFilterDocuments(path)],
     [
       /^\/api\/documents\/([^/?#]+)\/reveal$/,
-      () => ({ status: "success", path: "/home/demo/Paperless/archive", opened: "explorer" }),
+      () => ({ status: "success", path: "/home/demo/DeepCatalog/archive", opened: "explorer" }),
     ],
     [
       /^\/api\/documents\/([^/?#]+)$/,
@@ -565,7 +565,7 @@
         enabled: false,
         active: false,
         url: "http://127.0.0.1:8080",
-        unit_path: "/home/demo/.config/systemd/user/paperlessagent.service",
+        unit_path: "/home/demo/.config/systemd/user/deepcatalog.service",
         linger: false,
         error: null,
       },
@@ -584,7 +584,7 @@
     // Software update / version must always reflect the real install + GitHub.
     if (/^\/api\/update(\/|\?|$)/.test(path)) {
       const headers = new Headers(options.headers || {});
-      headers.set("X-Requested-With", "PaperlessAgent");
+      headers.set("X-Requested-With", "DeepCatalog");
       const res = await fetch(path, { ...options, headers });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -604,13 +604,13 @@
 
   function setEnabled(value) {
     try {
-      localStorage.setItem("pa-mock", value ? "1" : "0");
+      localStorage.setItem("dc-mock", value ? "1" : "0");
     } catch (_err) {
       // private mode — toggle just won't persist
     }
   }
 
-  window.PA_MOCK = {
+  window.DC_MOCK = {
     enabled,
     respond,
     setEnabled,
@@ -635,11 +635,11 @@
         extract: "Extracting type, date, subject, parties — can take a while",
       },
       queue: [
-        { file_id: "demo-f1", filename: "invoice_mai.pdf", status: "done", stepLabel: "Done", path: "/home/demo/Paperless/inbox/invoice_mai.pdf" },
-        { file_id: "demo-f2", filename: "scan_20240614_0932.pdf", status: "running", stepLabel: "Find details", path: "/home/demo/Paperless/inbox/scan_20240614_0932.pdf" },
-        { file_id: "demo-f3", filename: "receipt_okt.jpg", status: "queued", stepLabel: null, path: "/home/demo/Paperless/inbox/receipt_okt.jpg" },
-        { file_id: "demo-f4", filename: "contract_scan.pdf", status: "error", stepLabel: "Failed", path: "/home/demo/Paperless/inbox/contract_scan.pdf" },
-        { file_id: "demo-f5", filename: "letter_bank.pdf", status: "review", stepLabel: "Needs review", path: "/home/demo/Paperless/inbox/letter_bank.pdf" },
+        { file_id: "demo-f1", filename: "invoice_mai.pdf", status: "done", stepLabel: "Done", path: "/home/demo/DeepCatalog/inbox/invoice_mai.pdf" },
+        { file_id: "demo-f2", filename: "scan_20240614_0932.pdf", status: "running", stepLabel: "Find details", path: "/home/demo/DeepCatalog/inbox/scan_20240614_0932.pdf" },
+        { file_id: "demo-f3", filename: "receipt_okt.jpg", status: "queued", stepLabel: null, path: "/home/demo/DeepCatalog/inbox/receipt_okt.jpg" },
+        { file_id: "demo-f4", filename: "contract_scan.pdf", status: "error", stepLabel: "Failed", path: "/home/demo/DeepCatalog/inbox/contract_scan.pdf" },
+        { file_id: "demo-f5", filename: "letter_bank.pdf", status: "review", stepLabel: "Needs review", path: "/home/demo/DeepCatalog/inbox/letter_bank.pdf" },
       ],
     },
   };

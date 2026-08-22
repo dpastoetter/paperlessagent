@@ -8,27 +8,27 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import CSRF_HEADER_NAME, CSRF_HEADER_VALUE, app
-from paperless_agent.config import ensure_data_dirs
-from paperless_agent.settings import (
+from deepcatalog.config import ensure_data_dirs
+from deepcatalog.settings import (
     clear_settings_cache,
     load_settings,
     refuse_dangerous_storage_path,
     save_settings,
     validate_settings,
 )
-from paperless_agent.tools import metadata_db, rag_index
-from paperless_agent.tools.storage import CLEAR_DATA_CONFIRMATION, clear_all_stored_data
+from deepcatalog.tools import metadata_db, rag_index
+from deepcatalog.tools.storage import CLEAR_DATA_CONFIRMATION, clear_all_stored_data
 
 
 def _isolate_data(tmp_path, monkeypatch):
     data = tmp_path / "data"
-    monkeypatch.setattr("paperless_agent.config.DATA_DIR", data)
-    monkeypatch.setattr("paperless_agent.config.INBOX_DIR", data / "inbox")
-    monkeypatch.setattr("paperless_agent.config.ARCHIVE_DIR", data / "archive")
-    monkeypatch.setattr("paperless_agent.config.DB_PATH", data / "paperless.db")
-    monkeypatch.setattr("paperless_agent.config.CHROMA_DIR", data / "chroma")
-    monkeypatch.setattr("paperless_agent.tools.metadata_db.DB_PATH", data / "paperless.db")
-    monkeypatch.setattr("paperless_agent.tools.rag_index.CHROMA_DIR", data / "chroma")
+    monkeypatch.setattr("deepcatalog.config.DATA_DIR", data)
+    monkeypatch.setattr("deepcatalog.config.INBOX_DIR", data / "inbox")
+    monkeypatch.setattr("deepcatalog.config.ARCHIVE_DIR", data / "archive")
+    monkeypatch.setattr("deepcatalog.config.DB_PATH", data / "deepcatalog.db")
+    monkeypatch.setattr("deepcatalog.config.CHROMA_DIR", data / "chroma")
+    monkeypatch.setattr("deepcatalog.tools.metadata_db.DB_PATH", data / "deepcatalog.db")
+    monkeypatch.setattr("deepcatalog.tools.rag_index.CHROMA_DIR", data / "chroma")
     clear_settings_cache()
     ensure_data_dirs()
     load_settings()
@@ -67,7 +67,7 @@ def test_clear_all_stored_data(tmp_path, monkeypatch):
     )
     assert indexed["status"] == "success"
     assert (data / "chroma").exists()
-    assert (data / "paperless.db").exists()
+    assert (data / "deepcatalog.db").exists()
 
     settings_before = save_settings(
         {

@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 
-from paperless_agent import inbox_worker
-from paperless_agent.progress import PIPELINE_STEPS
-from paperless_agent.settings import get_source_dir
+from deepcatalog import inbox_worker
+from deepcatalog.progress import PIPELINE_STEPS
+from deepcatalog.settings import get_source_dir
 
 
 def test_process_pipeline_endpoint(client):
@@ -77,7 +77,7 @@ def test_process_retry_and_cancel_active(client, monkeypatch):
     active_ids: list[str] = []
 
     async def slow_pipeline(path: str):
-        from paperless_agent.job_control import get_active_file_id
+        from deepcatalog.job_control import get_active_file_id
 
         active_ids.append(get_active_file_id() or "")
         started.set()

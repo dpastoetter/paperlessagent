@@ -1,0 +1,5 @@
+# CodeQL analysis config (used by .github/workflows/security.yml).
+name: DeepCatalog
+paths-ignore:
+  # Third-party PDF.js worker — not maintained in this repo.
+  - app/static/vendor/**

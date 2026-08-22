@@ -1,5 +1,5 @@
 # Keep default gitleaks rules; only skip fixtures / lockfiles / example env.
-title = "PaperlessAgent"
+title = "DeepCatalog"
 
 [extend]
 useDefault = true

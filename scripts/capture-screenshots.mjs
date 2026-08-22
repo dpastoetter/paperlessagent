@@ -16,8 +16,8 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
-const OUT = process.env.PAPERLESS_SHOT_OUT || path.join(ROOT, "docs", "screenshots");
-const BASE = process.env.PAPERLESS_SHOT_BASE || "http://127.0.0.1:8080";
+const OUT = process.env.DEEPCATALOG_SHOT_OUT || path.join(ROOT, "docs", "screenshots");
+const BASE = process.env.DEEPCATALOG_SHOT_BASE || "http://127.0.0.1:8080";
 const VIEWS = ["inbox", "review", "archive", "ask", "settings"];
 const READY = {
   inbox: "#workflow .pipeline-step",
@@ -52,7 +52,7 @@ for (const view of VIEWS) {
   console.log("capturing", view, url);
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await settle();
-  await page.waitForFunction(() => window.PA_MOCK?.enabled === true);
+  await page.waitForFunction(() => window.DC_MOCK?.enabled === true);
   await page.waitForSelector(READY[view], { timeout: 10000 });
   await page.evaluate(() => {
     document.getElementById("session-unlock")?.setAttribute("hidden", "");

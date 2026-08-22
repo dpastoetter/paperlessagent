@@ -1,6 +1,10 @@
-# PaperlessAgent
+# DeepCatalog
 
-Local-first document agent: drop scanned PDFs and photos into an inbox, and it recovers the text with AI vision OCR, extracts structured metadata, proposes a meaningful filename, and files everything into your folder structure — with you in the loop before anything is written. Metadata lands in SQLite, content is indexed for RAG so you can ask questions about your archive in natural language.
+Deep document intelligence, local-first.
+
+Drop scanned PDFs and photos into an inbox, and DeepCatalog recovers the text with AI vision OCR, extracts structured metadata, proposes a meaningful filename, and files everything into your folder structure — with you in the loop before anything is written. Metadata lands in SQLite, content is indexed for RAG so you can ask questions about your archive in natural language.
+
+The desktop and web workspace is **DeepCatalog Studio** — your local workspace for archive discovery and automation.
 
 Built with [Google ADK](https://adk.dev/) (Python) + FastAPI. Works with **OpenAI (ChatGPT OAuth or API key)**, **Gemini**, or **Ollama (fully local)**. Everything runs and stays on your machine.
 
@@ -15,12 +19,12 @@ Built with [Google ADK](https://adk.dev/) (Python) + FastAPI. Works with **OpenA
 - **Smart metadata extraction**: category-aware fields — `subject`, `parties`, and `reference_ids` for all document types; amount/currency only for invoices, receipts, bank/tax/utility/insurance documents. Missing `doc_type` defaults to `other`; common aliases (`document_type`, `category`) are accepted
 - **Duplicate detection**: SHA-256 file checksums, normalized content hashes, and text-similarity matching flag re-scans and near-duplicates before they are filed
 - **Ask your archive**: grounded RAG + FTS5 keyword search with source citations, a chat-style composer, and optional example questions (no “recent docs” padding when retrieval misses)
-- **Local storage**: configurable inbox and per-category archive folders, `data/paperless.db` (SQLite + FTS5), `data/chroma/` (vectors)
+- **Local storage**: configurable inbox and per-category archive folders, `data/deepcatalog.db` (SQLite + FTS5), `data/chroma/` (vectors)
 - **Inbox polling**: automatic processing of new scans on a configurable interval
 - **Local Ollama tooling**: start the daemon, pull models, show CPU/GPU usage for loaded models, unload or restart Ollama from Settings
 - **Boot autostart (Linux)**: optional systemd user service so the web UI comes up after login or reboot
 - **Web app**: full-height workbench for Inbox, Review, Archive, Ask, and Settings; keyboard shortcuts (`?` help, `/` Archive search); PDF preview in Review and Archive; four theme presets; toasts; mockup mode for screenshots
-- **Linux AppImage**: download a single `x86_64` binary from GitHub Releases (bundles Python and Poppler; data stays in `~/.local/share/paperlessagent`)
+- **Linux AppImage**: download a single `x86_64` binary from GitHub Releases (bundles Python and Poppler; data stays in `~/.local/share/deepcatalog`)
 - **Self-update**: check and install new releases from GitHub directly from Settings
 - **CI & coverage**: `./scripts/ci.sh` runs format, lint, mypy, Vitest, and pytest with a coverage floor
 
@@ -55,10 +59,10 @@ The recommended Linux desktop install is the **AppImage** (no Python/venv setup)
 
 ### Linux AppImage
 
-Download the `x86_64` AppImage from [GitHub Releases](https://github.com/dpastoetter/paperlessagent/releases/latest) (glibc 2.35+ — Ubuntu 22.04, Fedora 36, Debian 12, and newer). Poppler is bundled. On first launch the AppImage installs a `.desktop` entry (`StartupWMClass=PaperlessAgent`) so the window groups under its own icon. It prefers a native **WebKitGTK** window; if that fails it opens a chromeless **Brave/Chrome/Chromium** `--app` window (profile in `~/.local/share/paperlessagent/chromium-profile`). Only if no Chromium-based browser is found does it fall back to your default browser.
+Download the `x86_64` AppImage from [GitHub Releases](https://github.com/dpastoetter/DeepCatalog/releases/latest) (glibc 2.35+ — Ubuntu 22.04, Fedora 36, Debian 12, and newer). Poppler is bundled. On first launch the AppImage installs a `.desktop` entry (`StartupWMClass=DeepCatalog`) so the window groups under its own icon. It opens a **chromeless Brave/Chrome/Chromium `--app` window** (isolated profile in `~/.local/share/deepcatalog/chromium-profile`, own window class so it does not appear as a browser tab). Source checkouts can use a native **WebKitGTK** window when PyGObject is installed. Only if no Chromium-based browser is found does it fall back to your default browser.
 
 ```bash
-# Optional: native GTK window (otherwise Brave/Chrome --app is used)
+# Optional (source installs): native GTK window instead of Chromium --app
 # Fedora / RHEL
 sudo dnf install webkit2gtk4.1
 # Debian / Ubuntu
@@ -66,15 +70,15 @@ sudo apt install gir1.2-webkit2-4.1
 ```
 
 ```bash
-# Pick the PaperlessAgent-<version>-x86_64.AppImage asset from
-# https://github.com/dpastoetter/paperlessagent/releases/latest
-chmod +x PaperlessAgent-*-x86_64.AppImage
-./PaperlessAgent-*-x86_64.AppImage
+# Pick the DeepCatalog-<version>-x86_64.AppImage asset from
+# https://github.com/dpastoetter/DeepCatalog/releases/latest
+chmod +x DeepCatalog-*-x86_64.AppImage
+./DeepCatalog-*-x86_64.AppImage
 ```
 
-The release asset is versioned (`PaperlessAgent-<version>-x86_64.AppImage`). User data, `.env`, and the SQLite/Chroma stores live in `~/.local/share/paperlessagent` — not inside the image. To update, download the new AppImage and replace the file (Settings can *check* for updates but cannot rewrite a mounted AppImage). Autostart from Settings writes a systemd user unit that launches this AppImage with `--headless`.
+The release asset is versioned (`DeepCatalog-<version>-x86_64.AppImage`). User data, `.env`, and the SQLite/Chroma stores live in `~/.local/share/deepcatalog` — not inside the image. To update, download the new AppImage and replace the file (Settings can *check* for updates but cannot rewrite a mounted AppImage). Autostart from Settings writes a systemd user unit that launches this AppImage with `--headless`.
 
-**Uninstall:** delete the AppImage and, if you want to drop local data, `rm -rf ~/.local/share/paperlessagent`. Disable Settings → Autostart first (or `systemctl --user disable paperlessagent.service`).
+**Uninstall:** delete the AppImage and, if you want to drop local data, `rm -rf ~/.local/share/deepcatalog`. Disable Settings → Autostart first (or `systemctl --user disable deepcatalog.service`).
 
 ### Linux (source + venv)
 
@@ -88,11 +92,11 @@ sudo apt install python3-venv poppler-utils
 ```
 
 ```bash
-curl -fsSL https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/dpastoetter/DeepCatalog/releases/latest/download/install.sh | bash
 ```
 
 ```bash
-cd ~/paperlessagent
+cd ~/deepcatalog
 source .venv/bin/activate
 uvicorn app.main:app --port 8080
 ```
@@ -100,20 +104,20 @@ uvicorn app.main:app --port 8080
 Optional install location / developer git mode:
 
 ```bash
-PAPERLESS_DIR=~/apps/paperlessagent curl -fsSL \
-  https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.sh | bash
+DEEPCATALOG_DIR=~/apps/deepcatalog curl -fsSL \
+  https://github.com/dpastoetter/DeepCatalog/releases/latest/download/install.sh | bash
 
-PAPERLESS_INSTALL_SOURCE=git curl -fsSL \
-  https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.sh | bash
+DEEPCATALOG_INSTALL_SOURCE=git curl -fsSL \
+  https://github.com/dpastoetter/DeepCatalog/releases/latest/download/install.sh | bash
 ```
 
 **Uninstall** (app code, `.venv`, local `data/`, `.env`):
 
 ```bash
-rm -rf "${PAPERLESS_DIR:-$HOME/paperlessagent}"
+rm -rf "${DEEPCATALOG_DIR:-$HOME/deepcatalog}"
 ```
 
-This does not delete ChatGPT/OpenAI credentials in `~/.codex/auth.json` or archive/inbox folders outside the install directory. If you enabled Settings → Autostart, disable it first or run `systemctl --user disable paperlessagent.service` (systemd autostart is Linux-only).
+This does not delete ChatGPT/OpenAI credentials in `~/.codex/auth.json` or archive/inbox folders outside the install directory. If you enabled Settings → Autostart, disable it first or run `systemctl --user disable deepcatalog.service` (systemd autostart is Linux-only).
 
 ### macOS
 
@@ -126,11 +130,11 @@ brew install python poppler
 Same installer as Linux:
 
 ```bash
-curl -fsSL https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/dpastoetter/DeepCatalog/releases/latest/download/install.sh | bash
 ```
 
 ```bash
-cd ~/paperlessagent
+cd ~/deepcatalog
 source .venv/bin/activate
 uvicorn app.main:app --port 8080
 ```
@@ -138,7 +142,7 @@ uvicorn app.main:app --port 8080
 **Uninstall:**
 
 ```bash
-rm -rf "${PAPERLESS_DIR:-$HOME/paperlessagent}"
+rm -rf "${DEEPCATALOG_DIR:-$HOME/deepcatalog}"
 ```
 
 Does not remove `~/.codex/auth.json` or external archive folders. Boot autostart (systemd) is **not available** on macOS — use Settings → Autostart only on Linux.
@@ -150,23 +154,23 @@ Prerequisites: **Python 3.10+** from [python.org](https://www.python.org/downloa
 In PowerShell:
 
 ```powershell
-irm https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.ps1 | iex
+irm https://github.com/dpastoetter/DeepCatalog/releases/latest/download/install.ps1 | iex
 ```
 
 ```powershell
-cd $env:USERPROFILE\paperlessagent
+cd $env:USERPROFILE\deepcatalog
 .\.venv\Scripts\Activate.ps1
 uvicorn app.main:app --host 127.0.0.1 --port 8080
 ```
 
 If `Activate.ps1` is blocked, run once: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
-Optional: `$env:PAPERLESS_DIR = "$env:USERPROFILE\apps\paperlessagent"` before the installer. WSL can use the Linux `install.sh` flow instead.
+Optional: `$env:DEEPCATALOG_DIR = "$env:USERPROFILE\apps\deepcatalog"` before the installer. WSL can use the Linux `install.sh` flow instead.
 
 **Uninstall:**
 
 ```powershell
-Remove-Item -Recurse -Force "$env:USERPROFILE\paperlessagent"
+Remove-Item -Recurse -Force "$env:USERPROFILE\deepcatalog"
 ```
 
 Does not remove `%USERPROFILE%\.codex\auth.json` or archive folders outside the install directory. Boot autostart is **not supported** on Windows.
@@ -176,18 +180,18 @@ Does not remove `%USERPROFILE%\.codex\auth.json` or archive folders outside the 
 From a venv install, after `pip install -e '.[desktop]' -c constraints.txt` (needs WebKitGTK on Linux):
 
 ```bash
-python -m paperless_agent.desktop
+python -m deepcatalog.desktop
 ```
 
-The desktop wrapper respects `PAPERLESS_HOST`, `PAPERLESS_PORT`, and `PAPERLESS_LOG_LEVEL`. Pass `--headless` to keep the server in the foreground without a window (used by the AppImage systemd unit). On Linux it installs `~/.local/share/applications/paperlessagent.desktop` on launch. If WebKitGTK is missing, it uses Brave/Chrome/Chromium `--app` before falling back to a normal browser tab.
+The desktop wrapper respects `DEEPCATALOG_HOST`, `DEEPCATALOG_PORT`, and `DEEPCATALOG_LOG_LEVEL`. Pass `--headless` to keep the server in the foreground without a window (used by the AppImage systemd unit). On Linux it installs `~/.local/share/applications/deepcatalog.desktop` on launch. If WebKitGTK is missing, it uses Brave/Chrome/Chromium `--app` before falling back to a normal browser tab.
 
 ### Manual setup
 
 Use this if you cloned with `git` and skipped the installer (Unix shell shown; on Windows use `py -3 -m venv .venv` and `.\.venv\Scripts\Activate.ps1`):
 
 ```bash
-git clone https://github.com/dpastoetter/paperlessagent.git
-cd paperlessagent
+git clone https://github.com/dpastoetter/DeepCatalog.git
+cd DeepCatalog
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip
@@ -214,11 +218,11 @@ In the web UI, open **Settings → AI provider → Cloud (ChatGPT)** and choose 
 You can also set `OPENAI_API_KEY` in `.env`. Auth resolution prefers an API key when present, otherwise ChatGPT OAuth tokens.
 
 ```bash
-PAPERLESS_LLM_PROVIDER=openai
-PAPERLESS_MODEL=gpt-5.6-luna
+DEEPCATALOG_LLM_PROVIDER=openai
+DEEPCATALOG_MODEL=gpt-5.6-luna
 # Optional override for ChatGPT OAuth (defaults to gpt-5.6-luna):
-# PAPERLESS_CODEX_MODEL=gpt-5.6-terra
-PAPERLESS_EMBEDDING_MODEL=text-embedding-3-small
+# DEEPCATALOG_CODEX_MODEL=gpt-5.6-terra
+DEEPCATALOG_EMBEDDING_MODEL=text-embedding-3-small
 ```
 
 ChatGPT OAuth only supports Codex models (e.g. `gpt-5.6-luna` / `terra` / `sol`). Platform IDs like `gpt-4.1` are rejected — the app auto-falls back to `gpt-5.6-luna` in that case. ChatGPT OAuth cannot call Platform embedding APIs, so RAG uses a **local ONNX sentence embedding model** (`all-MiniLM-L6-v2` via Chroma). For OpenAI-hosted embeddings, save an API key. Fully local installs should use the Ollama provider with `nomic-embed-text`.
@@ -228,10 +232,10 @@ ChatGPT OAuth only supports Codex models (e.g. `gpt-5.6-luna` / `terra` / `sol`)
 ### Gemini (alternative)
 
 ```bash
-PAPERLESS_LLM_PROVIDER=gemini
+DEEPCATALOG_LLM_PROVIDER=gemini
 GOOGLE_API_KEY=...
-PAPERLESS_MODEL=gemini-flash-latest
-PAPERLESS_EMBEDDING_MODEL=text-embedding-004
+DEEPCATALOG_MODEL=gemini-flash-latest
+DEEPCATALOG_EMBEDDING_MODEL=text-embedding-004
 ```
 
 ### Ollama (fully local)
@@ -250,85 +254,85 @@ ollama pull nomic-embed-text  # embeddings for RAG
 ```
 
 ```bash
-PAPERLESS_LLM_PROVIDER=ollama
-PAPERLESS_MODEL=gemma3
-PAPERLESS_EMBEDDING_MODEL=nomic-embed-text
+DEEPCATALOG_LLM_PROVIDER=ollama
+DEEPCATALOG_MODEL=gemma3
+DEEPCATALOG_EMBEDDING_MODEL=nomic-embed-text
 # OLLAMA_BASE_URL=http://localhost:11434   (default; loopback only)
 # Remote Ollama (another host) needs Settings → Remote Ollama (privacy disclaimer)
-# or PAPERLESS_ALLOW_REMOTE_OLLAMA=1 with a non-loopback OLLAMA_BASE_URL.
+# or DEEPCATALOG_ALLOW_REMOTE_OLLAMA=1 with a non-loopback OLLAMA_BASE_URL.
 ```
 
-**User-local install (no sudo):** on Linux you can install the Ollama binary under `~/.local/bin` and libraries under `~/.local/lib/ollama`. If you use a user-local build, ensure `LD_LIBRARY_PATH` includes `~/.local/lib/ollama` when starting `ollama serve` (PaperlessAgent’s systemd autostart unit sets this automatically when that directory exists).
+**User-local install (no sudo):** on Linux you can install the Ollama binary under `~/.local/bin` and libraries under `~/.local/lib/ollama`. If you use a user-local build, ensure `LD_LIBRARY_PATH` includes `~/.local/lib/ollama` when starting `ollama serve` (DeepCatalog’s systemd autostart unit sets this automatically when that directory exists).
 
-While Ollama is the active provider, PaperlessAgent checks that the daemon is reachable and listening (and that required models are present) before chat, OCR, or embedding work. Health reports `degraded` when the local instance is offline or models are missing. Settings shows:
+While Ollama is the active provider, DeepCatalog checks that the daemon is reachable and listening (and that required models are present) before chat, OCR, or embedding work. Health reports `degraded` when the local instance is offline or models are missing. Settings shows:
 
 - **CPU / GPU / CPU + GPU** — inferred from Ollama’s `/api/ps` (`size_vram` on loaded models)
 - **Start Ollama** — launch the daemon (systemd unit when available, otherwise `ollama serve`)
 - **Unload model** — free RAM/VRAM after a long OCR run
 - **Restart Ollama** — recover from a stuck daemon (blocked while a file is processing unless you cancel first)
 
-If `PAPERLESS_LLM_PROVIDER` is unset, the app auto-selects OpenAI when a key/Codex login is available, else Gemini when `GOOGLE_API_KEY` is set, else a **running local Ollama** when one responds on `OLLAMA_BASE_URL`. Set `PAPERLESS_SKIP_OLLAMA_PROBE=1` to skip the localhost probe during auto-detect (useful in tests or air-gapped installs).
+If `DEEPCATALOG_LLM_PROVIDER` is unset, the app auto-selects OpenAI when a key/Codex login is available, else Gemini when `GOOGLE_API_KEY` is set, else a **running local Ollama** when one responds on `OLLAMA_BASE_URL`. Set `DEEPCATALOG_SKIP_OLLAMA_PROBE=1` to skip the localhost probe during auto-detect (useful in tests or air-gapped installs).
 
 ## Run the web app
 
 Always activate the project venv first so you use its packages, not the system ones:
 
 ```bash
-cd ~/paperlessagent   # or your install directory
+cd ~/deepcatalog   # or your install directory
 source .venv/bin/activate
-python -m paperless_agent.serve --host 127.0.0.1 --port 8080
+python -m deepcatalog.serve --host 127.0.0.1 --port 8080
 ```
 
-That owned entry records `PAPERLESS_HOST` / `PAPERLESS_PORT` and starts uvicorn with the same values, so the bind-address security check cannot drift from the socket. `uvicorn app.main:app --host …` still works; lifespan reads uvicorn’s real `--host` (not a defaulted env var) and refuses a network bind unless network mode is fully configured.
+That owned entry records `DEEPCATALOG_HOST` / `DEEPCATALOG_PORT` and starts uvicorn with the same values, so the bind-address security check cannot drift from the socket. `uvicorn app.main:app --host …` still works; lifespan reads uvicorn’s real `--host` (not a defaulted env var) and refuses a network bind unless network mode is fully configured.
 
 | Symptom | Fix |
 | --- | --- |
-| `.venv/bin/activate: No such file or directory` | Re-run the installer. On Debian/Ubuntu also install `python3-venv`, then remove a broken leftover with `rm -rf ~/paperlessagent/.venv` and install again |
+| `.venv/bin/activate: No such file or directory` | Re-run the installer. On Debian/Ubuntu also install `python3-venv`, then remove a broken leftover with `rm -rf ~/deepcatalog/.venv` and install again |
 | `ModuleNotFoundError: No module named 'fastapi'` | Same — dependencies were never installed into `.venv`, or the venv was not activated |
-| Port already in use | Stop the other instance: `pkill -f "paperless_agent.serve"` / `pkill -f "uvicorn app.main:app"`, or pick another port with `--port 8081` and `PAPERLESS_PORT=8081` |
-| Ollama OCR times out on CPU | Raise `PAPERLESS_OLLAMA_OCR_PAGE_TIMEOUT` (default 900s) or lower `PAPERLESS_OLLAMA_OCR_MAX_IMAGE_PX` (default 1024); see [OCR tuning](#ocr-and-long-documents) |
+| Port already in use | Stop the other instance: `pkill -f "deepcatalog.serve"` / `pkill -f "uvicorn app.main:app"`, or pick another port with `--port 8081` and `DEEPCATALOG_PORT=8081` |
+| Ollama OCR times out on CPU | Raise `DEEPCATALOG_OLLAMA_OCR_PAGE_TIMEOUT` (default 900s) or lower `DEEPCATALOG_OLLAMA_OCR_MAX_IMAGE_PX` (default 1024); see [OCR tuning](#ocr-and-long-documents) |
 | Find details fails with “invalid JSON” | Usually empty/malformed model output — retry the file; with ChatGPT OAuth confirm a Codex model is selected and you are signed in |
 
 Uvicorn should bind to `127.0.0.1` (the default). The API has no user login; mutating routes also require a custom header the UI sends (CSRF hardening).
 
-**Local mode** (default): `PAPERLESS_HOST=127.0.0.1` / `::1` — plain HTTP is fine on loopback.
+**Local mode** (default): `DEEPCATALOG_HOST=127.0.0.1` / `::1` — plain HTTP is fine on loopback.
 
 **Network mode** (bind `0.0.0.0`, a LAN IP, etc.): refused unless you set **all** of:
 
-1. `PAPERLESS_ALLOW_REMOTE=1` (explicit opt-in — a token alone is not enough)
-2. `PAPERLESS_API_TOKEN=…`
-3. `PAPERLESS_SSL_CERTFILE` + `PAPERLESS_SSL_KEYFILE` pointing at existing PEM files (HTTPS on the uvicorn process)
+1. `DEEPCATALOG_ALLOW_REMOTE=1` (explicit opt-in — a token alone is not enough)
+2. `DEEPCATALOG_API_TOKEN=…`
+3. `DEEPCATALOG_SSL_CERTFILE` + `DEEPCATALOG_SSL_KEYFILE` pointing at existing PEM files (HTTPS on the uvicorn process)
 
-A token over plain HTTP on a LAN can be intercepted; network mode therefore requires TLS on the app itself. Prefer keeping the app on loopback and terminating TLS on a reverse proxy instead (see [Network access (TLS reverse proxy)](#network-access-tls-reverse-proxy)). Credentials from non-loopback clients are refused unless the request is HTTPS (`X-Forwarded-Proto` is honored only for `PAPERLESS_TRUSTED_PROXIES`).
+A token over plain HTTP on a LAN can be intercepted; network mode therefore requires TLS on the app itself. Prefer keeping the app on loopback and terminating TLS on a reverse proxy instead (see [Network access (TLS reverse proxy)](#network-access-tls-reverse-proxy)). Credentials from non-loopback clients are refused unless the request is HTTPS (`X-Forwarded-Proto` is honored only for `DEEPCATALOG_TRUSTED_PROXIES`).
 
-With a token configured, every `/api/*` route except health/session bootstrap requires either `Authorization: Bearer <PAPERLESS_API_TOKEN>` (machine clients) or an HttpOnly `pa_session` cookie. Browser sessions are **random ids** created by `POST /api/auth/session` (or automatically for a **direct** loopback browser — loopback TCP peer and loopback Host, never via a reverse proxy). The long-lived API secret is never injected into JavaScript, reused as the cookie value, or accepted in a URL query string (`?token=` is ignored). Session creation and failed token checks are rate-limited per client IP (stricter on `POST /api/auth/session`); repeated failures are logged without the secret. Uvicorn access logs omit query strings so a pasted secret cannot land in log files. Host headers are allowlisted (`PAPERLESS_ALLOWED_HOSTS`, defaulting to localhost / loopback) to harden against DNS rebinding. `X-Forwarded-*` is used only to recover the client IP / HTTPS scheme from a listed `PAPERLESS_TRUSTED_PROXIES` hop; it is never an authentication signal.
+With a token configured, every `/api/*` route except health/session bootstrap requires either `Authorization: Bearer <DEEPCATALOG_API_TOKEN>` (machine clients) or an HttpOnly `deepcatalog_session` cookie. Browser sessions are **random ids** created by `POST /api/auth/session` (or automatically for a **direct** loopback browser — loopback TCP peer and loopback Host, never via a reverse proxy). The long-lived API secret is never injected into JavaScript, reused as the cookie value, or accepted in a URL query string (`?token=` is ignored). Session creation and failed token checks are rate-limited per client IP (stricter on `POST /api/auth/session`); repeated failures are logged without the secret. Uvicorn access logs omit query strings so a pasted secret cannot land in log files. Host headers are allowlisted (`DEEPCATALOG_ALLOWED_HOSTS`, defaulting to localhost / loopback) to harden against DNS rebinding. `X-Forwarded-*` is used only to recover the client IP / HTTPS scheme from a listed `DEEPCATALOG_TRUSTED_PROXIES` hop; it is never an authentication signal.
 
 ```bash
-python -c "from paperless_agent.local_security import generate_api_token; print(generate_api_token())"
-# → put the value in .env as PAPERLESS_API_TOKEN=…
-# Optional: PAPERLESS_SESSION_TTL_SECONDS=86400  (default 24h)
+python -c "from deepcatalog.local_security import generate_api_token; print(generate_api_token())"
+# → put the value in .env as DEEPCATALOG_API_TOKEN=…
+# Optional: DEEPCATALOG_SESSION_TTL_SECONDS=86400  (default 24h)
 ```
 
 Open [http://localhost:8080](http://localhost:8080).
 
 ### Network access (TLS reverse proxy)
 
-Recommended pattern: keep PaperlessAgent in **local mode** on loopback, and put Caddy / nginx / Traefik in front with HTTPS. The proxy speaks TLS to clients; the app still uses HTTP only on `127.0.0.1`.
+Recommended pattern: keep DeepCatalog in **local mode** on loopback, and put Caddy / nginx / Traefik in front with HTTPS. The proxy speaks TLS to clients; the app still uses HTTP only on `127.0.0.1`.
 
 1. Set a token and allow the public hostname in the Host allowlist:
 
 ```bash
-PAPERLESS_HOST=127.0.0.1
-PAPERLESS_PORT=8080
-PAPERLESS_API_TOKEN=…          # required so LAN clients must authenticate
-PAPERLESS_ALLOWED_HOSTS=paperless.example.com,localhost,127.0.0.1
-PAPERLESS_TRUSTED_PROXIES=127.0.0.1,::1
+DEEPCATALOG_HOST=127.0.0.1
+DEEPCATALOG_PORT=8080
+DEEPCATALOG_API_TOKEN=…          # required so LAN clients must authenticate
+DEEPCATALOG_ALLOWED_HOSTS=deepcatalog.example.com,localhost,127.0.0.1
+DEEPCATALOG_TRUSTED_PROXIES=127.0.0.1,::1
 ```
 
 2. Example **Caddy** snippet:
 
 ```caddy
-paperless.example.com {
+deepcatalog.example.com {
   reverse_proxy 127.0.0.1:8080
 }
 ```
@@ -338,7 +342,7 @@ paperless.example.com {
 ```nginx
 server {
   listen 443 ssl http2;
-  server_name paperless.example.com;
+  server_name deepcatalog.example.com;
   # ssl_certificate / ssl_certificate_key …
   location / {
     proxy_pass http://127.0.0.1:8080;
@@ -350,33 +354,33 @@ server {
 }
 ```
 
-4. Example **Traefik** (label-style): route HTTPS entrypoint → `http://127.0.0.1:8080`, and only then set `PAPERLESS_TRUSTED_PROXIES` to the Traefik container/host IP.
+4. Example **Traefik** (label-style): route HTTPS entrypoint → `http://127.0.0.1:8080`, and only then set `DEEPCATALOG_TRUSTED_PROXIES` to the Traefik container/host IP.
 
-Do **not** set `PAPERLESS_TRUSTED_PROXIES=0.0.0.0/0` (or `::/0`); those catch-alls are ignored. Only list the proxy addresses that terminate TLS. Public/proxied browsers always use the session unlock panel (or Bearer token); localhost auto-login does not apply behind the proxy.
+Do **not** set `DEEPCATALOG_TRUSTED_PROXIES=0.0.0.0/0` (or `::/0`); those catch-alls are ignored. Only list the proxy addresses that terminate TLS. Public/proxied browsers always use the session unlock panel (or Bearer token); localhost auto-login does not apply behind the proxy.
 
 If you truly need uvicorn itself on a non-loopback address, use network mode with app-level TLS:
 
 ```bash
-PAPERLESS_HOST=0.0.0.0
-PAPERLESS_ALLOW_REMOTE=1
-PAPERLESS_API_TOKEN=…
-PAPERLESS_SSL_CERTFILE=/path/to/fullchain.pem
-PAPERLESS_SSL_KEYFILE=/path/to/privkey.pem
-python -m paperless_agent.serve --host 0.0.0.0 --port 8443
+DEEPCATALOG_HOST=0.0.0.0
+DEEPCATALOG_ALLOW_REMOTE=1
+DEEPCATALOG_API_TOKEN=…
+DEEPCATALOG_SSL_CERTFILE=/path/to/fullchain.pem
+DEEPCATALOG_SSL_KEYFILE=/path/to/privkey.pem
+python -m deepcatalog.serve --host 0.0.0.0 --port 8443
 ```
 
 ### Autostart at boot (Linux + systemd)
 
-**Settings → Autostart → Start PaperlessAgent when the system boots** installs a user systemd unit at `~/.config/systemd/user/paperlessagent.service`, runs `loginctl enable-linger` so the service can start without an interactive login, and starts the unit if port 8080 is free.
+**Settings → Autostart → Start DeepCatalog Studio when the system boots** installs a user systemd unit at `~/.config/systemd/user/deepcatalog.service`, runs `loginctl enable-linger` so the service can start without an interactive login, and starts the unit if port 8080 is free.
 
-The unit reads your install’s `.env`, sets `DATA_DIR`, and starts `python -m paperless_agent.serve` from the project venv (same host/port as `PAPERLESS_HOST` / `PAPERLESS_PORT`). Customize bind address/port in `.env` before enabling autostart.
+The unit reads your install’s `.env`, sets `DATA_DIR`, and starts `python -m deepcatalog.serve` from the project venv (same host/port as `DEEPCATALOG_HOST` / `DEEPCATALOG_PORT`). Customize bind address/port in `.env` before enabling autostart.
 
 Manual control:
 
 ```bash
-systemctl --user status paperlessagent.service
-systemctl --user restart paperlessagent.service
-journalctl --user -u paperlessagent.service -f
+systemctl --user status deepcatalog.service
+systemctl --user restart deepcatalog.service
+journalctl --user -u deepcatalog.service -f
 ```
 
 Autostart requires Linux with `systemctl --user`. It is hidden on other platforms.
@@ -391,7 +395,7 @@ Autostart requires Linux with `systemctl --user`. It is hidden on other platform
 
 Filing rules (source folder, category → folder mapping, poll interval, OCR accuracy, review requirement) live in **Settings → Filing & scanning** and are stored in `data/settings.json`. The **Require human review** checkbox applies as soon as you toggle it (folders and poll interval still use **Save setup**). Older settings files missing a `review` or `ocr` key are filled in on load.
 
-**Danger zone → Remove all stored data** deletes only (1) files tracked in the metadata DB whose paths still lie inside a configured archive root, (2) supported inbox scan files (PDF/images), and (3) the app-owned SQLite + Chroma stores under `DATA_DIR`. It never recursively wipes a category folder or the inbox directory. The API requires the confirmation phrase `DELETE ALL PAPERLESSAGENT DATA` (UI two-click confirm is not enough). Settings also refuse dangerous roots (`/`, `$HOME`, `~/Downloads`, `~/Documents`, the project root, system paths, and `DATA_DIR` itself).
+**Danger zone → Remove all stored data** deletes only (1) files tracked in the metadata DB whose paths still lie inside a configured archive root, (2) supported inbox scan files (PDF/images), and (3) the app-owned SQLite + Chroma stores under `DATA_DIR`. It never recursively wipes a category folder or the inbox directory. The API requires the confirmation phrase `DELETE ALL DEEPCATALOG DATA` (UI two-click confirm is not enough). Settings also refuse dangerous roots (`/`, `$HOME`, `~/Downloads`, `~/Documents`, the project root, system paths, and `DATA_DIR` itself).
 
 ### Processing controls
 
@@ -430,42 +434,42 @@ Text recovery is **adaptive**. For each PDF page the agent assesses the embedded
 - **Balanced** (default) — use embedded text when quality heuristics pass; vision for weak/garbled/scanned pages
 - **Maximum** — always run AI vision OCR on every page (closest to the old always-vision behavior)
 
-Image files always use vision. Change the mode under **Settings → Filing & scanning → OCR accuracy**, or set `PAPERLESS_OCR_MODE`.
+Image files always use vision. Change the mode under **Settings → Filing & scanning → OCR accuracy**, or set `DEEPCATALOG_OCR_MODE`.
 
-By default, **all PDF pages** are considered (up to 128). Cloud providers run needed vision pages with **bounded concurrency** (`PAPERLESS_OCR_CONCURRENCY`, default 4). Local Ollama stays serial by default (`PAPERLESS_OCR_CONCURRENCY_OLLAMA=1`). Page images are downscaled before vision OCR.
+By default, **all PDF pages** are considered (up to 128). Cloud providers run needed vision pages with **bounded concurrency** (`DEEPCATALOG_OCR_CONCURRENCY`, default 4). Local Ollama stays serial by default (`DEEPCATALOG_OCR_CONCURRENCY_OLLAMA=1`). Page images are downscaled before vision OCR.
 
 Tune via `.env` (see `.env.example` for the full list):
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `PAPERLESS_OCR_MODE` | `balanced` | `fast` \| `balanced` \| `maximum` (overrides Settings) |
-| `PAPERLESS_OCR_CONCURRENCY` | `4` | Parallel vision pages for cloud providers |
-| `PAPERLESS_OCR_CONCURRENCY_OLLAMA` | `1` | Parallel vision pages for local Ollama |
-| `PAPERLESS_OCR_MAX_PAGES` | `0` (all) | Cap pages per document; `0` = all up to safety max |
-| `PAPERLESS_OCR_SAFETY_MAX_PAGES` | `128` | Hard ceiling on page count |
-| `PAPERLESS_OCR_DPI` | `200` | PDF render resolution |
-| `PAPERLESS_OCR_PAGE_TIMEOUT` | `180` | Seconds per page (cloud providers) |
-| `PAPERLESS_OLLAMA_OCR_PAGE_TIMEOUT` | `900` | Seconds per page (local Ollama — CPU can be slow) |
-| `PAPERLESS_OCR_MAX_IMAGE_PX` | `1536` | Max width/height before vision OCR (cloud) |
-| `PAPERLESS_OLLAMA_OCR_MAX_IMAGE_PX` | `1024` | Max width/height for local Ollama OCR |
-| `PAPERLESS_OLLAMA_OCR_NUM_CTX` | `4096` | Ollama context for OCR calls |
-| `PAPERLESS_OLLAMA_OCR_NUM_PREDICT` | `4096` | Max tokens per OCR page (Ollama) |
-| `PAPERLESS_OLLAMA_VISION_NUM_CTX` | `8192` | Ollama context for other vision calls |
-| `PAPERLESS_OLLAMA_VISION_NUM_PREDICT` | `8192` | Max tokens for other vision calls |
-| `PAPERLESS_EXTRACT_MAX_CHARS` | `48000` | OCR text sampled for metadata extraction (head + tail when longer) |
+| `DEEPCATALOG_OCR_MODE` | `balanced` | `fast` \| `balanced` \| `maximum` (overrides Settings) |
+| `DEEPCATALOG_OCR_CONCURRENCY` | `4` | Parallel vision pages for cloud providers |
+| `DEEPCATALOG_OCR_CONCURRENCY_OLLAMA` | `1` | Parallel vision pages for local Ollama |
+| `DEEPCATALOG_OCR_MAX_PAGES` | `0` (all) | Cap pages per document; `0` = all up to safety max |
+| `DEEPCATALOG_OCR_SAFETY_MAX_PAGES` | `128` | Hard ceiling on page count |
+| `DEEPCATALOG_OCR_DPI` | `200` | PDF render resolution |
+| `DEEPCATALOG_OCR_PAGE_TIMEOUT` | `180` | Seconds per page (cloud providers) |
+| `DEEPCATALOG_OLLAMA_OCR_PAGE_TIMEOUT` | `900` | Seconds per page (local Ollama — CPU can be slow) |
+| `DEEPCATALOG_OCR_MAX_IMAGE_PX` | `1536` | Max width/height before vision OCR (cloud) |
+| `DEEPCATALOG_OLLAMA_OCR_MAX_IMAGE_PX` | `1024` | Max width/height for local Ollama OCR |
+| `DEEPCATALOG_OLLAMA_OCR_NUM_CTX` | `4096` | Ollama context for OCR calls |
+| `DEEPCATALOG_OLLAMA_OCR_NUM_PREDICT` | `4096` | Max tokens per OCR page (Ollama) |
+| `DEEPCATALOG_OLLAMA_VISION_NUM_CTX` | `8192` | Ollama context for other vision calls |
+| `DEEPCATALOG_OLLAMA_VISION_NUM_PREDICT` | `8192` | Max tokens for other vision calls |
+| `DEEPCATALOG_EXTRACT_MAX_CHARS` | `48000` | OCR text sampled for metadata extraction (head + tail when longer) |
 
 LLM timeouts (chat, vision, Ollama) and cancel join behavior:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `PAPERLESS_LLM_TIMEOUT` | `120` | Text completion timeout (seconds) |
-| `PAPERLESS_LLM_VISION_TIMEOUT` | `300` | Cloud vision timeout |
-| `PAPERLESS_OLLAMA_TIMEOUT` | `300` | Ollama chat/vision timeout |
-| `PAPERLESS_CANCEL_JOIN_TIMEOUT` | `3` | Max wait when joining a cancelled async LLM call |
+| `DEEPCATALOG_LLM_TIMEOUT` | `120` | Text completion timeout (seconds) |
+| `DEEPCATALOG_LLM_VISION_TIMEOUT` | `300` | Cloud vision timeout |
+| `DEEPCATALOG_OLLAMA_TIMEOUT` | `300` | Ollama chat/vision timeout |
+| `DEEPCATALOG_CANCEL_JOIN_TIMEOUT` | `3` | Max wait when joining a cancelled async LLM call |
 
 If you switch embedding providers or models (Gemini / OpenAI / Ollama / local ONNX), the app **detects the mismatch automatically** (stored `embedding_provider`, `model`, `dimension`, and index schema version in `data/chroma/index_meta.json`) and rebuilds the vector index on the next index or Ask request. You do not need to remember to re-index manually.
 
-**Ask grounding:** answers use only confident semantic hits (cosine distance ≤ `PAPERLESS_ASK_MAX_CHUNK_DISTANCE`, default `0.55`) plus SQLite FTS5 / metadata matches. If nothing relevant is retrieved, Ask says there isn’t enough evidence — it does **not** fall back to recent unrelated documents.
+**Ask grounding:** answers use only confident semantic hits (cosine distance ≤ `DEEPCATALOG_ASK_MAX_CHUNK_DISTANCE`, default `0.55`) plus SQLite FTS5 / metadata matches. If nothing relevant is retrieved, Ask says there isn’t enough evidence — it does **not** fall back to recent unrelated documents.
 
 ## Updates
 
@@ -473,7 +477,7 @@ If you switch embedding providers or models (Gemini / OpenAI / Ollama / local ON
 
 Installs are **fail-closed on integrity checks**: the updater only applies a release that includes a `.tar.gz` asset with a SHA-256 digest (GitHub asset `digest` and/or a `SHA256SUMS` file). Tag-only or checksum-less releases are shown but refused at install time. Update checks retry on transient network failures. **AppImage installs cannot be updated in place** (the squashfs is read-only) — Settings still reports a newer tag and links the GitHub AppImage asset; replace the file yourself.
 
-Override the release source with `PAPERLESS_UPDATE_REPO=owner/repo` if you fork the project.
+Override the release source with `DEEPCATALOG_UPDATE_REPO=owner/repo` if you fork the project.
 
 GitHub Actions **packages the Linux AppImage as part of the release SDLC**: quality gate → dependency audit → AppImage (Ubuntu 22.04 / glibc 2.35+) → tarball + checksums → attach everything to the GitHub Release. That runs when you:
 
@@ -492,11 +496,11 @@ git checkout v0.2.0
 ./scripts/make-release-assets.sh v0.2.0
 # or before the tag exists:
 ./scripts/make-release-assets.sh v0.2.0 HEAD
-# dist/ contains paperlessagent-0.2.0.tar.gz, install.sh, install.ps1, SHA256SUMS
+# dist/ contains deepcatalog-0.2.0.tar.gz, install.sh, install.ps1, SHA256SUMS
 
 # Linux x86_64 AppImage (needs poppler-utils + patchelf):
 ./scripts/build-appimage.sh v0.2.0
-# dist/PaperlessAgent-0.2.0-x86_64.AppImage
+# dist/DeepCatalog-0.2.0-x86_64.AppImage
 ```
 
 ## Mockup mode
@@ -516,7 +520,7 @@ pip install -e ".[dev]" -c constraints.txt   # pytest, pytest-cov, ruff, mypy, p
 ./scripts/precommit.sh          # secret guard + CI gate (also usable as a git hook)
 ```
 
-Coverage is measured with `pytest-cov` (`paperless_agent`, `app`, `query_agent`; branch coverage). CI fails if total coverage drops below the floor in `pyproject.toml` (`--cov-fail-under`). HTML report: `htmlcov/` (gitignored). Desktop GUI (`desktop.py`) and live network/Ollama/systemd are mocked or omitted — unit-test their helpers instead.
+Coverage is measured with `pytest-cov` (`deepcatalog`, `app`, `query_agent`; branch coverage). CI fails if total coverage drops below the floor in `pyproject.toml` (`--cov-fail-under`). HTML report: `htmlcov/` (gitignored). Desktop GUI (`desktop.py`) and live network/Ollama/systemd are mocked or omitted — unit-test their helpers instead.
 
 Pure frontend helpers (`app/static/api.js`, `router.js`, `state.js`) have a small Vitest harness (`npm test`). Install Node deps once with `npm install`; CI runs the same suite after the JS syntax check.
 
@@ -546,13 +550,13 @@ Pull requests and pushes to `main` run [`.github/workflows/ci.yml`](.github/work
 
 Production ingest and Ask do **not** use these agents. They exist for local `adk web` /
 `adk run` while developing. `adk web` already defaults to `127.0.0.1`. Do **not**
-pass `--host 0.0.0.0`, open the port on the LAN, or put it behind the PaperlessAgent
+pass `--host 0.0.0.0`, open the port on the LAN, or put it behind the DeepCatalog
 TLS proxy — the debug UI can invoke inbox/file/RAG tools through the model.
 
 ```bash
 adk web --host 127.0.0.1 --port 8000
 # or
-adk run paperless_agent
+adk run deepcatalog
 adk run query_agent
 ```
 
@@ -565,7 +569,7 @@ python scripts/watch_inbox.py --process-existing
 ## Project layout
 
 ```
-paperless_agent/       # ingest pipeline, review queue, dedup, updater, auth/llm helpers
+deepcatalog/       # ingest pipeline, review queue, dedup, updater, auth/llm helpers
   ingest.py            #   OCR → extract → name → review gate → file + index
   ocr.py               #   adaptive text-layer / vision OCR, PDF render, image prep
   llm.py               #   OpenAI / Codex OAuth / Gemini / Ollama backends + cancel
@@ -598,7 +602,7 @@ data/                  # created at runtime (gitignored)
 Regenerate README screenshots (server must be running on port 8080):
 
 ```bash
-# python -m paperless_agent.serve --host 127.0.0.1 --port 8080
+# python -m deepcatalog.serve --host 127.0.0.1 --port 8080
 npm install --no-save playwright   # first time
 npx playwright install chromium    # first time
 node scripts/capture-screenshots.mjs
@@ -610,11 +614,11 @@ All optional variables are documented in `.env.example`. Common entries:
 
 ```bash
 DATA_DIR=./data
-PAPERLESS_HOST=127.0.0.1
-PAPERLESS_PORT=8080
-PAPERLESS_LLM_PROVIDER=ollama   # gemini | openai | ollama
-PAPERLESS_MODEL=gemma3
-PAPERLESS_EMBEDDING_MODEL=nomic-embed-text
+DEEPCATALOG_HOST=127.0.0.1
+DEEPCATALOG_PORT=8080
+DEEPCATALOG_LLM_PROVIDER=ollama   # gemini | openai | ollama
+DEEPCATALOG_MODEL=gemma3
+DEEPCATALOG_EMBEDDING_MODEL=nomic-embed-text
 OLLAMA_BASE_URL=http://localhost:11434
 ```
 

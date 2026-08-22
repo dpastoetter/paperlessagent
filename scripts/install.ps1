@@ -1,14 +1,14 @@
-# PaperlessAgent one-shot installer for Windows (PowerShell).
+# DeepCatalog one-shot installer for Windows (PowerShell).
 #
-#   irm https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.ps1 | iex
+#   irm https://github.com/dpastoetter/DeepCatalog/releases/latest/download/install.ps1 | iex
 #
 # Installs the latest *GitHub Release* tarball (same verified artifact as the
 # in-app updater and install.sh), creates .venv, and installs dependencies.
 #
 # Optional environment variables:
-#   PAPERLESS_DIR         install location (default: %USERPROFILE%\paperlessagent)
-#   PAPERLESS_PORT        port printed in the run hint (default: 8080)
-#   PAPERLESS_UPDATE_REPO   owner/repo (default: dpastoetter/paperlessagent)
+#   DEEPCATALOG_DIR         install location (default: %USERPROFILE%\deepcatalog)
+#   DEEPCATALOG_PORT        port printed in the run hint (default: 8080)
+#   DEEPCATALOG_UPDATE_REPO   owner/repo (default: dpastoetter/DeepCatalog)
 
 $ErrorActionPreference = "Stop"
 
@@ -52,12 +52,12 @@ function Get-PythonCommand {
     return $null
 }
 
-$Repo = if ($env:PAPERLESS_UPDATE_REPO) { $env:PAPERLESS_UPDATE_REPO.Trim() } else { "dpastoetter/paperlessagent" }
-$InstallDir = if ($env:PAPERLESS_DIR) { $env:PAPERLESS_DIR.Trim() } else { Join-Path $env:USERPROFILE "paperlessagent" }
-$Port = if ($env:PAPERLESS_PORT) { $env:PAPERLESS_PORT.Trim() } else { "8080" }
+$Repo = if ($env:DEEPCATALOG_UPDATE_REPO) { $env:DEEPCATALOG_UPDATE_REPO.Trim() } else { "dpastoetter/DeepCatalog" }
+$InstallDir = if ($env:DEEPCATALOG_DIR) { $env:DEEPCATALOG_DIR.Trim() } else { Join-Path $env:USERPROFILE "deepcatalog" }
+$Port = if ($env:DEEPCATALOG_PORT) { $env:DEEPCATALOG_PORT.Trim() } else { "8080" }
 $releaseCommit = Join-Path $InstallDir ".release-commit"
 
-Write-Bold "PaperlessAgent installer"
+Write-Bold "DeepCatalog installer"
 Write-Host "  → $InstallDir"
 Write-Host "  source: release"
 Write-Host ""
@@ -83,7 +83,7 @@ if ($pdftoppm) {
     Write-Warn "  https://github.com/oschwartz10612/poppler-windows/releases"
 }
 
-$tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("paperless-install-" + [guid]::NewGuid().ToString("N"))
+$tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("deepcatalog-install-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $tmp | Out-Null
 
 try {
@@ -91,7 +91,7 @@ try {
     $api = "https://api.github.com/repos/$Repo/releases/latest"
     $headers = @{
         "Accept"     = "application/vnd.github+json"
-        "User-Agent" = "PaperlessAgent-installer"
+        "User-Agent" = "DeepCatalog-installer"
     }
     try {
         $release = Invoke-RestMethod -Uri $api -Headers $headers
@@ -108,24 +108,24 @@ try {
         $lower = $name.ToLowerInvariant()
         if ($name -in @("SHA256SUMS", "SHA256SUMS.txt", "checksums.txt")) {
             $sumsUrl = $url
-        } elseif ($lower.StartsWith("paperlessagent-") -and ($lower.EndsWith(".tar.gz") -or $lower.EndsWith(".tgz"))) {
+        } elseif ($lower.StartsWith("deepcatalog-") -and ($lower.EndsWith(".tar.gz") -or $lower.EndsWith(".tgz"))) {
             $archive = @{ Name = $name; Url = $url; Digest = [string]$asset.digest }
         }
     }
     if (-not $archive) {
-        Write-Die "latest release has no paperlessagent-*.tar.gz asset"
+        Write-Die "latest release has no deepcatalog-*.tar.gz asset"
     }
 
     $tag = [string]$release.tag_name
     Write-Ok "release $tag ($($archive.Name))"
 
     $archivePath = Join-Path $tmp $archive.Name
-    Invoke-WebRequest -Uri $archive.Url -OutFile $archivePath -Headers @{ "User-Agent" = "PaperlessAgent-installer" }
+    Invoke-WebRequest -Uri $archive.Url -OutFile $archivePath -Headers @{ "User-Agent" = "DeepCatalog-installer" }
 
     $expected = $null
     if ($sumsUrl) {
         $sumsPath = Join-Path $tmp "SHA256SUMS"
-        Invoke-WebRequest -Uri $sumsUrl -OutFile $sumsPath -Headers @{ "User-Agent" = "PaperlessAgent-installer" }
+        Invoke-WebRequest -Uri $sumsUrl -OutFile $sumsPath -Headers @{ "User-Agent" = "DeepCatalog-installer" }
         foreach ($line in Get-Content $sumsPath) {
             if ($line -match '^\s*([A-Fa-f0-9]{64})\s+\*?(.+?)\s*$') {
                 $fileName = $Matches[2].Trim()
@@ -281,7 +281,7 @@ if (-not (Test-Path $envFile)) {
     Write-Ok ".env already present — left untouched"
 }
 # Restrict .env like OAuth credentials (owner-only); best-effort on NTFS.
-& $venvPy -c "from pathlib import Path; import sys; from paperless_agent.env_permissions import harden_secret_file; r=harden_secret_file(Path(sys.argv[1]), fix=True); raise SystemExit(0 if (not r.get('was_insecure') or r.get('fixed') or not r.get('exists')) else 1)" $envFile
+& $venvPy -c "from pathlib import Path; import sys; from deepcatalog.env_permissions import harden_secret_file; r=harden_secret_file(Path(sys.argv[1]), fix=True); raise SystemExit(0 if (not r.get('was_insecure') or r.get('fixed') or not r.get('exists')) else 1)" $envFile
 if ($LASTEXITCODE -ne 0) {
     Write-Warn "could not fully tighten .env permissions (mode 600)"
 } else {

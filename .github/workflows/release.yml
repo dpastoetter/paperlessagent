@@ -193,8 +193,8 @@ jobs:
         with:
           name: linux-appimage
           path: |
-            dist/PaperlessAgent-*-x86_64.AppImage
-            dist/PaperlessAgent-*-x86_64.AppImage.sha256
+            dist/DeepCatalog-*-x86_64.AppImage
+            dist/DeepCatalog-*-x86_64.AppImage.sha256
           if-no-files-found: error
           retention-days: 14
 
@@ -241,14 +241,14 @@ jobs:
           chmod +x scripts/make-release-assets.sh
           ./scripts/make-release-assets.sh "${RELEASE_TAG}"
           # Confirm the packed commit matches this tag.
-          grep -F "commit=$(git rev-parse HEAD)" dist/stage/paperlessagent-*/.release-commit
+          grep -F "commit=$(git rev-parse HEAD)" dist/stage/deepcatalog-*/.release-commit
           # Sanity: archive must contain every currently tracked path we care about.
-          tar -tzf dist/paperlessagent-*.tar.gz | grep -E 'paperless_agent/system_service\.py$'
-          tar -tzf dist/paperlessagent-*.tar.gz | grep -E 'app/static/app\.js$'
-          tar -tzf dist/paperlessagent-*.tar.gz | grep -E 'packaging/linux/AppRun$'
-          tar -tzf dist/paperlessagent-*.tar.gz | grep -E '\.release-commit$'
-          tar -tzf dist/paperlessagent-*.tar.gz | grep -E '\.release-files$'
-          cat dist/stage/paperlessagent-*/.release-commit
+          tar -tzf dist/deepcatalog-*.tar.gz | grep -E 'deepcatalog/system_service\.py$'
+          tar -tzf dist/deepcatalog-*.tar.gz | grep -E 'app/static/app\.js$'
+          tar -tzf dist/deepcatalog-*.tar.gz | grep -E 'packaging/linux/AppRun$'
+          tar -tzf dist/deepcatalog-*.tar.gz | grep -E '\.release-commit$'
+          tar -tzf dist/deepcatalog-*.tar.gz | grep -E '\.release-files$'
+          cat dist/stage/deepcatalog-*/.release-commit
 
       - name: Download AppImage artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -260,7 +260,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"
-          APPIMAGE="PaperlessAgent-${VERSION}-x86_64.AppImage"
+          APPIMAGE="DeepCatalog-${VERSION}-x86_64.AppImage"
           found="$(find /tmp/linux-appimage -name "${APPIMAGE}" -print -quit)"
           if [ -z "$found" ]; then
             echo "AppImage artifact missing: ${APPIMAGE}" >&2
@@ -288,13 +288,13 @@ jobs:
           FILE_COUNT="$(git ls-tree -r --name-only HEAD | wc -l | tr -d ' ')"
 
           cat > /tmp/release-notes.md <<EOF
-          ## PaperlessAgent ${TAG}
+          ## DeepCatalog ${TAG}
 
           Built from commit \`${COMMIT_SHORT}\` (\`${COMMIT}\`) — ${FILE_COUNT} tracked files packed into the release archive.
 
           ### Assets
-          - \`paperlessagent-${VERSION}.tar.gz\` — full source archive for the in-app updater (SHA-256 verified)
-          - \`PaperlessAgent-${VERSION}-x86_64.AppImage\` — Linux x86_64 desktop AppImage (glibc 2.35+)
+          - \`deepcatalog-${VERSION}.tar.gz\` — full source archive for the in-app updater (SHA-256 verified)
+          - \`DeepCatalog-${VERSION}-x86_64.AppImage\` — Linux x86_64 desktop AppImage (glibc 2.35+)
           - \`install.sh\` — Linux/macOS one-line installer bootstrap
           - \`install.ps1\` — Windows PowerShell one-line installer bootstrap
           - \`SHA256SUMS\` — checksums
@@ -302,26 +302,26 @@ jobs:
           ### Install
           Linux AppImage:
           \`\`\`bash
-          curl -fsSL -o PaperlessAgent.AppImage \\
-            https://github.com/dpastoetter/paperlessagent/releases/latest/download/PaperlessAgent-${VERSION}-x86_64.AppImage
-          chmod +x PaperlessAgent.AppImage
-          ./PaperlessAgent.AppImage
+          curl -fsSL -o DeepCatalog.AppImage \\
+            https://github.com/dpastoetter/DeepCatalog/releases/latest/download/DeepCatalog-${VERSION}-x86_64.AppImage
+          chmod +x DeepCatalog.AppImage
+          ./DeepCatalog.AppImage
           \`\`\`
 
           Linux / macOS (source + venv):
           \`\`\`bash
-          curl -fsSL https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.sh | bash
+          curl -fsSL https://github.com/dpastoetter/DeepCatalog/releases/latest/download/install.sh | bash
           \`\`\`
 
           Windows (PowerShell):
           \`\`\`powershell
-          irm https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.ps1 | iex
+          irm https://github.com/dpastoetter/DeepCatalog/releases/latest/download/install.ps1 | iex
           \`\`\`
           EOF
           # Strip the common leading indent from the heredoc body.
           sed -i 's/^          //' /tmp/release-notes.md
 
-          ASSETS=(dist/paperlessagent-"${VERSION}".tar.gz dist/PaperlessAgent-"${VERSION}"-x86_64.AppImage dist/install.sh dist/install.ps1 dist/SHA256SUMS)
+          ASSETS=(dist/deepcatalog-"${VERSION}".tar.gz dist/DeepCatalog-"${VERSION}"-x86_64.AppImage dist/install.sh dist/install.ps1 dist/SHA256SUMS)
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "${ASSETS[@]}" --clobber

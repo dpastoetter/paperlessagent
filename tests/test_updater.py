@@ -9,9 +9,9 @@ import tarfile
 import httpx
 import pytest
 
-import paperless_agent
+import deepcatalog
 from app.main import app
-from paperless_agent.updater import (
+from deepcatalog.updater import (
     _github_get,
     _pick_appimage_asset,
     apply_tarball,
@@ -22,8 +22,8 @@ from paperless_agent.updater import (
     sha256_hex,
     verify_sha256,
 )
-from paperless_agent.version import clear_version_cache
-from paperless_agent.version import get_current_version as read_version
+from deepcatalog.version import clear_version_cache
+from deepcatalog.version import get_current_version as read_version
 
 
 def test_parse_and_compare_versions():
@@ -43,18 +43,18 @@ def test_get_current_version_reads_pyproject():
     assert parse_version(version) > (0,) or version == "0.1.0"
     # FastAPI OpenAPI metadata must track the same version resolution path.
     assert app.version == version
-    assert paperless_agent.__version__ == version
+    assert deepcatalog.__version__ == version
 
 
 def test_parse_sha256sums_indexes_basename():
     text = (
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  "
-        "dist/paperlessagent-1.0.0.tar.gz\n"
+        "dist/deepcatalog-1.0.0.tar.gz\n"
         "# comment\n"
     )
     mapping = parse_sha256sums(text)
     assert (
-        mapping["paperlessagent-1.0.0.tar.gz"]
+        mapping["deepcatalog-1.0.0.tar.gz"]
         == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     )
 
@@ -129,14 +129,14 @@ def _make_tarball(files: dict[str, bytes], root: str = "owner-repo-abc123") -> b
 
 @pytest.fixture()
 def isolated_root(tmp_path, monkeypatch):
-    monkeypatch.setattr("paperless_agent.config.PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr("deepcatalog.config.PROJECT_ROOT", tmp_path)
     return tmp_path
 
 
 def test_apply_tarball_updates_code_but_protects_user_data(isolated_root):
     # Existing local state that must survive an update.
     (isolated_root / "data").mkdir()
-    (isolated_root / "data" / "paperless.db").write_bytes(b"precious")
+    (isolated_root / "data" / "deepcatalog.db").write_bytes(b"precious")
     (isolated_root / ".env").write_text("OPENAI_API_KEY=secret\n")
     (isolated_root / "app").mkdir()
     (isolated_root / "app" / "main.py").write_text("old code\n")
@@ -144,9 +144,9 @@ def test_apply_tarball_updates_code_but_protects_user_data(isolated_root):
     tarball = _make_tarball(
         {
             "app/main.py": b"new code\n",
-            "paperless_agent/new_module.py": b"print('hi')\n",
+            "deepcatalog/new_module.py": b"print('hi')\n",
             "pyproject.toml": b'[project]\nversion = "0.2.0"\n',
-            "data/paperless.db": b"attacker data",
+            "data/deepcatalog.db": b"attacker data",
             ".env": b"OPENAI_API_KEY=evil",
         }
     )
@@ -156,9 +156,9 @@ def test_apply_tarball_updates_code_but_protects_user_data(isolated_root):
     assert result["updated_count"] == 3
 
     assert (isolated_root / "app" / "main.py").read_text() == "new code\n"
-    assert (isolated_root / "paperless_agent" / "new_module.py").exists()
+    assert (isolated_root / "deepcatalog" / "new_module.py").exists()
     # Protected paths untouched.
-    assert (isolated_root / "data" / "paperless.db").read_bytes() == b"precious"
+    assert (isolated_root / "data" / "deepcatalog.db").read_bytes() == b"precious"
     assert "secret" in (isolated_root / ".env").read_text()
 
 
@@ -210,7 +210,7 @@ def test_apply_tarball_rejects_commit_mismatch(isolated_root):
 
 def test_apply_update_refuses_when_up_to_date(monkeypatch):
     monkeypatch.setattr(
-        "paperless_agent.updater.check_for_update",
+        "deepcatalog.updater.check_for_update",
         lambda: {
             "status": "success",
             "current_version": "0.1.0",
@@ -228,7 +228,7 @@ def test_apply_update_refuses_when_up_to_date(monkeypatch):
 
 def test_apply_update_refuses_unverified_release(monkeypatch):
     monkeypatch.setattr(
-        "paperless_agent.updater.check_for_update",
+        "deepcatalog.updater.check_for_update",
         lambda: {
             "status": "success",
             "current_version": "0.1.0",
@@ -246,19 +246,19 @@ def test_apply_update_refuses_unverified_release(monkeypatch):
 def test_apply_update_refuses_checksum_mismatch(isolated_root, monkeypatch):
     tarball = _make_tarball({"pyproject.toml": b'[project]\nversion = "9.9.9"\n'})
     monkeypatch.setattr(
-        "paperless_agent.updater.check_for_update",
+        "deepcatalog.updater.check_for_update",
         lambda: {
             "status": "success",
             "current_version": "0.1.0",
             "latest_version": "9.9.9",
             "update_available": True,
             "verifiable": True,
-            "download_url": "https://example.invalid/paperlessagent-9.9.9.tar.gz",
+            "download_url": "https://example.invalid/deepcatalog-9.9.9.tar.gz",
             "expected_sha256": "0" * 64,
-            "artifact_name": "paperlessagent-9.9.9.tar.gz",
+            "artifact_name": "deepcatalog-9.9.9.tar.gz",
         },
     )
-    monkeypatch.setattr("paperless_agent.updater._download_bytes", lambda _url: tarball)
+    monkeypatch.setattr("deepcatalog.updater._download_bytes", lambda _url: tarball)
     result = apply_update()
     assert result["status"] == "error"
     assert "mismatch" in result["error"].lower()
@@ -268,11 +268,11 @@ def test_apply_update_refuses_checksum_mismatch(isolated_root, monkeypatch):
 def test_apply_update_installs_verified_release(isolated_root, monkeypatch):
     tarball = _make_tarball(
         {"pyproject.toml": b'[project]\nversion = "9.9.9"\n'},
-        root="paperlessagent-9.9.9",
+        root="deepcatalog-9.9.9",
     )
     digest = hashlib.sha256(tarball).hexdigest()
     monkeypatch.setattr(
-        "paperless_agent.updater.check_for_update",
+        "deepcatalog.updater.check_for_update",
         lambda: {
             "status": "success",
             "current_version": "0.1.0",
@@ -280,17 +280,17 @@ def test_apply_update_installs_verified_release(isolated_root, monkeypatch):
             "update_available": True,
             "verifiable": True,
             "download_url": (
-                "https://github.com/dpastoetter/paperlessagent/releases/download/"
-                "v9.9.9/paperlessagent-9.9.9.tar.gz"
+                "https://github.com/dpastoetter/DeepCatalog/releases/download/"
+                "v9.9.9/deepcatalog-9.9.9.tar.gz"
             ),
             "expected_sha256": digest,
-            "artifact_name": "paperlessagent-9.9.9.tar.gz",
+            "artifact_name": "deepcatalog-9.9.9.tar.gz",
             # Commit SHA is present for the release tag, but versioned archive
             # roots must still install after checksum verification.
             "commit_sha": "a" * 40,
         },
     )
-    monkeypatch.setattr("paperless_agent.updater._download_bytes", lambda _url: tarball)
+    monkeypatch.setattr("deepcatalog.updater._download_bytes", lambda _url: tarball)
     result = apply_update()
     assert result["status"] == "success"
     assert result["restart_required"] is True
@@ -302,8 +302,8 @@ def test_apply_update_installs_verified_release(isolated_root, monkeypatch):
 def test_pick_appimage_prefers_x86_64():
     chosen = _pick_appimage_asset(
         [
-            {"name": "PaperlessAgent-1.0.0-aarch64.AppImage"},
-            {"name": "PaperlessAgent-1.0.0-x86_64.AppImage"},
+            {"name": "DeepCatalog-1.0.0-aarch64.AppImage"},
+            {"name": "DeepCatalog-1.0.0-x86_64.AppImage"},
         ]
     )
     assert chosen is not None
@@ -311,7 +311,7 @@ def test_pick_appimage_prefers_x86_64():
 
 
 def test_apply_update_refuses_appimage(monkeypatch):
-    monkeypatch.setattr("paperless_agent.updater.running_as_appimage", lambda: True)
+    monkeypatch.setattr("deepcatalog.updater.running_as_appimage", lambda: True)
     result = apply_update()
     assert result["status"] == "error"
     assert result["installable"] is False

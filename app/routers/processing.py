@@ -3,29 +3,31 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
-from app.deps import MAX_UPLOAD_BYTES, is_within
+from app.deps import MAX_UPLOAD_BYTES
 from app.schemas import ProcessCancelRequest, ProcessRequest, ProcessRetryRequest
-from paperless_agent.inbox_worker import (
+from deepcatalog.inbox_worker import (
     cancel_active_file,
     process_inbox,
     process_single_file,
     retry_file,
 )
-from paperless_agent.progress import PIPELINE_STEPS, subscribe
-from paperless_agent.settings import get_source_dir
-from paperless_agent.tools.filesystem import (
+from deepcatalog.progress import PIPELINE_STEPS, subscribe
+from deepcatalog.tools.filesystem import (
     SUPPORTED_SUFFIXES,
     clear_inbox,
+    confined_inbox_file,
     list_inbox,
     stream_upload_to_inbox,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["processing"])
 
 
@@ -86,19 +88,20 @@ async def api_upload(file: UploadFile = File(...)) -> dict[str, Any]:
 
 @router.post("/api/process")
 async def api_process(body: ProcessRequest) -> dict[str, Any]:
-    path = Path(body.path).expanduser().resolve()
-    inbox = get_source_dir().resolve()
-    if not is_within(path, inbox):
+    try:
+        path = confined_inbox_file(body.path)
+    except ValueError:
         raise HTTPException(
             status_code=400,
             detail="only files inside the configured inbox can be processed",
-        )
+        ) from None
     if not path.exists() or not path.is_file():
-        raise HTTPException(status_code=404, detail=f"file not found: {body.path}")
+        raise HTTPException(status_code=404, detail="file not found")
     try:
         return await process_single_file(str(path))
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception:
+        logger.exception("process file failed")
+        raise HTTPException(status_code=500, detail="could not process file") from None
 
 
 @router.post("/api/process-inbox")

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from tests.media_fixtures import write_minimal_pdf, write_minimal_png
 
-from paperless_agent.pipeline.agents import file_and_persist
-from paperless_agent.settings import get_source_dir
-from paperless_agent.tools import filesystem
+from deepcatalog.pipeline.agents import file_and_persist
+from deepcatalog.settings import get_source_dir
+from deepcatalog.tools import filesystem
+from deepcatalog.tools.filesystem import confined_inbox_file
 
 
 def test_read_document_rejects_path_outside_inbox(isolated_data):
@@ -67,3 +69,16 @@ def test_require_inbox_source_blocks_symlink_escape(isolated_data):
     # Resolved target is outside inbox → reject.
     assert isinstance(result, dict)
     assert result.get("code") == "outside_inbox"
+
+
+def test_confined_inbox_file_rejects_absolute_escape(isolated_data):
+    outside = isolated_data.parent / "escape.pdf"
+    outside.write_bytes(b"%PDF")
+    with pytest.raises(ValueError, match="inbox"):
+        confined_inbox_file(str(outside))
+    inbox = get_source_dir()
+    inside = inbox / "ok.pdf"
+    inside.write_bytes(b"%PDF")
+    assert confined_inbox_file(str(inside)) == inside.resolve()
+    assert confined_inbox_file("../etc/passwd").name == "passwd"
+    assert confined_inbox_file("../etc/passwd").parent == inbox.resolve()

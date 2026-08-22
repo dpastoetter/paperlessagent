@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a Linux x86_64 AppImage for PaperlessAgent.
+# Build a Linux x86_64 AppImage for DeepCatalog.
 #
 # Usage (from a git checkout):
 #   ./scripts/build-appimage.sh
@@ -10,8 +10,8 @@
 # Downloads a pinned CPython and appimagetool (SHA-256 verified).
 #
 # Output:
-#   dist/PaperlessAgent-<version>-x86_64.AppImage
-#   dist/PaperlessAgent-<version>-x86_64.AppImage.sha256
+#   dist/DeepCatalog-<version>-x86_64.AppImage
+#   dist/DeepCatalog-<version>-x86_64.AppImage.sha256
 
 set -euo pipefail
 
@@ -115,7 +115,7 @@ vendor_binary() {
   install -m 0755 "$src" "$dest_dir/$name"
   vendor_deps "$dest_dir/$name" "$native_dir"
   if command -v patchelf >/dev/null; then
-    patchelf --set-rpath "\$ORIGIN/../lib/paperless-native" "$dest_dir/$name"
+    patchelf --set-rpath "\$ORIGIN/../lib/deepcatalog-native" "$dest_dir/$name"
   fi
 }
 
@@ -197,13 +197,13 @@ COMMIT="$(git -C "$ROOT" rev-parse "${REF}^{commit}")"
 COMMIT_SHORT="$(git -C "$ROOT" rev-parse --short=12 "$COMMIT")"
 
 rm -rf "$APPDIR" "$DIST/squashfs-root"
-mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib/paperless-native" "$APPDIR/opt/paperlessagent" "$CACHE"
+mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib/deepcatalog-native" "$APPDIR/opt/deepcatalog" "$CACHE"
 
-echo "Packing commit ${COMMIT_SHORT} as PaperlessAgent ${VERSION}"
+echo "Packing commit ${COMMIT_SHORT} as DeepCatalog ${VERSION}"
 
-git -C "$ROOT" archive --format=tar "$COMMIT" | tar -x -C "$APPDIR/opt/paperlessagent"
+git -C "$ROOT" archive --format=tar "$COMMIT" | tar -x -C "$APPDIR/opt/deepcatalog"
 
-SRC="$APPDIR/opt/paperlessagent"
+SRC="$APPDIR/opt/deepcatalog"
 rm -rf \
   "$SRC/tests" \
   "$SRC/.github" \
@@ -219,24 +219,24 @@ fi
 if [ ! -f "$SRC/packaging/linux/AppRun" ]; then
   die "packaging/linux/AppRun missing from commit ${COMMIT_SHORT} — commit packaging assets first"
 fi
-if [ ! -f "$SRC/packaging/linux/paperlessagent.png" ]; then
-  die "packaging/linux/paperlessagent.png missing from commit ${COMMIT_SHORT}"
+if [ ! -f "$SRC/packaging/linux/deepcatalog.png" ]; then
+  die "packaging/linux/deepcatalog.png missing from commit ${COMMIT_SHORT}"
 fi
 
 rewrite_pyproject_version "$SRC/pyproject.toml" "$VERSION"
 
 install -m 0755 "$SRC/packaging/linux/AppRun" "$APPDIR/AppRun"
-install -m 0644 "$SRC/packaging/linux/paperlessagent.desktop" "$APPDIR/paperlessagent.desktop"
-install -m 0644 "$SRC/packaging/linux/paperlessagent.svg" "$APPDIR/paperlessagent.svg"
-install -m 0644 "$SRC/packaging/linux/paperlessagent.png" "$APPDIR/paperlessagent.png"
+install -m 0644 "$SRC/packaging/linux/deepcatalog.desktop" "$APPDIR/deepcatalog.desktop"
+install -m 0644 "$SRC/packaging/linux/deepcatalog.svg" "$APPDIR/deepcatalog.svg"
+install -m 0644 "$SRC/packaging/linux/deepcatalog.png" "$APPDIR/deepcatalog.png"
 mkdir -p "$APPDIR/usr/share/icons/hicolor/scalable/apps"
 mkdir -p "$APPDIR/usr/share/icons/hicolor/256x256/apps"
-install -m 0644 "$SRC/packaging/linux/paperlessagent.svg" \
-  "$APPDIR/usr/share/icons/hicolor/scalable/apps/paperlessagent.svg"
-install -m 0644 "$SRC/packaging/linux/paperlessagent.png" \
-  "$APPDIR/usr/share/icons/hicolor/256x256/apps/paperlessagent.png"
+install -m 0644 "$SRC/packaging/linux/deepcatalog.svg" \
+  "$APPDIR/usr/share/icons/hicolor/scalable/apps/deepcatalog.svg"
+install -m 0644 "$SRC/packaging/linux/deepcatalog.png" \
+  "$APPDIR/usr/share/icons/hicolor/256x256/apps/deepcatalog.png"
 
-cat > "$APPDIR/usr/bin/paperlessagent" <<'WRAP'
+cat > "$APPDIR/usr/bin/deepcatalog" <<'WRAP'
 #!/usr/bin/env bash
 set -euo pipefail
 SELF="$(readlink -f "$0")"
@@ -244,7 +244,7 @@ BIN="$(dirname "$SELF")"
 export APPDIR="$(cd "$BIN/../.." && pwd)"
 exec "$APPDIR/AppRun" "$@"
 WRAP
-chmod +x "$APPDIR/usr/bin/paperlessagent"
+chmod +x "$APPDIR/usr/bin/deepcatalog"
 
 download_verified "$PYTHON_URL" "$CACHE/$PYTHON_TARBALL" "$PYTHON_SHA256"
 rm -rf "$CACHE/python"
@@ -265,13 +265,13 @@ PYTHON="$APPDIR/usr/bin/python3"
   -c "$SRC/constraints.txt" \
   "$SRC[desktop]"
 
-vendor_binary "$(command -v pdftoppm)" "$APPDIR/usr/bin" "$APPDIR/usr/lib/paperless-native"
-vendor_binary "$(command -v pdfinfo)" "$APPDIR/usr/bin" "$APPDIR/usr/lib/paperless-native"
+vendor_binary "$(command -v pdftoppm)" "$APPDIR/usr/bin" "$APPDIR/usr/lib/deepcatalog-native"
+vendor_binary "$(command -v pdfinfo)" "$APPDIR/usr/bin" "$APPDIR/usr/lib/deepcatalog-native"
 
 download_verified "$APPIMAGETOOL_URL" "$CACHE/appimagetool-x86_64.AppImage" "$APPIMAGETOOL_SHA256"
 chmod +x "$CACHE/appimagetool-x86_64.AppImage"
 
-APPIMAGE_NAME="PaperlessAgent-${VERSION}-x86_64.AppImage"
+APPIMAGE_NAME="DeepCatalog-${VERSION}-x86_64.AppImage"
 rm -f "$DIST/$APPIMAGE_NAME"
 
 # appimagetool is itself an AppImage; extract-and-run so CI (no FUSE) can pack.
@@ -288,8 +288,8 @@ rm -rf "$DIST/squashfs-root"
 SMOKE="$DIST/squashfs-root"
 [ -x "$SMOKE/usr/bin/python3" ] || die "extracted AppImage is missing python3"
 [ -x "$SMOKE/usr/bin/pdftoppm" ] || die "extracted AppImage is missing pdftoppm"
-PAPERLESS_PROJECT_ROOT="$SMOKE/opt/paperlessagent" \
-  PYTHONPATH="$SMOKE/opt/paperlessagent" \
+DEEPCATALOG_PROJECT_ROOT="$SMOKE/opt/deepcatalog" \
+  PYTHONPATH="$SMOKE/opt/deepcatalog" \
   "$SMOKE/usr/bin/python3" -c "from app.main import app; print(app.version)"
 "$SMOKE/usr/bin/pdftoppm" -v >/dev/null
 "$SMOKE/AppRun" --help >/dev/null

@@ -1,4 +1,4 @@
-# Optional desktop window shell (python -m paperless_agent / paperless_agent.desktop).
+# Optional desktop window shell (python -m deepcatalog / deepcatalog.desktop).
 #
 # Source of truth: pyproject.toml [project.optional-dependencies] desktop
 # Pins: constraints.txt (./scripts/lock-deps.sh)

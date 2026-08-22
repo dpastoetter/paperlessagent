@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import asyncio
 
-from paperless_agent import runner
-from paperless_agent.job_control import FileCancelledError
-from paperless_agent.providers import get_llm_provider
-from paperless_agent.providers.base import LlmProvider
-from paperless_agent.providers.runtime import ActiveLlmProvider
+from deepcatalog import runner
+from deepcatalog.job_control import FileCancelledError
+from deepcatalog.providers import get_llm_provider
+from deepcatalog.providers.base import LlmProvider
+from deepcatalog.providers.runtime import ActiveLlmProvider
 
 
 def test_get_llm_provider_returns_protocol_impl():
@@ -41,15 +41,15 @@ def test_active_provider_delegates_text_and_vision(monkeypatch):
         return "ok-vision"
 
     monkeypatch.setattr(
-        "paperless_agent.llm.complete_text_via_backend",
+        "deepcatalog.llm.complete_text_via_backend",
         fake_text,
     )
     monkeypatch.setattr(
-        "paperless_agent.llm.complete_with_images_via_backend",
+        "deepcatalog.llm.complete_with_images_via_backend",
         fake_vision,
     )
     monkeypatch.setattr(
-        "paperless_agent.tools.rag_index.embed_texts",
+        "deepcatalog.tools.rag_index.embed_texts",
         lambda texts: [[0.1, 0.2] for _ in texts],
     )
 

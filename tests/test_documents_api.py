@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from paperless_agent.tools import metadata_db, rag_index
+from deepcatalog.tools import metadata_db, rag_index
 
 
 def _seed_document(isolated_data, monkeypatch):

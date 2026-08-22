@@ -55,7 +55,7 @@ export function renderRoute() {
     if (active) el.setAttribute("aria-current", "page");
     else el.removeAttribute("aria-current");
   }
-  document.title = `${view[0].toUpperCase()}${view.slice(1)} · PaperlessAgent`;
+  document.title = `${view[0].toUpperCase()}${view.slice(1)} · DeepCatalog Studio`;
 }
 
 export function initRouter() {

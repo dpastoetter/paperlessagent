@@ -4,34 +4,34 @@ from __future__ import annotations
 
 import pytest
 
-from paperless_agent.config import ensure_data_dirs
-from paperless_agent.dedup import (
+from deepcatalog.config import ensure_data_dirs
+from deepcatalog.dedup import (
     content_hash,
     file_checksum,
     find_duplicates,
     text_similarity,
 )
-from paperless_agent.review import (
+from deepcatalog.review import (
     approve_review,
     create_review,
     list_pending,
     pending_source_paths,
     reject_review,
 )
-from paperless_agent.settings import clear_settings_cache, load_settings
-from paperless_agent.tools.metadata_db import upsert_metadata
+from deepcatalog.settings import clear_settings_cache, load_settings
+from deepcatalog.tools.metadata_db import upsert_metadata
 
 
 @pytest.fixture()
 def isolated_data(tmp_path, monkeypatch):
     data = tmp_path / "data"
-    monkeypatch.setattr("paperless_agent.config.DATA_DIR", data)
-    monkeypatch.setattr("paperless_agent.config.INBOX_DIR", data / "inbox")
-    monkeypatch.setattr("paperless_agent.config.ARCHIVE_DIR", data / "archive")
-    monkeypatch.setattr("paperless_agent.config.DB_PATH", data / "paperless.db")
-    monkeypatch.setattr("paperless_agent.config.CHROMA_DIR", data / "chroma")
+    monkeypatch.setattr("deepcatalog.config.DATA_DIR", data)
+    monkeypatch.setattr("deepcatalog.config.INBOX_DIR", data / "inbox")
+    monkeypatch.setattr("deepcatalog.config.ARCHIVE_DIR", data / "archive")
+    monkeypatch.setattr("deepcatalog.config.DB_PATH", data / "deepcatalog.db")
+    monkeypatch.setattr("deepcatalog.config.CHROMA_DIR", data / "chroma")
     # metadata_db froze DB_PATH at import time; patch its module-level copy too.
-    monkeypatch.setattr("paperless_agent.tools.metadata_db.DB_PATH", data / "paperless.db")
+    monkeypatch.setattr("deepcatalog.tools.metadata_db.DB_PATH", data / "deepcatalog.db")
     clear_settings_cache()
     ensure_data_dirs()
     load_settings()
@@ -41,7 +41,7 @@ def isolated_data(tmp_path, monkeypatch):
 
 def _stub_index(monkeypatch):
     monkeypatch.setattr(
-        "paperless_agent.pipeline.agents.index_document",
+        "deepcatalog.pipeline.agents.index_document",
         lambda **_kw: {"status": "success", "chunk_count": 1},
     )
 
@@ -84,7 +84,7 @@ def test_find_duplicates_exact_and_content(isolated_data):
 
 def test_find_duplicates_exact_not_limited_to_recent(isolated_data, monkeypatch):
     """Exact checksum/content-hash must search the whole DB, not only recent N."""
-    from paperless_agent import dedup
+    from deepcatalog import dedup
 
     monkeypatch.setattr(dedup, "MAX_CANDIDATES", 3)
 

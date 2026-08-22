@@ -3,26 +3,27 @@
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 
-from paperless_agent import config
-from paperless_agent.config import ensure_data_dirs
-from paperless_agent.settings import clear_settings_cache, load_settings
-from paperless_agent.tools import metadata_db, rag_index
+from deepcatalog import config
+from deepcatalog.config import ensure_data_dirs
+from deepcatalog.settings import clear_settings_cache, load_settings
+from deepcatalog.tools import metadata_db, rag_index
 
 
 @pytest.fixture()
 def isolated_data(tmp_path, monkeypatch):
     data = tmp_path / "data"
     chroma = data / "chroma"
-    monkeypatch.setattr("paperless_agent.config.DATA_DIR", data)
-    monkeypatch.setattr("paperless_agent.config.INBOX_DIR", data / "inbox")
-    monkeypatch.setattr("paperless_agent.config.ARCHIVE_DIR", data / "archive")
-    monkeypatch.setattr("paperless_agent.config.DB_PATH", data / "paperless.db")
-    monkeypatch.setattr("paperless_agent.config.CHROMA_DIR", chroma)
-    monkeypatch.setattr("paperless_agent.tools.metadata_db.DB_PATH", data / "paperless.db")
-    monkeypatch.setattr("paperless_agent.tools.rag_index.CHROMA_DIR", chroma)
+    monkeypatch.setattr("deepcatalog.config.DATA_DIR", data)
+    monkeypatch.setattr("deepcatalog.config.INBOX_DIR", data / "inbox")
+    monkeypatch.setattr("deepcatalog.config.ARCHIVE_DIR", data / "archive")
+    monkeypatch.setattr("deepcatalog.config.DB_PATH", data / "deepcatalog.db")
+    monkeypatch.setattr("deepcatalog.config.CHROMA_DIR", chroma)
+    monkeypatch.setattr("deepcatalog.tools.metadata_db.DB_PATH", data / "deepcatalog.db")
+    monkeypatch.setattr("deepcatalog.tools.rag_index.CHROMA_DIR", chroma)
     clear_settings_cache()
     ensure_data_dirs()
     load_settings()
@@ -63,8 +64,8 @@ def test_local_semantic_uses_onnx(monkeypatch):
 
 def test_index_meta_written_and_stale_rebuild(isolated_data, monkeypatch):
     monkeypatch.setattr(config, "LLM_PROVIDER", "openai")
-    monkeypatch.setattr("paperless_agent.auth.resolve_auth_mode", lambda: "chatgpt_oauth")
-    monkeypatch.setattr("paperless_agent.auth.resolve_openai_api_key", lambda: None)
+    monkeypatch.setattr("deepcatalog.auth.resolve_auth_mode", lambda: "chatgpt_oauth")
+    monkeypatch.setattr("deepcatalog.auth.resolve_openai_api_key", lambda: None)
     monkeypatch.setattr(rag_index, "embed_texts", _fake_embed_factory(8))
 
     archive_path = isolated_data / "archive" / "doc.pdf"
@@ -110,3 +111,15 @@ def test_index_meta_written_and_stale_rebuild(isolated_data, monkeypatch):
     assert hits["status"] == "success"
     assert rebuilds
     assert rag_index._load_index_meta()["stale"] is False
+
+
+def test_mark_index_stale_strips_control_chars_from_logs(caplog):
+    caplog.set_level(logging.INFO, logger="deepcatalog.tools.rag_index")
+    rag_index.mark_index_stale("changed\nINFO fake\rstatus")
+    stale_lines = [
+        record.getMessage() for record in caplog.records if "marked stale" in record.getMessage()
+    ]
+    assert stale_lines
+    assert "\n" not in stale_lines[0]
+    assert "\r" not in stale_lines[0]
+    assert "changed" in stale_lines[0]

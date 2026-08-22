@@ -89,14 +89,14 @@ class ReviewRejectRequest(BaseModel):
 
 
 class SessionExchangeRequest(BaseModel):
-    token: str = Field(..., min_length=8, description="PAPERLESS_API_TOKEN value")
+    token: str = Field(..., min_length=8, description="DEEPCATALOG_API_TOKEN value")
 
 
 class ClearDataRequest(BaseModel):
     confirmation: str = Field(
         ...,
         min_length=1,
-        description='Must be exactly "DELETE ALL PAPERLESSAGENT DATA".',
+        description='Must be exactly "DELETE ALL DEEPCATALOG DATA".',
     )
 
 

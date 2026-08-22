@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 
-from paperless_agent import codex_oauth
+from deepcatalog import codex_oauth
 
 
 def _fake_jwt(account_id: str = "acct_123", email: str = "user@example.com") -> str:

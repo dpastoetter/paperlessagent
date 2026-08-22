@@ -6,9 +6,9 @@ import asyncio
 
 import pytest
 
-from paperless_agent import config, llm
-from paperless_agent.llm import complete_text
-from paperless_agent.usage import (
+from deepcatalog import config, llm
+from deepcatalog.llm import complete_text
+from deepcatalog.usage import (
     normalize_gemini_usage,
     normalize_ollama_usage,
     normalize_openai_usage,

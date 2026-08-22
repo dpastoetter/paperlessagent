@@ -17,10 +17,10 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from paperless_agent.config import ensure_data_dirs  # noqa: E402
-from paperless_agent.runner import run_pipeline_on_path  # noqa: E402
-from paperless_agent.settings import get_source_dir, load_settings  # noqa: E402
-from paperless_agent.tools.filesystem import SUPPORTED_SUFFIXES as FILE_SUFFIXES  # noqa: E402
+from deepcatalog.config import ensure_data_dirs  # noqa: E402
+from deepcatalog.runner import run_pipeline_on_path  # noqa: E402
+from deepcatalog.settings import get_source_dir, load_settings  # noqa: E402
+from deepcatalog.tools.filesystem import SUPPORTED_SUFFIXES as FILE_SUFFIXES  # noqa: E402
 
 
 class InboxHandler(FileSystemEventHandler):

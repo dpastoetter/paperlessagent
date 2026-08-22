@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
-from paperless_agent.ingest import ingest_document
-from paperless_agent.settings import get_source_dir, save_settings
+from deepcatalog.ingest import ingest_document
+from deepcatalog.settings import get_source_dir, save_settings
 
 
 def test_ingest_queues_for_review_when_approval_required(
@@ -36,8 +36,8 @@ def test_ingest_queues_for_review_when_approval_required(
             '"amount":42,"currency":"EUR","summary":"Acme invoice FA-99 for EUR 42."}'
         )
 
-    monkeypatch.setattr("paperless_agent.ingest.recover_document_text", fake_ocr)
-    monkeypatch.setattr("paperless_agent.ingest.complete_text", fake_complete)
+    monkeypatch.setattr("deepcatalog.ingest.recover_document_text", fake_ocr)
+    monkeypatch.setattr("deepcatalog.ingest.complete_text", fake_complete)
 
     save_settings(
         {
@@ -87,8 +87,8 @@ def test_ingest_files_when_approval_not_required(isolated_data, monkeypatch, stu
             '"amount":99,"currency":"EUR","summary":"Beta invoice FA-100 for EUR 99."}'
         )
 
-    monkeypatch.setattr("paperless_agent.ingest.recover_document_text", fake_ocr)
-    monkeypatch.setattr("paperless_agent.ingest.complete_text", fake_complete)
+    monkeypatch.setattr("deepcatalog.ingest.recover_document_text", fake_ocr)
+    monkeypatch.setattr("deepcatalog.ingest.complete_text", fake_complete)
 
     save_settings(
         {

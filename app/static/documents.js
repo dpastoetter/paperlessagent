@@ -385,7 +385,7 @@ async function loadPreview(doc) {
   const name = doc.filename || doc.original_name || "document";
   frame.setAttribute("aria-label", `Preview of ${name}`);
 
-  if (window.PA_MOCK?.enabled) {
+  if (window.DC_MOCK?.enabled) {
     frame.innerHTML = `<div class="archive-preview-placeholder">
         <span class="doc-badge">${escapeHtml(doc.doc_type || "other")}</span>
         <p class="archive-preview-placeholder-title">${escapeHtml(name)}</p>
@@ -496,7 +496,7 @@ function renderDrawer() {
 
   loadPreview(d);
   const openBtn = document.getElementById("archive-open-doc");
-  if (window.PA_MOCK?.enabled && openBtn) openBtn.disabled = true;
+  if (window.DC_MOCK?.enabled && openBtn) openBtn.disabled = true;
 }
 
 async function openDocumentDetail(docId, { focus = true } = {}) {

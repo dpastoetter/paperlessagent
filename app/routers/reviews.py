@@ -11,8 +11,8 @@ from fastapi.responses import FileResponse
 
 from app.deps import is_within
 from app.schemas import ReviewApproveRequest, ReviewRejectRequest
-from paperless_agent.review import approve_review, get_review, list_pending, reject_review
-from paperless_agent.settings import get_source_dir
+from deepcatalog.review import approve_review, get_review, list_pending, reject_review
+from deepcatalog.settings import get_source_dir
 
 router = APIRouter(tags=["reviews"])
 
@@ -29,7 +29,7 @@ def api_approve_review(review_id: str, body: ReviewApproveRequest) -> dict[str, 
     overrides = {k: v for k, v in body.model_dump().items() if v is not None}
     result = approve_review(review_id, overrides)
     if result.get("status") not in {"success", "partial"}:
-        raise HTTPException(status_code=409, detail=result.get("error", "approve failed"))
+        raise HTTPException(status_code=409, detail="could not approve review")
     return result
 
 
@@ -38,7 +38,7 @@ def api_reject_review(review_id: str, body: ReviewRejectRequest) -> dict[str, An
     """Reject a pending filing; by default also removes the inbox scan."""
     result = reject_review(review_id, delete_file=body.delete_file)
     if result.get("status") != "success":
-        raise HTTPException(status_code=409, detail=result.get("error", "reject failed"))
+        raise HTTPException(status_code=409, detail="could not reject review")
     return result
 
 

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from paperless_agent.settings import get_source_dir
-from paperless_agent.tools import filesystem
+from deepcatalog.settings import get_source_dir
+from deepcatalog.tools import filesystem
 
 
 def test_list_and_clear_inbox(isolated_data):

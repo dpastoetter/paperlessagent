@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build verified release assets for GitHub Releases / the in-app updater:
-#   paperlessagent-<version>.tar.gz
+#   deepcatalog-<version>.tar.gz
 #   SHA256SUMS
 #
 # Always packs the *exact git commit* for the given tag (not a dirty working tree).
@@ -23,7 +23,7 @@ fi
 VERSION="${TAG#v}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIST="$ROOT/dist"
-ARCHIVE_NAME="paperlessagent-${VERSION}.tar.gz"
+ARCHIVE_NAME="deepcatalog-${VERSION}.tar.gz"
 STAGE="$DIST/stage"
 
 if ! command -v git >/dev/null; then
@@ -56,7 +56,7 @@ rm -rf "$DIST"
 mkdir -p "$STAGE"
 
 # Pack tracked files for that commit only (no .git, .venv, data, local .env).
-PREFIX="paperlessagent-${VERSION}"
+PREFIX="deepcatalog-${VERSION}"
 mkdir -p "$STAGE/$PREFIX"
 git -C "$ROOT" archive --format=tar "$COMMIT" | tar -x -C "$STAGE/$PREFIX"
 
@@ -141,15 +141,15 @@ REQUIRED_PATHS=(
   "app/static/events.js"
   "app/static/settings.js"
   "app/static/index.html"
-  "paperless_agent/ingest.py"
-  "paperless_agent/llm.py"
-  "paperless_agent/ocr.py"
-  "paperless_agent/system_service.py"
-  "paperless_agent/updater.py"
+  "deepcatalog/ingest.py"
+  "deepcatalog/llm.py"
+  "deepcatalog/ocr.py"
+  "deepcatalog/system_service.py"
+  "deepcatalog/updater.py"
   "packaging/linux/AppRun"
-  "packaging/linux/paperlessagent.desktop"
-  "packaging/linux/paperlessagent.svg"
-  "packaging/linux/paperlessagent.png"
+  "packaging/linux/deepcatalog.desktop"
+  "packaging/linux/deepcatalog.svg"
+  "packaging/linux/deepcatalog.png"
   "scripts/build-appimage.sh"
   "scripts/install.sh"
   "scripts/install.ps1"

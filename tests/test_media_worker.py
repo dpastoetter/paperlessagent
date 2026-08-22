@@ -14,7 +14,7 @@ import pytest
 from PIL import Image
 from tests.media_fixtures import write_minimal_pdf, write_minimal_png
 
-from paperless_agent.media_worker import (
+from deepcatalog.media_worker import (
     MediaWorkerError,
     MediaWorkerLimits,
     _apply_resource_limits,
@@ -26,7 +26,7 @@ from paperless_agent.media_worker import (
     render_pdf_page_png_isolated,
     run_media_job,
 )
-from paperless_agent.ocr import render_document_page
+from deepcatalog.ocr import render_document_page
 
 
 def _noisy_png(path: Path, size: tuple[int, int] = (1600, 1600)) -> Path:
@@ -101,7 +101,7 @@ class _CaptureConn:
 def no_parent_resource_limits(monkeypatch):
     """Never apply RLIMIT_* in the pytest process when exercising `_worker_main` inline."""
     monkeypatch.setattr(
-        "paperless_agent.media_worker._apply_resource_limits",
+        "deepcatalog.media_worker._apply_resource_limits",
         lambda _limits: None,
     )
 
@@ -123,14 +123,14 @@ def no_parent_resource_limits(monkeypatch):
     ],
 )
 def test_media_worker_enabled_env(monkeypatch, value: str, expected: bool):
-    monkeypatch.setenv("PAPERLESS_MEDIA_WORKER", value)
+    monkeypatch.setenv("DEEPCATALOG_MEDIA_WORKER", value)
     assert media_worker_enabled() is expected
 
 
 def test_default_limits_respect_config(monkeypatch):
-    monkeypatch.setattr("paperless_agent.media_worker.config.MEDIA_WORKER_TIMEOUT_S", 12.5)
-    monkeypatch.setattr("paperless_agent.media_worker.config.MEDIA_WORKER_MEMORY_MB", 512)
-    monkeypatch.setattr("paperless_agent.media_worker.config.MEDIA_WORKER_CPU_S", 30)
+    monkeypatch.setattr("deepcatalog.media_worker.config.MEDIA_WORKER_TIMEOUT_S", 12.5)
+    monkeypatch.setattr("deepcatalog.media_worker.config.MEDIA_WORKER_MEMORY_MB", 512)
+    monkeypatch.setattr("deepcatalog.media_worker.config.MEDIA_WORKER_CPU_S", 30)
     limits = _default_limits()
     assert limits.timeout_s == 12.5
     assert limits.memory_bytes == 512 * 1024 * 1024
@@ -259,7 +259,7 @@ def test_run_media_job_drains_large_png_without_deadlock(tmp_path: Path):
 
 
 def test_extract_pdf_page_texts_isolated(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("PAPERLESS_MEDIA_WORKER", "1")
+    monkeypatch.setenv("DEEPCATALOG_MEDIA_WORKER", "1")
     pdf = write_minimal_pdf(tmp_path / "invoice.pdf", line="Invoice FA-1")
     pages = extract_pdf_page_texts_isolated(pdf)
     assert len(pages) == 1
@@ -267,7 +267,7 @@ def test_extract_pdf_page_texts_isolated(tmp_path: Path, monkeypatch):
 
 
 def test_load_image_rgb_png_isolated_small(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("PAPERLESS_MEDIA_WORKER", "1")
+    monkeypatch.setenv("DEEPCATALOG_MEDIA_WORKER", "1")
     png = write_minimal_png(tmp_path / "small.png")
     raw = load_image_rgb_png_isolated(png)
     assert raw[:8] == b"\x89PNG\r\n\x1a\n"
@@ -275,7 +275,7 @@ def test_load_image_rgb_png_isolated_small(tmp_path: Path, monkeypatch):
 
 def test_render_pdf_page_png_isolated(tmp_path: Path, monkeypatch):
     _require_poppler()
-    monkeypatch.setenv("PAPERLESS_MEDIA_WORKER", "1")
+    monkeypatch.setenv("DEEPCATALOG_MEDIA_WORKER", "1")
     pdf = write_minimal_pdf(tmp_path / "page.pdf", line="Hello")
     raw = render_pdf_page_png_isolated(pdf, 1, dpi=72)
     assert isinstance(raw, (bytes, bytearray))
@@ -351,7 +351,7 @@ def test_run_media_job_timeout_terminates_hung_child(monkeypatch):
             return proc
 
     monkeypatch.setattr(
-        "paperless_agent.media_worker.mp.get_context",
+        "deepcatalog.media_worker.mp.get_context",
         lambda _name="spawn": _Ctx(),
     )
     limits = MediaWorkerLimits(
@@ -371,7 +371,7 @@ def test_run_media_job_timeout_terminates_hung_child(monkeypatch):
 
 def test_render_document_page_pdf_via_worker(tmp_path: Path, monkeypatch):
     _require_poppler()
-    monkeypatch.setenv("PAPERLESS_MEDIA_WORKER", "1")
+    monkeypatch.setenv("DEEPCATALOG_MEDIA_WORKER", "1")
     pdf = write_minimal_pdf(tmp_path / "scan.pdf", line="OCR page")
     img = render_document_page(pdf, 1, dpi=72)
     assert img.mode == "RGB"
@@ -379,7 +379,7 @@ def test_render_document_page_pdf_via_worker(tmp_path: Path, monkeypatch):
 
 
 def test_render_document_page_image_via_worker(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("PAPERLESS_MEDIA_WORKER", "1")
+    monkeypatch.setenv("DEEPCATALOG_MEDIA_WORKER", "1")
     png = write_minimal_png(tmp_path / "scan.png", size=(80, 40))
     img = render_document_page(png, 1)
     assert img.mode == "RGB"
@@ -388,7 +388,7 @@ def test_render_document_page_image_via_worker(tmp_path: Path, monkeypatch):
 
 def test_render_document_page_pdf_without_worker(tmp_path: Path, monkeypatch):
     _require_poppler()
-    monkeypatch.setenv("PAPERLESS_MEDIA_WORKER", "0")
+    monkeypatch.setenv("DEEPCATALOG_MEDIA_WORKER", "0")
     pdf = write_minimal_pdf(tmp_path / "scan.pdf", line="Direct poppler")
     img = render_document_page(pdf, 1, dpi=72)
     assert img.mode == "RGB"
@@ -396,7 +396,7 @@ def test_render_document_page_pdf_without_worker(tmp_path: Path, monkeypatch):
 
 def test_ai_vision_render_runs_off_event_loop(tmp_path: Path, monkeypatch):
     """Sync render sleep must not freeze the event loop (asyncio.to_thread)."""
-    from paperless_agent.ocr import _ai_vision_one_page
+    from deepcatalog.ocr import _ai_vision_one_page
 
     png = write_minimal_png(tmp_path / "scan.png")
 
@@ -404,9 +404,9 @@ def test_ai_vision_render_runs_off_event_loop(tmp_path: Path, monkeypatch):
         time.sleep(0.35)
         return Image.new("RGB", (32, 24), "white")
 
-    monkeypatch.setattr("paperless_agent.ocr.render_document_page", slow_render)
+    monkeypatch.setattr("deepcatalog.ocr.render_document_page", slow_render)
     monkeypatch.setattr(
-        "paperless_agent.llm.complete_with_images",
+        "deepcatalog.llm.complete_with_images",
         AsyncMock(return_value="transcribed text"),
     )
 
@@ -426,10 +426,10 @@ def test_ai_vision_render_runs_off_event_loop(tmp_path: Path, monkeypatch):
 
 def test_recover_uses_worker_extract_in_thread(tmp_path: Path, monkeypatch):
     """PDF text-layer recovery should succeed with the media worker enabled."""
-    from paperless_agent.ocr import recover_document_text
+    from deepcatalog.ocr import recover_document_text
 
-    monkeypatch.setenv("PAPERLESS_MEDIA_WORKER", "1")
-    monkeypatch.setenv("PAPERLESS_OCR_MODE", "fast")
+    monkeypatch.setenv("DEEPCATALOG_MEDIA_WORKER", "1")
+    monkeypatch.setenv("DEEPCATALOG_OCR_MODE", "fast")
     pdf = write_minimal_pdf(
         tmp_path / "invoice.pdf",
         line=(

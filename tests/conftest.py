@@ -5,19 +5,19 @@ from __future__ import annotations
 import os
 
 # Avoid auto-selecting a developer-machine Ollama during provider resolution.
-os.environ.setdefault("PAPERLESS_SKIP_OLLAMA_PROBE", "1")
+os.environ.setdefault("DEEPCATALOG_SKIP_OLLAMA_PROBE", "1")
 # Keep OCR/parse isolation off in the unit suite by default (spawn + coverage).
-# Dedicated tests re-enable PAPERLESS_MEDIA_WORKER=1 explicitly.
-os.environ.setdefault("PAPERLESS_MEDIA_WORKER", "0")
+# Dedicated tests re-enable DEEPCATALOG_MEDIA_WORKER=1 explicitly.
+os.environ.setdefault("DEEPCATALOG_MEDIA_WORKER", "0")
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import CSRF_HEADER_NAME, CSRF_HEADER_VALUE, app
-from paperless_agent.auth_rate_limit import reset_auth_rate_limiter
-from paperless_agent.config import ensure_data_dirs
-from paperless_agent.privacy import clear_privacy_cache
-from paperless_agent.settings import clear_settings_cache, load_settings
+from deepcatalog.auth_rate_limit import reset_auth_rate_limiter
+from deepcatalog.config import ensure_data_dirs
+from deepcatalog.privacy import clear_privacy_cache
+from deepcatalog.settings import clear_settings_cache, load_settings
 
 
 @pytest.fixture(autouse=True)
@@ -31,13 +31,13 @@ def _reset_auth_rate_limiter():
 def isolated_data(tmp_path, monkeypatch):
     """Point all storage (settings, DB, inbox, archive) at a temp directory."""
     data = tmp_path / "data"
-    monkeypatch.setattr("paperless_agent.config.DATA_DIR", data)
-    monkeypatch.setattr("paperless_agent.config.INBOX_DIR", data / "inbox")
-    monkeypatch.setattr("paperless_agent.config.ARCHIVE_DIR", data / "archive")
-    monkeypatch.setattr("paperless_agent.config.DB_PATH", data / "paperless.db")
-    monkeypatch.setattr("paperless_agent.config.CHROMA_DIR", data / "chroma")
+    monkeypatch.setattr("deepcatalog.config.DATA_DIR", data)
+    monkeypatch.setattr("deepcatalog.config.INBOX_DIR", data / "inbox")
+    monkeypatch.setattr("deepcatalog.config.ARCHIVE_DIR", data / "archive")
+    monkeypatch.setattr("deepcatalog.config.DB_PATH", data / "deepcatalog.db")
+    monkeypatch.setattr("deepcatalog.config.CHROMA_DIR", data / "chroma")
     # metadata_db froze DB_PATH at import time; patch its module copy too.
-    monkeypatch.setattr("paperless_agent.tools.metadata_db.DB_PATH", data / "paperless.db")
+    monkeypatch.setattr("deepcatalog.tools.metadata_db.DB_PATH", data / "deepcatalog.db")
     clear_settings_cache()
     clear_privacy_cache()
     ensure_data_dirs()
@@ -51,7 +51,7 @@ def isolated_data(tmp_path, monkeypatch):
 def stub_rag_index(monkeypatch):
     """Skip real embedding calls when file_and_persist indexes a document."""
     monkeypatch.setattr(
-        "paperless_agent.pipeline.agents.index_document",
+        "deepcatalog.pipeline.agents.index_document",
         lambda **_kw: {"status": "success", "chunk_count": 1},
     )
 

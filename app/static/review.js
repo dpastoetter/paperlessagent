@@ -421,7 +421,7 @@ async function loadPreview(item) {
   const name = item.original_name || item.proposal?.filename || "document";
   frame.setAttribute("aria-label", `Preview of ${name}`);
 
-  if (window.PA_MOCK?.enabled) {
+  if (window.DC_MOCK?.enabled) {
     const p = item.proposal || {};
     frame.innerHTML = `<div class="review-preview-placeholder">
         <span class="doc-badge">${escapeHtml(p.doc_type || "other")}</span>
@@ -497,7 +497,7 @@ function renderQueueChrome() {
   const disabled = total <= 0;
   if (prevBtn) prevBtn.disabled = total <= 1;
   if (nextBtn) nextBtn.disabled = total <= 1;
-  if (openBtn) openBtn.disabled = disabled || Boolean(window.PA_MOCK?.enabled);
+  if (openBtn) openBtn.disabled = disabled || Boolean(window.DC_MOCK?.enabled);
 }
 
 function renderEditorHost() {
@@ -663,7 +663,7 @@ async function openSelected() {
   } catch (err) {
     toast(String(err.message || err), "error");
   } finally {
-    if (btn) btn.disabled = Boolean(window.PA_MOCK?.enabled) || state.reviews.length <= 0;
+    if (btn) btn.disabled = Boolean(window.DC_MOCK?.enabled) || state.reviews.length <= 0;
   }
 }
 

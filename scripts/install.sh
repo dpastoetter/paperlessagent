@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
-# PaperlessAgent one-shot installer.
+# DeepCatalog one-shot installer.
 #
-#   curl -fsSL https://github.com/dpastoetter/paperlessagent/releases/latest/download/install.sh | bash
+#   curl -fsSL https://github.com/dpastoetter/DeepCatalog/releases/latest/download/install.sh | bash
 #
 # By default this installs the latest *GitHub Release* tarball (same verified
 # artifact the in-app updater uses) — not a floating git checkout — so another
 # machine matches the published release.
 #
 # Optional env vars:
-#   PAPERLESS_DIR              install location (default: ~/paperlessagent)
-#   PAPERLESS_PORT             port printed in the run hint (default: 8080)
-#   PAPERLESS_INSTALL_SOURCE   release (default) | git
-#   PAPERLESS_UPDATE_REPO        owner/repo (default: dpastoetter/paperlessagent)
+#   DEEPCATALOG_DIR              install location (default: ~/deepcatalog)
+#   DEEPCATALOG_PORT             port printed in the run hint (default: 8080)
+#   DEEPCATALOG_INSTALL_SOURCE   release (default) | git
+#   DEEPCATALOG_UPDATE_REPO        owner/repo (default: dpastoetter/DeepCatalog)
 
 set -euo pipefail
 
-REPO="${PAPERLESS_UPDATE_REPO:-dpastoetter/paperlessagent}"
+REPO="${DEEPCATALOG_UPDATE_REPO:-dpastoetter/DeepCatalog}"
 REPO_SSH="git@github.com:${REPO}.git"
 REPO_HTTPS="https://github.com/${REPO}.git"
-INSTALL_DIR="${PAPERLESS_DIR:-$HOME/paperlessagent}"
-PORT="${PAPERLESS_PORT:-8080}"
-SOURCE="${PAPERLESS_INSTALL_SOURCE:-release}"
+INSTALL_DIR="${DEEPCATALOG_DIR:-$HOME/deepcatalog}"
+PORT="${DEEPCATALOG_PORT:-8080}"
+SOURCE="${DEEPCATALOG_INSTALL_SOURCE:-release}"
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 ok() { printf '  ✓ %s\n' "$*"; }
@@ -41,7 +41,7 @@ sha256_file() {
   fi
 }
 
-bold "PaperlessAgent installer"
+bold "DeepCatalog installer"
 echo "  → $INSTALL_DIR"
 echo "  source: $SOURCE"
 echo
@@ -68,13 +68,13 @@ install_from_release() {
   need_cmd python3
   local api="https://api.github.com/repos/${REPO}/releases/latest"
   local tmp
-  tmp="$(mktemp -d "${TMPDIR:-/tmp}/paperless-install.XXXXXX")"
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/deepcatalog-install.XXXXXX")"
 
   bold "Fetching latest GitHub release"
-  if ! curl -fsSL -H "Accept: application/vnd.github+json" -H "User-Agent: PaperlessAgent-installer" \
+  if ! curl -fsSL -H "Accept: application/vnd.github+json" -H "User-Agent: DeepCatalog-installer" \
       "$api" >"$tmp/release.json"; then
     rm -rf "$tmp"
-    die "Could not fetch $api — check network or set PAPERLESS_INSTALL_SOURCE=git"
+    die "Could not fetch $api — check network or set DEEPCATALOG_INSTALL_SOURCE=git"
   fi
 
   python3 - "$tmp/release.json" "$tmp" <<'PY'
@@ -92,10 +92,10 @@ for asset in assets:
     lower = name.lower()
     if name in {"SHA256SUMS", "SHA256SUMS.txt", "checksums.txt"}:
         sums = (name, url, (asset.get("digest") or ""))
-    elif lower.startswith("paperlessagent-") and lower.endswith((".tar.gz", ".tgz")):
+    elif lower.startswith("deepcatalog-") and lower.endswith((".tar.gz", ".tgz")):
         archive = (name, url, (asset.get("digest") or ""))
 if archive is None:
-    raise SystemExit("latest release has no paperlessagent-*.tar.gz asset")
+    raise SystemExit("latest release has no deepcatalog-*.tar.gz asset")
 meta = {
     "TAG": release.get("tag_name") or "",
     "ARCHIVE_NAME": archive[0],
@@ -115,9 +115,9 @@ PY
   SUMS_URL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8"))["SUMS_URL"])' "$tmp/meta.json")"
   ok "release $TAG ($ARCHIVE_NAME)"
 
-  curl -fsSL -H "User-Agent: PaperlessAgent-installer" -o "$tmp/$ARCHIVE_NAME" "$ARCHIVE_URL"
+  curl -fsSL -H "User-Agent: DeepCatalog-installer" -o "$tmp/$ARCHIVE_NAME" "$ARCHIVE_URL"
   if [ -n "${SUMS_URL:-}" ]; then
-    curl -fsSL -H "User-Agent: PaperlessAgent-installer" -o "$tmp/SHA256SUMS" "$SUMS_URL"
+    curl -fsSL -H "User-Agent: DeepCatalog-installer" -o "$tmp/SHA256SUMS" "$SUMS_URL"
   fi
 
   local actual expected=""
@@ -230,7 +230,7 @@ install_from_git() {
     ok "reset to $(git -C "$INSTALL_DIR" rev-parse --short HEAD) on main"
   else
     if [ -e "$INSTALL_DIR" ] && [ ! -d "$INSTALL_DIR/.git" ]; then
-      die "$INSTALL_DIR exists but is not a git checkout — move it aside or set PAPERLESS_DIR"
+      die "$INSTALL_DIR exists but is not a git checkout — move it aside or set DEEPCATALOG_DIR"
     fi
     bold "Cloning repository (main)"
     if git clone --depth 1 "$REPO_HTTPS" "$INSTALL_DIR" 2>/dev/null; then
@@ -250,7 +250,7 @@ case "$SOURCE" in
     install_from_git
     ;;
   *)
-    die "PAPERLESS_INSTALL_SOURCE must be 'release' or 'git' (got $SOURCE)"
+    die "DEEPCATALOG_INSTALL_SOURCE must be 'release' or 'git' (got $SOURCE)"
     ;;
 esac
 
@@ -348,7 +348,7 @@ cat <<EOF
   On Windows, use install.ps1 instead:
     irm https://github.com/${REPO}/releases/latest/download/install.ps1 | iex
 
-  Tip: set PAPERLESS_INSTALL_SOURCE=git to track the main branch instead of the release.
+  Tip: set DEEPCATALOG_INSTALL_SOURCE=git to track the main branch instead of the release.
 
   Uninstall:
     rm -rf "$INSTALL_DIR"

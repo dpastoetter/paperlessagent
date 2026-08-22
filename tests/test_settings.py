@@ -9,8 +9,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from paperless_agent.config import ensure_data_dirs
-from paperless_agent.settings import (
+from deepcatalog.config import ensure_data_dirs
+from deepcatalog.settings import (
     SettingsError,
     clear_settings_cache,
     get_folder_for_category,
@@ -18,17 +18,17 @@ from paperless_agent.settings import (
     load_settings,
     save_settings,
 )
-from paperless_agent.tools import filesystem
+from deepcatalog.tools import filesystem
 
 
 @pytest.fixture()
 def isolated_settings(tmp_path, monkeypatch):
     data = tmp_path / "data"
-    monkeypatch.setattr("paperless_agent.config.DATA_DIR", data)
-    monkeypatch.setattr("paperless_agent.config.INBOX_DIR", data / "inbox")
-    monkeypatch.setattr("paperless_agent.config.ARCHIVE_DIR", data / "archive")
-    monkeypatch.setattr("paperless_agent.config.DB_PATH", data / "paperless.db")
-    monkeypatch.setattr("paperless_agent.config.CHROMA_DIR", data / "chroma")
+    monkeypatch.setattr("deepcatalog.config.DATA_DIR", data)
+    monkeypatch.setattr("deepcatalog.config.INBOX_DIR", data / "inbox")
+    monkeypatch.setattr("deepcatalog.config.ARCHIVE_DIR", data / "archive")
+    monkeypatch.setattr("deepcatalog.config.DB_PATH", data / "deepcatalog.db")
+    monkeypatch.setattr("deepcatalog.config.CHROMA_DIR", data / "chroma")
     clear_settings_cache()
     ensure_data_dirs()
     yield data
@@ -123,7 +123,7 @@ def test_settings_api_poll_interval_and_process_all(isolated_settings, monkeypat
     async def fake_run(path: str):
         return {"status": "success", "path": path}
 
-    monkeypatch.setattr("paperless_agent.inbox_worker.run_pipeline_on_path", fake_run)
+    monkeypatch.setattr("deepcatalog.inbox_worker.run_pipeline_on_path", fake_run)
     response = client.post("/api/process-inbox")
     assert response.status_code == 200
     payload = response.json()

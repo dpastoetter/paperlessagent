@@ -8,9 +8,9 @@ import base64
 import httpx
 import pytest
 
-from paperless_agent import config, llm
-from paperless_agent.llm import complete_text, complete_with_images
-from paperless_agent.ollama_setup import (
+from deepcatalog import config, llm
+from deepcatalog.llm import complete_text, complete_with_images
+from deepcatalog.ollama_setup import (
     apply_llm_provider,
     clear_ollama_tags_cache,
     current_compute_label,
@@ -27,9 +27,9 @@ from paperless_agent.ollama_setup import (
     summarize_compute,
     upsert_env_values,
 )
-from paperless_agent.progress import llm_busy_detail
-from paperless_agent.tools import rag_index
-from paperless_agent.tools.rag_index import embed_texts
+from deepcatalog.progress import llm_busy_detail
+from deepcatalog.tools import rag_index
+from deepcatalog.tools.rag_index import embed_texts
 
 
 @pytest.fixture()
@@ -95,6 +95,11 @@ def test_embed_texts_routes_to_ollama(monkeypatch):
         "ensure_ollama_ready",
         lambda **_k: {"ready": True, "reachable": True, "listening": True},
     )
+    monkeypatch.setattr(
+        rag_index,
+        "resolve_runtime_model",
+        lambda wanted, **_k: wanted or "nomic-embed-text",
+    )
     posted: dict = {}
 
     class FakeResponse:
@@ -104,16 +109,26 @@ def test_embed_texts_routes_to_ollama(monkeypatch):
         def json(self):
             return {"embeddings": [[0.1, 0.2], [0.3, 0.4]]}
 
-    def fake_post(url, *, json, timeout, **_kwargs):
-        posted["url"] = url
-        posted["json"] = json
-        return FakeResponse()
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            posted["client_kwargs"] = kwargs
 
-    monkeypatch.setattr(rag_index.httpx, "post", fake_post)
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, path, *, json=None):
+            posted["url"] = path
+            posted["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr(rag_index.httpx, "Client", FakeClient)
 
     vectors = embed_texts(["chunk one", "chunk two"])
     assert vectors == [[0.1, 0.2], [0.3, 0.4]]
-    assert posted["url"].endswith("/api/embed")
+    assert posted["url"] == "/api/embed"
     assert posted["json"]["input"] == ["chunk one", "chunk two"]
 
 
@@ -124,6 +139,11 @@ def test_embed_texts_rejects_bad_response_shape(monkeypatch):
         "ensure_ollama_ready",
         lambda **_k: {"ready": True, "reachable": True, "listening": True},
     )
+    monkeypatch.setattr(
+        rag_index,
+        "resolve_runtime_model",
+        lambda wanted, **_k: wanted or "nomic-embed-text",
+    )
 
     class FakeResponse:
         def raise_for_status(self):
@@ -132,11 +152,20 @@ def test_embed_texts_rejects_bad_response_shape(monkeypatch):
         def json(self):
             return {"embeddings": [[0.1]]}  # one vector for two inputs
 
-    monkeypatch.setattr(
-        rag_index.httpx,
-        "post",
-        lambda url, *, json, timeout, **_kwargs: FakeResponse(),
-    )
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, path, *, json=None):
+            return FakeResponse()
+
+    monkeypatch.setattr(rag_index.httpx, "Client", FakeClient)
 
     with pytest.raises(RuntimeError, match="Unexpected embedding response"):
         embed_texts(["a", "b"])
@@ -151,7 +180,7 @@ def test_ensure_ollama_ready_raises_when_offline(monkeypatch):
     clear_ollama_tags_cache()
     monkeypatch.setattr(config, "LLM_PROVIDER", "ollama")
     monkeypatch.setattr(
-        "paperless_agent.ollama_setup.probe_ollama",
+        "deepcatalog.ollama_setup.probe_ollama",
         lambda *_a, **_k: {
             "reachable": False,
             "listening": False,
@@ -171,7 +200,7 @@ def test_ensure_ollama_ready_raises_when_models_missing(monkeypatch):
     monkeypatch.setattr(config, "MODEL_NAME", "gemma3")
     monkeypatch.setattr(config, "EMBEDDING_MODEL", "nomic-embed-text")
     monkeypatch.setattr(
-        "paperless_agent.ollama_setup.probe_ollama",
+        "deepcatalog.ollama_setup.probe_ollama",
         lambda *_a, **_k: {
             "reachable": True,
             "listening": True,
@@ -191,7 +220,7 @@ def test_ensure_ollama_ready_verifies_chat_model(monkeypatch):
     monkeypatch.setattr(config, "MODEL_NAME", "gemma3")
     monkeypatch.setattr(config, "EMBEDDING_MODEL", "nomic-embed-text")
     monkeypatch.setattr(
-        "paperless_agent.ollama_setup.probe_ollama",
+        "deepcatalog.ollama_setup.probe_ollama",
         lambda *_a, **_k: {
             "reachable": True,
             "listening": True,
@@ -202,7 +231,7 @@ def test_ensure_ollama_ready_verifies_chat_model(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "paperless_agent.ollama_setup.verify_model_accepts_requests",
+        "deepcatalog.ollama_setup.verify_model_accepts_requests",
         lambda model, **_k: None if model == "gemma3:4b" else f"bad:{model}",
     )
     ready = ensure_ollama_ready(force=True)
@@ -229,7 +258,7 @@ def test_resolve_installed_model_prefers_size_tag():
 def test_complete_ollama_uses_resolved_local_tag(ollama_provider, monkeypatch):
     clear_ollama_tags_cache()
     monkeypatch.setattr(
-        "paperless_agent.llm.resolve_runtime_model",
+        "deepcatalog.llm.resolve_runtime_model",
         lambda wanted, **_k: "gemma3:4b" if wanted == "gemma3" else wanted,
     )
     monkeypatch.setattr(config, "MODEL_NAME", "gemma3")
@@ -270,28 +299,28 @@ def test_format_http_error_suggests_pull():
 
 def test_upsert_env_values_preserves_comments(tmp_path):
     path = tmp_path / ".env"
-    path.write_text("# keep me\nDATA_DIR=./data\nPAPERLESS_LLM_PROVIDER=openai\n")
+    path.write_text("# keep me\nDATA_DIR=./data\nDEEPCATALOG_LLM_PROVIDER=openai\n")
     path.chmod(0o644)
     upsert_env_values(
         {
-            "PAPERLESS_LLM_PROVIDER": "ollama",
-            "PAPERLESS_MODEL": "gemma3",
+            "DEEPCATALOG_LLM_PROVIDER": "ollama",
+            "DEEPCATALOG_MODEL": "gemma3",
         },
         path=path,
     )
     text = path.read_text()
     assert "# keep me" in text
     assert "DATA_DIR=./data" in text
-    assert "PAPERLESS_LLM_PROVIDER=ollama" in text
-    assert "PAPERLESS_MODEL=gemma3" in text
-    assert text.count("PAPERLESS_LLM_PROVIDER=") == 1
+    assert "DEEPCATALOG_LLM_PROVIDER=ollama" in text
+    assert "DEEPCATALOG_MODEL=gemma3" in text
+    assert text.count("DEEPCATALOG_LLM_PROVIDER=") == 1
     mode = path.stat().st_mode & 0o777
     assert mode == 0o600
 
 
 def test_env_path_defaults_to_project_root(tmp_path, monkeypatch):
     monkeypatch.delenv("APPIMAGE", raising=False)
-    monkeypatch.delenv("PAPERLESS_APPIMAGE", raising=False)
+    monkeypatch.delenv("DEEPCATALOG_APPIMAGE", raising=False)
     root = tmp_path / "proj"
     root.mkdir()
     monkeypatch.setattr(config, "PROJECT_ROOT", root)
@@ -300,7 +329,7 @@ def test_env_path_defaults_to_project_root(tmp_path, monkeypatch):
 
 
 def test_env_path_uses_data_dir_when_appimage(tmp_path, monkeypatch):
-    monkeypatch.setenv("PAPERLESS_APPIMAGE", "1")
+    monkeypatch.setenv("DEEPCATALOG_APPIMAGE", "1")
     monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path / "ro")
     monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
     assert env_path() == tmp_path / "data" / ".env"
@@ -308,20 +337,20 @@ def test_env_path_uses_data_dir_when_appimage(tmp_path, monkeypatch):
 
 def test_env_path_uses_data_dir_when_project_not_writable(tmp_path, monkeypatch):
     monkeypatch.delenv("APPIMAGE", raising=False)
-    monkeypatch.delenv("PAPERLESS_APPIMAGE", raising=False)
+    monkeypatch.delenv("DEEPCATALOG_APPIMAGE", raising=False)
     root = tmp_path / "ro"
     root.mkdir()
     monkeypatch.setattr(config, "PROJECT_ROOT", root)
     monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
-    monkeypatch.setattr("paperless_agent.ollama_setup.os.access", lambda *_a, **_k: False)
+    monkeypatch.setattr("deepcatalog.ollama_setup.os.access", lambda *_a, **_k: False)
     assert env_path() == tmp_path / "data" / ".env"
 
 
 def test_enable_ollama_updates_runtime_and_env(tmp_path, monkeypatch):
     env_file = tmp_path / ".env"
-    monkeypatch.setattr("paperless_agent.ollama_setup.env_path", lambda: env_file)
+    monkeypatch.setattr("deepcatalog.ollama_setup.env_path", lambda: env_file)
     monkeypatch.setattr(
-        "paperless_agent.ollama_setup.probe_ollama",
+        "deepcatalog.ollama_setup.probe_ollama",
         lambda *_a, **_k: {
             "reachable": True,
             "base_url": "http://localhost:11434",
@@ -336,7 +365,7 @@ def test_enable_ollama_updates_runtime_and_env(tmp_path, monkeypatch):
     assert config.LLM_PROVIDER == "ollama"
     assert config.MODEL_NAME == "gemma3"
     assert config.EMBEDDING_MODEL == "nomic-embed-text"
-    assert "PAPERLESS_LLM_PROVIDER=ollama" in env_file.read_text()
+    assert "DEEPCATALOG_LLM_PROVIDER=ollama" in env_file.read_text()
     assert result["ollama"]["ready"] is True
 
 
@@ -368,9 +397,9 @@ def test_ollama_status_api(client, monkeypatch):
 
 def test_ollama_enable_api(client, monkeypatch, tmp_path):
     env_file = tmp_path / ".env"
-    monkeypatch.setattr("paperless_agent.ollama_setup.env_path", lambda: env_file)
+    monkeypatch.setattr("deepcatalog.ollama_setup.env_path", lambda: env_file)
     monkeypatch.setattr(
-        "paperless_agent.ollama_setup.probe_ollama",
+        "deepcatalog.ollama_setup.probe_ollama",
         lambda *_a, **_k: {
             "reachable": True,
             "base_url": "http://localhost:11434",
@@ -388,7 +417,7 @@ def test_ollama_enable_api(client, monkeypatch, tmp_path):
 
 def test_llm_provider_api_switches_back(client, monkeypatch, tmp_path):
     env_file = tmp_path / ".env"
-    monkeypatch.setattr("paperless_agent.ollama_setup.env_path", lambda: env_file)
+    monkeypatch.setattr("deepcatalog.ollama_setup.env_path", lambda: env_file)
     monkeypatch.setattr(config, "LLM_PROVIDER", "ollama")
     assert client.post("/api/privacy/cloud-disclaimer", json={"accepted": True}).status_code == 200
     resp = client.post("/api/llm/provider", json={"provider": "openai"})
@@ -400,7 +429,7 @@ def test_llm_provider_api_switches_back(client, monkeypatch, tmp_path):
 def test_start_ollama_already_running(monkeypatch):
     clear_ollama_tags_cache()
     monkeypatch.setattr(
-        "paperless_agent.ollama_setup.probe_ollama",
+        "deepcatalog.ollama_setup.probe_ollama",
         lambda *_a, **_k: {
             "reachable": True,
             "listening": True,
@@ -411,7 +440,7 @@ def test_start_ollama_already_running(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "paperless_agent.ollama_setup.find_ollama_binary",
+        "deepcatalog.ollama_setup.find_ollama_binary",
         lambda: "/usr/bin/ollama",
     )
     result = start_ollama()
@@ -451,20 +480,20 @@ def test_start_ollama_spawns_serve_when_offline(monkeypatch):
         ]
     )
     monkeypatch.setattr(
-        "paperless_agent.ollama_setup.probe_ollama",
+        "deepcatalog.ollama_setup.probe_ollama",
         lambda *_a, **_k: next(probes),
     )
     monkeypatch.setattr(
-        "paperless_agent.ollama_setup.find_ollama_binary",
+        "deepcatalog.ollama_setup.find_ollama_binary",
         lambda: "/usr/bin/ollama",
     )
     monkeypatch.setattr(
-        "paperless_agent.ollama_setup._try_systemctl_start",
+        "deepcatalog.ollama_setup._try_systemctl_start",
         lambda: None,
     )
     spawned: list[str] = []
     monkeypatch.setattr(
-        "paperless_agent.ollama_setup._spawn_ollama_serve",
+        "deepcatalog.ollama_setup._spawn_ollama_serve",
         lambda binary: spawned.append(binary),
     )
     result = start_ollama(wait_timeout=2.0)
@@ -477,7 +506,7 @@ def test_start_ollama_spawns_serve_when_offline(monkeypatch):
 def test_start_ollama_requires_binary(monkeypatch):
     clear_ollama_tags_cache()
     monkeypatch.setattr(
-        "paperless_agent.ollama_setup.probe_ollama",
+        "deepcatalog.ollama_setup.probe_ollama",
         lambda *_a, **_k: {
             "reachable": False,
             "listening": False,
@@ -488,7 +517,7 @@ def test_start_ollama_requires_binary(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "paperless_agent.ollama_setup.find_ollama_binary",
+        "deepcatalog.ollama_setup.find_ollama_binary",
         lambda: None,
     )
     with pytest.raises(RuntimeError, match="not installed"):
@@ -545,7 +574,7 @@ def test_ollama_status_includes_compute(monkeypatch):
     clear_ollama_tags_cache()
     monkeypatch.setattr(config, "LLM_PROVIDER", "ollama")
     monkeypatch.setattr(
-        "paperless_agent.ollama_setup.probe_ollama",
+        "deepcatalog.ollama_setup.probe_ollama",
         lambda *_a, **_k: {
             "reachable": True,
             "listening": True,
@@ -556,7 +585,7 @@ def test_ollama_status_includes_compute(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "paperless_agent.ollama_setup.fetch_running_ps_models",
+        "deepcatalog.ollama_setup.fetch_running_ps_models",
         lambda *_a, **_k: [{"name": "gemma3:latest", "size_vram": 0}],
     )
     status = ollama_status()
@@ -575,7 +604,7 @@ def test_llm_busy_detail_is_action_only():
 
 def test_current_compute_label_idle(monkeypatch):
     monkeypatch.setattr(
-        "paperless_agent.ollama_setup.fetch_running_ps_models",
+        "deepcatalog.ollama_setup.fetch_running_ps_models",
         lambda *_a, **_k: [],
     )
     assert current_compute_label() is None

@@ -8,7 +8,7 @@ import pytest
 from PIL import Image
 from tests.media_fixtures import minimal_pdf_bytes, write_minimal_pdf, write_minimal_png
 
-from paperless_agent.media_validate import (
+from deepcatalog.media_validate import (
     MediaValidationError,
     sniff_media_kind,
     validate_scan_file,
@@ -54,8 +54,8 @@ def test_rejects_absurd_pdf_page_count(tmp_path: Path, monkeypatch):
         is_encrypted = False
         pages = [FakePage(), FakePage(), FakePage()]
 
-    monkeypatch.setattr("paperless_agent.media_validate.PdfReader", lambda *_a, **_k: FakeReader())
-    monkeypatch.setattr("paperless_agent.media_validate.config.MEDIA_MAX_PDF_PAGES", 2)
+    monkeypatch.setattr("deepcatalog.media_validate.PdfReader", lambda *_a, **_k: FakeReader())
+    monkeypatch.setattr("deepcatalog.media_validate.config.MEDIA_MAX_PDF_PAGES", 2)
     with pytest.raises(MediaValidationError, match="too many pages"):
         validate_scan_file(pdf)
 
@@ -64,7 +64,7 @@ def test_rejects_oversized_image_pixels(tmp_path: Path, monkeypatch):
     path = tmp_path / "huge.png"
     # Small on disk but claim huge size via monkeypatch after open is hard;
     # instead lower the ceiling and save a moderately large image.
-    monkeypatch.setattr("paperless_agent.media_validate.config.MEDIA_MAX_IMAGE_PIXELS", 1000)
+    monkeypatch.setattr("deepcatalog.media_validate.config.MEDIA_MAX_IMAGE_PIXELS", 1000)
     Image.new("RGB", (50, 50), "white").save(path, format="PNG")
     with pytest.raises(MediaValidationError) as exc:
         validate_scan_file(path)

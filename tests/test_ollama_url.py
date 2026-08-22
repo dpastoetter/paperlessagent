@@ -6,10 +6,12 @@ import ipaddress
 
 import pytest
 
-from paperless_agent.ollama_url import (
+from deepcatalog.ollama_url import (
     ALLOW_REMOTE_OLLAMA_ENV,
     is_loopback_ollama_url,
+    public_ollama_config_error,
     require_ollama_base_url,
+    trusted_ollama_origin,
     validate_ollama_base_url,
 )
 
@@ -63,7 +65,7 @@ def test_rejects_blocked_metadata_hostname(monkeypatch):
             (0, 0, 0, "", ("169.254.169.254", 0)),
         ]
 
-    monkeypatch.setattr("paperless_agent.ollama_url.socket.getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr("deepcatalog.ollama_url.socket.getaddrinfo", fake_getaddrinfo)
     with pytest.raises(ValueError, match="not allowed|link-local|blocked"):
         validate_ollama_base_url("http://metadata.google.internal/", allow_remote=True)
 
@@ -72,7 +74,7 @@ def test_rejects_dns_rebinding_to_metadata(monkeypatch):
     def fake_getaddrinfo(host, *_args, **_kwargs):
         return [(0, 0, 0, "", ("169.254.169.254", 0))]
 
-    monkeypatch.setattr("paperless_agent.ollama_url.socket.getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr("deepcatalog.ollama_url.socket.getaddrinfo", fake_getaddrinfo)
     with pytest.raises(ValueError, match="link-local|blocked"):
         validate_ollama_base_url("http://evil.example:11434", allow_remote=True)
 
@@ -87,7 +89,7 @@ def test_api_rejects_remote_url_without_allow_remote(client):
 
 
 def test_api_rejects_remote_url_without_disclaimer(client, isolated_data):
-    from paperless_agent.privacy import clear_privacy_cache, revoke_cloud_disclaimer
+    from deepcatalog.privacy import clear_privacy_cache, revoke_cloud_disclaimer
 
     revoke_cloud_disclaimer()
     clear_privacy_cache()
@@ -108,6 +110,31 @@ def test_api_rejects_ssrf_metadata_target(client):
     assert resp.status_code == 400
     detail = resp.json()["detail"].lower()
     assert "link-local" in detail or "blocked" in detail or "metadata" in detail
+
+
+def test_trusted_origin_pins_loopback_and_rebuilds_remote():
+    assert trusted_ollama_origin("http://localhost:11434") == "http://127.0.0.1:11434"
+    assert trusted_ollama_origin("http://127.0.0.1:11434") == "http://127.0.0.1:11434"
+    assert trusted_ollama_origin("http://[::1]:11434") == "http://[::1]:11434"
+    assert (
+        trusted_ollama_origin("http://192.168.1.50:11434", allow_remote=True)
+        == "http://192.168.1.50:11434"
+    )
+
+
+def test_public_ollama_config_error_is_stable():
+    assert (
+        "blocked"
+        in public_ollama_config_error(
+            ValueError(
+                "Ollama base URL resolves to a blocked address (169.254.169.254): link-local"
+            )
+        ).lower()
+    )
+    assert "Remote Ollama is disabled" in public_ollama_config_error(
+        ValueError("Remote Ollama is disabled. Use localhost")
+    )
+    assert public_ollama_config_error(ValueError("traceback-looking junk")) == "Invalid Ollama URL"
 
 
 def test_literal_ip_classification():

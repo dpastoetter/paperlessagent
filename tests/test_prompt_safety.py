@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from paperless_agent.prompt_safety import (
+from deepcatalog.prompt_safety import (
     BEGIN_UNTRUSTED_DOCUMENT,
     BEGIN_UNTRUSTED_EVIDENCE,
     BOUNDARY_TOKEN_HEX_LEN,
@@ -106,7 +106,7 @@ def test_wrap_untrusted_regenerates_token_present_in_body(monkeypatch):
     safe = "b" * BOUNDARY_TOKEN_HEX_LEN
     tokens = iter([colliding, safe])
     monkeypatch.setattr(
-        "paperless_agent.prompt_safety.secrets.token_hex",
+        "deepcatalog.prompt_safety.secrets.token_hex",
         lambda _n: next(tokens),
     )
     wrapped = wrap_untrusted(f"see {colliding} inside")

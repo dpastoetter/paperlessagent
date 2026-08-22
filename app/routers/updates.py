@@ -6,14 +6,14 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from paperless_agent.inbox_worker import is_processing
-from paperless_agent.updater import (
+from deepcatalog.inbox_worker import is_processing
+from deepcatalog.updater import (
     UPDATE_REPO,
     apply_update,
     check_for_update,
     schedule_restart,
 )
-from paperless_agent.version import get_current_version
+from deepcatalog.version import get_current_version
 
 router = APIRouter(tags=["updates"])
 
@@ -35,7 +35,27 @@ def api_update_apply() -> dict[str, Any]:
     """Download the latest GitHub release and install it over this instance."""
     result = apply_update()
     if result.get("status") != "success":
-        raise HTTPException(status_code=409, detail=result.get("error", "update failed"))
+        raw_error = result.get("error")
+        error = raw_error if isinstance(raw_error, str) else ""
+        lowered = error.lower()
+        if "appimage" in lowered:
+            detail = (
+                "This AppImage cannot be updated in place. "
+                "Download the latest DeepCatalog-*-x86_64.AppImage from GitHub "
+                "Releases and replace this file."
+            )
+        elif "up to date" in lowered:
+            detail = "Already up to date."
+        elif "unverified" in lowered or "sha-256" in lowered:
+            detail = "Refusing to install an unverified release (missing SHA-256)."
+        elif "download failed" in lowered:
+            detail = "Download failed. Check your network and try again."
+        elif "verification failed" in lowered or "sha-256 mismatch" in lowered:
+            detail = "Release verification failed (SHA-256 mismatch)"
+        else:
+            detail = "update failed"
+        raise HTTPException(status_code=409, detail=detail)
+    return result
     return result
 
 

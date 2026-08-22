@@ -27,11 +27,11 @@ else
 fi
 
 echo "[1/7] Ruff format"
-"$PY" -m ruff format --check paperless_agent app query_agent tests \
-  || fail "Formatting drift — run: $PY -m ruff format paperless_agent app query_agent tests"
+"$PY" -m ruff format --check deepcatalog app query_agent tests \
+  || fail "Formatting drift — run: $PY -m ruff format deepcatalog app query_agent tests"
 
 echo "[2/7] Ruff lint"
-"$PY" -m ruff check paperless_agent app query_agent tests \
+"$PY" -m ruff check deepcatalog app query_agent tests \
   || fail "Ruff lint failed"
 
 echo "[3/7] pip check"

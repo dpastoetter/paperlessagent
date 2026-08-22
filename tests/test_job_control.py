@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from paperless_agent.job_control import (
+from deepcatalog.job_control import (
     FileCancelledError,
     bind_file_cancel,
     clear_file_cancel,

@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
 from app.schemas import AutostartRequest, ClearDataRequest, SettingsRequest, ValidatePathRequest
-from paperless_agent.settings import (
+from deepcatalog.settings import (
     SettingsError,
     load_settings,
     save_settings,
     validate_path,
 )
-from paperless_agent.system_service import autostart_status, set_autostart
-from paperless_agent.tools.storage import CLEAR_DATA_CONFIRMATION, clear_all_stored_data
+from deepcatalog.system_service import autostart_status, set_autostart
+from deepcatalog.tools.storage import CLEAR_DATA_CONFIRMATION, clear_all_stored_data
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["settings"])
 
 
@@ -23,8 +25,9 @@ router = APIRouter(tags=["settings"])
 def api_get_settings() -> dict[str, Any]:
     try:
         settings = load_settings()
-    except SettingsError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except SettingsError:
+        logger.exception("failed to load settings")
+        raise HTTPException(status_code=500, detail="settings file is unreadable") from None
     return {"status": "success", "settings": settings}
 
 
@@ -32,8 +35,9 @@ def api_get_settings() -> dict[str, Any]:
 def api_put_settings(body: SettingsRequest) -> dict[str, Any]:
     try:
         saved = save_settings(body.model_dump())
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError:
+        logger.info("rejected settings payload")
+        raise HTTPException(status_code=400, detail="invalid settings") from None
     return {"status": "success", "settings": saved}
 
 
@@ -51,8 +55,9 @@ def api_autostart_status() -> dict[str, Any]:
 def api_autostart(body: AutostartRequest) -> dict[str, Any]:
     try:
         return set_autostart(body.enabled)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except RuntimeError:
+        logger.exception("autostart update failed")
+        raise HTTPException(status_code=503, detail="could not update autostart") from None
 
 
 @router.delete("/api/data")
@@ -72,5 +77,6 @@ def api_clear_all_data(body: ClearDataRequest) -> dict[str, Any]:
         )
     try:
         return clear_all_stored_data()
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception:
+        logger.exception("clear stored data failed")
+        raise HTTPException(status_code=500, detail="could not clear stored data") from None

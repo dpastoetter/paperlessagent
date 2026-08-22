@@ -7,11 +7,11 @@ import asyncio
 from fastapi.testclient import TestClient
 
 from app.main import app
-from paperless_agent.pipeline.agents import file_and_persist
-from paperless_agent.review import create_review
-from paperless_agent.settings import get_source_dir
-from paperless_agent.tools import filesystem
-from paperless_agent.tools.metadata_db import get_document, list_recent
+from deepcatalog.pipeline.agents import file_and_persist
+from deepcatalog.review import create_review
+from deepcatalog.settings import get_source_dir
+from deepcatalog.tools import filesystem
+from deepcatalog.tools.metadata_db import get_document, list_recent
 
 
 def test_mutating_routes_require_csrf_header(isolated_data):
@@ -87,7 +87,7 @@ def test_upload_accepts_pdf(client):
 def test_upload_rejects_oversize_without_leaving_partial(client, monkeypatch):
     monkeypatch.setattr("app.deps.MAX_UPLOAD_BYTES", 64)
     monkeypatch.setattr(
-        "paperless_agent.tools.filesystem.UPLOAD_CHUNK_BYTES",
+        "deepcatalog.tools.filesystem.UPLOAD_CHUNK_BYTES",
         16,
     )
     # processing router reads MAX_UPLOAD_BYTES at call time via deps import binding
@@ -148,7 +148,7 @@ def test_file_and_persist_is_atomic_on_metadata_failure(isolated_data, stub_rag_
     def boom(**_kw):
         raise RuntimeError("db down")
 
-    monkeypatch.setattr("paperless_agent.pipeline.agents.upsert_metadata", boom)
+    monkeypatch.setattr("deepcatalog.pipeline.agents.upsert_metadata", boom)
     result = file_and_persist(
         source_path=str(scan),
         filename="2024-01-01_Invoice_Test.pdf",

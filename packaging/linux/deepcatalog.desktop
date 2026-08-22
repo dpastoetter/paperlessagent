@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=DeepCatalog Studio
+Comment=Your local workspace for archive discovery and automation.
+Exec=deepcatalog
+Icon=deepcatalog
+Terminal=false
+Categories=Office;Scanning;Utility;
+StartupNotify=true
+StartupWMClass=DeepCatalog
+MimeType=application/pdf;image/png;image/jpeg;image/tiff;image/webp;
+Keywords=OCR;PDF;documents;archive;RAG;

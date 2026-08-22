@@ -6,22 +6,22 @@ import asyncio
 
 import pytest
 
-from paperless_agent.ask import ask_archive, filter_confident_chunks
-from paperless_agent.config import ensure_data_dirs
-from paperless_agent.settings import clear_settings_cache, load_settings
-from paperless_agent.tools import metadata_db, rag_index
+from deepcatalog.ask import ask_archive, filter_confident_chunks
+from deepcatalog.config import ensure_data_dirs
+from deepcatalog.settings import clear_settings_cache, load_settings
+from deepcatalog.tools import metadata_db, rag_index
 
 
 @pytest.fixture()
 def isolated_ask(tmp_path, monkeypatch):
     data = tmp_path / "data"
-    monkeypatch.setattr("paperless_agent.config.DATA_DIR", data)
-    monkeypatch.setattr("paperless_agent.config.INBOX_DIR", data / "inbox")
-    monkeypatch.setattr("paperless_agent.config.ARCHIVE_DIR", data / "archive")
-    monkeypatch.setattr("paperless_agent.config.DB_PATH", data / "paperless.db")
-    monkeypatch.setattr("paperless_agent.config.CHROMA_DIR", data / "chroma")
-    monkeypatch.setattr("paperless_agent.tools.metadata_db.DB_PATH", data / "paperless.db")
-    monkeypatch.setattr("paperless_agent.tools.rag_index.CHROMA_DIR", data / "chroma")
+    monkeypatch.setattr("deepcatalog.config.DATA_DIR", data)
+    monkeypatch.setattr("deepcatalog.config.INBOX_DIR", data / "inbox")
+    monkeypatch.setattr("deepcatalog.config.ARCHIVE_DIR", data / "archive")
+    monkeypatch.setattr("deepcatalog.config.DB_PATH", data / "deepcatalog.db")
+    monkeypatch.setattr("deepcatalog.config.CHROMA_DIR", data / "chroma")
+    monkeypatch.setattr("deepcatalog.tools.metadata_db.DB_PATH", data / "deepcatalog.db")
+    monkeypatch.setattr("deepcatalog.tools.rag_index.CHROMA_DIR", data / "chroma")
     clear_settings_cache()
     ensure_data_dirs()
     load_settings()
@@ -73,12 +73,12 @@ def test_ask_archive_uses_evidence(isolated_ask, monkeypatch):
         assert "END_UNTRUSTED_EVIDENCE" in prompt
         assert "untrusted" in instructions.lower()
         assert "recent documents" not in prompt.lower()
-        assert "archive assistant" in instructions.lower() or "paperless" in instructions.lower()
+        assert "deepcatalog" in instructions.lower() or "archive assistant" in instructions.lower()
         return (
             f"You have one invoice from BV CRE8 for €181.50 (document_id={isolated_ask['doc_id']})."
         )
 
-    monkeypatch.setattr("paperless_agent.ask.complete_text", fake_complete)
+    monkeypatch.setattr("deepcatalog.ask.complete_text", fake_complete)
     result = asyncio.run(ask_archive("What invoices do I have and for how much?"))
     assert result["status"] == "success"
     assert result.get("grounded") is True
@@ -96,7 +96,7 @@ def test_ask_archive_clamps_model_reply(isolated_ask, monkeypatch):
     async def fake_complete(prompt: str, *, instructions: str) -> str:
         return "Z" * 20_000
 
-    monkeypatch.setattr("paperless_agent.ask.complete_text", fake_complete)
+    monkeypatch.setattr("deepcatalog.ask.complete_text", fake_complete)
     result = asyncio.run(ask_archive("What invoices do I have and for how much?"))
     assert result["status"] == "success"
     assert len(result["reply"]) <= 12_000
@@ -115,9 +115,9 @@ def test_ask_does_not_pad_with_recent_docs(isolated_ask, monkeypatch):
         llm_calls.append(prompt)
         return "should not be called"
 
-    monkeypatch.setattr("paperless_agent.ask.complete_text", fake_complete)
+    monkeypatch.setattr("deepcatalog.ask.complete_text", fake_complete)
     monkeypatch.setattr(
-        "paperless_agent.ask.retrieve_chunks",
+        "deepcatalog.ask.retrieve_chunks",
         lambda _q: {
             "status": "success",
             "chunks": [
@@ -132,7 +132,7 @@ def test_ask_does_not_pad_with_recent_docs(isolated_ask, monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "paperless_agent.ask.search_metadata",
+        "deepcatalog.ask.search_metadata",
         lambda **_kwargs: {"status": "success", "documents": [], "count": 0},
     )
 
@@ -160,9 +160,9 @@ def test_ask_uses_metadata_keyword_hits_without_chunks(isolated_ask, monkeypatch
         assert "FA2022-0001" in prompt or "BV CRE8" in prompt
         return "Invoice FA2022-0001 is from BV CRE8."
 
-    monkeypatch.setattr("paperless_agent.ask.complete_text", fake_complete)
+    monkeypatch.setattr("deepcatalog.ask.complete_text", fake_complete)
     monkeypatch.setattr(
-        "paperless_agent.ask.retrieve_chunks",
+        "deepcatalog.ask.retrieve_chunks",
         lambda _q: {"status": "success", "chunks": []},
     )
     result = asyncio.run(ask_archive("Find invoice FA2022-0001"))
@@ -199,8 +199,8 @@ def test_ask_history_is_prompt_only_retrieval_uses_question(isolated_ask, monkey
             ],
         }
 
-    monkeypatch.setattr("paperless_agent.ask.complete_text", fake_complete)
-    monkeypatch.setattr("paperless_agent.ask.retrieve_chunks", fake_retrieve)
+    monkeypatch.setattr("deepcatalog.ask.complete_text", fake_complete)
+    monkeypatch.setattr("deepcatalog.ask.retrieve_chunks", fake_retrieve)
 
     result = asyncio.run(
         ask_archive(
@@ -223,7 +223,7 @@ def test_ask_history_clamped(isolated_ask, monkeypatch):
         assert "turn-7" in prompt or "turn-5" in prompt
         return "ok"
 
-    monkeypatch.setattr("paperless_agent.ask.complete_text", fake_complete)
+    monkeypatch.setattr("deepcatalog.ask.complete_text", fake_complete)
     history = []
     for i in range(10):
         history.append({"role": "user", "content": f"turn-{i} user"})

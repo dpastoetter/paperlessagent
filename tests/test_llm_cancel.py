@@ -6,17 +6,17 @@ import asyncio
 
 import pytest
 
-from paperless_agent.job_control import (
+from deepcatalog.job_control import (
     FileCancelledError,
     bind_file_cancel,
     request_cancel_file,
 )
-from paperless_agent.llm import _ollama_request, run_cancellable
+from deepcatalog.llm import _ollama_request, run_cancellable
 
 
 @pytest.fixture(autouse=True)
 def _reset_cancel_scope():
-    from paperless_agent.job_control import clear_file_cancel
+    from deepcatalog.job_control import clear_file_cancel
 
     clear_file_cancel()
     yield
@@ -48,7 +48,7 @@ def test_run_cancellable_raises_when_event_set():
 def test_ollama_request_timeout_has_clear_message(monkeypatch):
     import httpx
 
-    monkeypatch.setattr("paperless_agent.llm.config.OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+    monkeypatch.setattr("deepcatalog.llm.config.OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 
     async def slow_post(*_args, **_kwargs):
         await asyncio.sleep(0.01)
@@ -66,7 +66,7 @@ def test_ollama_request_timeout_has_clear_message(monkeypatch):
 def test_ollama_request_aborts_when_cancel_event_set(monkeypatch):
     import httpx
 
-    monkeypatch.setattr("paperless_agent.llm.config.OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+    monkeypatch.setattr("deepcatalog.llm.config.OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 
     async def slow_post(*_args, **_kwargs):
         await asyncio.sleep(60)

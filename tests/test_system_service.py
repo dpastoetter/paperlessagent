@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from paperless_agent import system_service
+from deepcatalog import system_service
 
 
 def test_render_unit_file_includes_paths(tmp_path, monkeypatch):
@@ -14,37 +14,36 @@ def test_render_unit_file_includes_paths(tmp_path, monkeypatch):
     venv_bin.mkdir(parents=True)
     (venv_bin / "python").write_text("#!/bin/sh\n", encoding="utf-8")
     (venv_bin / "uvicorn").write_text("#!/bin/sh\n", encoding="utf-8")
-    monkeypatch.setenv("PAPERLESS_HOST", "127.0.0.1")
-    monkeypatch.setenv("PAPERLESS_PORT", "8080")
+    monkeypatch.setenv("DEEPCATALOG_HOST", "127.0.0.1")
+    monkeypatch.setenv("DEEPCATALOG_PORT", "8080")
     monkeypatch.setattr(system_service.config, "PROJECT_ROOT", project)
     monkeypatch.setattr(system_service.config, "DATA_DIR", project / "data")
 
     text = system_service.render_unit_file()
     assert f"WorkingDirectory={project}" in text
     assert (
-        f"ExecStart={venv_bin / 'python'} -m paperless_agent.serve --host 127.0.0.1 --port 8080"
-        in text
+        f"ExecStart={venv_bin / 'python'} -m deepcatalog.serve --host 127.0.0.1 --port 8080" in text
     )
-    assert "Environment=PAPERLESS_SYSTEMD=1" in text
+    assert "Environment=DEEPCATALOG_SYSTEMD=1" in text
     assert "WantedBy=default.target" in text
 
 
 def test_render_unit_file_appimage(tmp_path, monkeypatch):
-    image = tmp_path / "PaperlessAgent-x86_64.AppImage"
+    image = tmp_path / "DeepCatalog-x86_64.AppImage"
     image.write_bytes(b"fake")
     data = tmp_path / "data"
     data.mkdir()
     monkeypatch.setenv("APPIMAGE", str(image))
-    monkeypatch.setenv("PAPERLESS_APPIMAGE", "1")
-    monkeypatch.setenv("PAPERLESS_HOST", "127.0.0.1")
-    monkeypatch.setenv("PAPERLESS_PORT", "8080")
+    monkeypatch.setenv("DEEPCATALOG_APPIMAGE", "1")
+    monkeypatch.setenv("DEEPCATALOG_HOST", "127.0.0.1")
+    monkeypatch.setenv("DEEPCATALOG_PORT", "8080")
     monkeypatch.setattr(system_service.config, "PROJECT_ROOT", tmp_path / "opt")
     monkeypatch.setattr(system_service.config, "DATA_DIR", data)
 
     text = system_service.render_unit_file()
     assert f"ExecStart={image} --headless --host 127.0.0.1 --port 8080" in text
     assert f"WorkingDirectory={data}" in text
-    assert "Environment=PAPERLESS_APPIMAGE=1" in text
+    assert "Environment=DEEPCATALOG_APPIMAGE=1" in text
     assert "uvicorn" not in text
 
 
@@ -64,8 +63,8 @@ def test_set_autostart_enable_writes_unit_and_enables(tmp_path, monkeypatch):
     (venv_bin / "uvicorn").write_text("#!/bin/sh\n", encoding="utf-8")
     unit_file = tmp_path / "systemd-user" / system_service.UNIT_NAME
 
-    monkeypatch.setenv("PAPERLESS_HOST", "127.0.0.1")
-    monkeypatch.setenv("PAPERLESS_PORT", "8080")
+    monkeypatch.setenv("DEEPCATALOG_HOST", "127.0.0.1")
+    monkeypatch.setenv("DEEPCATALOG_PORT", "8080")
     monkeypatch.setattr(system_service.config, "PROJECT_ROOT", project)
     monkeypatch.setattr(system_service.config, "DATA_DIR", project / "data")
     monkeypatch.setattr(system_service, "_systemd_available", lambda: True)
@@ -91,17 +90,19 @@ def test_set_autostart_enable_writes_unit_and_enables(tmp_path, monkeypatch):
     result = system_service.set_autostart(True)
     assert result["status"] == "success"
     assert unit_file.is_file()
-    assert "PaperlessAgent local document assistant" in unit_file.read_text(encoding="utf-8")
+    assert "DeepCatalog — deep document intelligence, local-first." in unit_file.read_text(
+        encoding="utf-8"
+    )
     assert ["daemon-reload"] in calls
     assert ["enable", system_service.UNIT_NAME] in calls
     assert ["start", system_service.UNIT_NAME] in calls
 
 
 def test_autostart_status_appimage_skips_venv(tmp_path, monkeypatch):
-    image = tmp_path / "PaperlessAgent.AppImage"
+    image = tmp_path / "DeepCatalog.AppImage"
     image.write_bytes(b"x")
     monkeypatch.setenv("APPIMAGE", str(image))
-    monkeypatch.setenv("PAPERLESS_APPIMAGE", "1")
+    monkeypatch.setenv("DEEPCATALOG_APPIMAGE", "1")
     monkeypatch.setattr(system_service, "_systemd_available", lambda: True)
     monkeypatch.setattr(system_service, "_unit_enabled", lambda: False)
     monkeypatch.setattr(system_service, "_unit_active", lambda: False)
@@ -116,7 +117,7 @@ def test_autostart_status_appimage_skips_venv(tmp_path, monkeypatch):
 
 def test_autostart_status_appimage_missing_path(tmp_path, monkeypatch):
     monkeypatch.setenv("APPIMAGE", str(tmp_path / "missing.AppImage"))
-    monkeypatch.setenv("PAPERLESS_APPIMAGE", "1")
+    monkeypatch.setenv("DEEPCATALOG_APPIMAGE", "1")
     monkeypatch.setattr(system_service, "_systemd_available", lambda: True)
     monkeypatch.setattr(system_service, "_linger_enabled", lambda: False)
     monkeypatch.setattr(system_service.config, "PROJECT_ROOT", tmp_path / "missing")
@@ -183,3 +184,14 @@ def test_autostart_toggle_api(client, monkeypatch):
     resp = client.post("/api/autostart", json={"enabled": True})
     assert resp.status_code == 200
     assert resp.json()["autostart"]["enabled"] is True
+
+
+def test_port_probe_host_never_uses_wildcard():
+    from deepcatalog.local_security import port_probe_host
+
+    assert port_probe_host("") == "127.0.0.1"
+    assert port_probe_host("0.0.0.0") == "127.0.0.1"
+    assert port_probe_host("*") == "127.0.0.1"
+    assert port_probe_host("::") == "127.0.0.1"
+    assert port_probe_host("127.0.0.1") == "127.0.0.1"
+    assert port_probe_host("192.168.0.5") == "192.168.0.5"

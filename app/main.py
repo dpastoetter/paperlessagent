@@ -25,17 +25,17 @@ from app.deps import (
 )
 from app.routers import build_api_router
 from app.security_headers import apply_browser_security_headers
-from paperless_agent.access_log import install_access_log_redaction
-from paperless_agent.auth_rate_limit import (
+from deepcatalog.access_log import install_access_log_redaction
+from deepcatalog.auth_rate_limit import (
     RATE_LIMIT_DETAIL,
     get_auth_rate_limiter,
     log_rate_limited,
     rate_limit_response_headers,
 )
-from paperless_agent.config import ensure_data_dirs
-from paperless_agent.env_permissions import ensure_dotenv_permissions
-from paperless_agent.inbox_worker import inbox_poll_loop
-from paperless_agent.local_security import (
+from deepcatalog.config import ensure_data_dirs
+from deepcatalog.env_permissions import ensure_dotenv_permissions
+from deepcatalog.inbox_worker import inbox_poll_loop
+from deepcatalog.local_security import (
     COOKIE_NAME,
     assert_bind_allowed,
     auth_required_for_request,
@@ -45,14 +45,14 @@ from paperless_agent.local_security import (
     is_direct_loopback_request,
     remote_auth_must_be_https,
 )
-from paperless_agent.review import recover_stale_processing
-from paperless_agent.sessions import (
+from deepcatalog.review import recover_stale_processing
+from deepcatalog.sessions import (
     attach_session_cookie,
     create_session,
     session_is_valid,
 )
-from paperless_agent.settings import load_settings
-from paperless_agent.version import get_current_version
+from deepcatalog.settings import load_settings
+from deepcatalog.version import get_current_version
 
 __all__ = [
     "CSRF_HEADER_NAME",
@@ -88,8 +88,8 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="PaperlessAgent",
-    description="Local ADK document ingest + RAG query API",
+    title="DeepCatalog Studio",
+    description="Deep document intelligence, local-first.",
     version=get_current_version(),
     lifespan=lifespan,
 )
@@ -142,7 +142,7 @@ async def security_boundary(request: Request, call_next):
                     status_code=403,
                     content={
                         "detail": (
-                            "non-loopback API access requires PAPERLESS_API_TOKEN "
+                            "non-loopback API access requires DEEPCATALOG_API_TOKEN "
                             "(refuse to expose the unauthenticated API on the network)"
                         )
                     },
@@ -168,7 +168,7 @@ async def security_boundary(request: Request, call_next):
                     content={
                         "detail": (
                             "authentication required — send Authorization: Bearer "
-                            f"<PAPERLESS_API_TOKEN> or create a browser session via "
+                            f"<DEEPCATALOG_API_TOKEN> or create a browser session via "
                             f"POST /api/auth/session (cookie {COOKIE_NAME})"
                         )
                     },
@@ -203,7 +203,7 @@ def index(request: Request) -> HTMLResponse:
     """
     Serve the SPA.
 
-    Never injects PAPERLESS_API_TOKEN into HTML/JS. Issues a random HttpOnly
+    Never injects DEEPCATALOG_API_TOKEN into HTML/JS. Issues a random HttpOnly
     session cookie only for a genuine direct loopback connection (loopback TCP
     peer and loopback Host, not via a trusted proxy). Proxied/public clients
     must use POST /api/auth/session. Query-string tokens are not accepted.

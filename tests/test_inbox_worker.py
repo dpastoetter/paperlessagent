@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from paperless_agent import inbox_worker
-from paperless_agent.job_control import FileCancelledError
-from paperless_agent.review import create_review
-from paperless_agent.settings import get_source_dir
+from deepcatalog import inbox_worker
+from deepcatalog.job_control import FileCancelledError
+from deepcatalog.review import create_review
+from deepcatalog.settings import get_source_dir
 
 
 @pytest.fixture()

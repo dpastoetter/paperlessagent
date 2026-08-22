@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from paperless_agent.privacy import (
+from deepcatalog.privacy import (
     CLOUD_DISCLAIMER_VERSION,
     accept_cloud_disclaimer,
     clear_privacy_cache,

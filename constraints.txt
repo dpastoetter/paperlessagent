@@ -56,7 +56,7 @@ cffi==2.1.1
 charset-normalizer==3.5.0
     # via requests
 chromadb==1.5.9
-    # via paperlessagent (pyproject.toml)
+    # via deepcatalog (pyproject.toml)
 click==8.4.2
     # via
     #   google-adk
@@ -79,7 +79,7 @@ durationpy==0.10
 fastapi==0.141.1
     # via
     #   google-adk
-    #   paperlessagent (pyproject.toml)
+    #   deepcatalog (pyproject.toml)
 filelock==3.32.3
     # via huggingface-hub
 flatbuffers==25.12.19
@@ -91,7 +91,7 @@ frozenlist==1.8.0
 fsspec==2026.7.0
     # via huggingface-hub
 google-adk==2.6.3
-    # via paperlessagent (pyproject.toml)
+    # via deepcatalog (pyproject.toml)
 google-auth==2.56.3
     # via
     #   google-adk
@@ -99,7 +99,7 @@ google-auth==2.56.3
 google-genai==2.18.0
     # via
     #   google-adk
-    #   paperlessagent (pyproject.toml)
+    #   deepcatalog (pyproject.toml)
 googleapis-common-protos==1.75.1
     # via opentelemetry-exporter-otlp-proto-grpc
 graphviz==0.21
@@ -127,7 +127,7 @@ httpx==0.28.1
     #   google-adk
     #   google-genai
     #   huggingface-hub
-    #   paperlessagent (pyproject.toml)
+    #   deepcatalog (pyproject.toml)
 httpx2==2.10.0
     # via openai
 huggingface-hub==1.27.0
@@ -168,7 +168,7 @@ multidict==6.7.1
     #   aiohttp
     #   yarl
 mypy==2.3.0
-    # via paperlessagent (pyproject.toml)
+    # via deepcatalog (pyproject.toml)
 mypy-extensions==1.1.0
     # via mypy
 numpy==2.5.2
@@ -180,7 +180,7 @@ oauthlib==3.3.1
 onnxruntime==1.28.0
     # via chromadb
 openai==3.2.0
-    # via paperlessagent (pyproject.toml)
+    # via deepcatalog (pyproject.toml)
 opentelemetry-api==1.42.1
     # via
     #   chromadb
@@ -218,13 +218,13 @@ packaging==26.3
 pathspec==1.1.1
     # via mypy
 pdf2image==1.17.0
-    # via paperlessagent (pyproject.toml)
+    # via deepcatalog (pyproject.toml)
 pillow==12.3.0
     # via
-    #   paperlessagent (pyproject.toml)
+    #   deepcatalog (pyproject.toml)
     #   pdf2image
 pip-tools==7.6.1
-    # via paperlessagent (pyproject.toml)
+    # via deepcatalog (pyproject.toml)
 pluggy==1.6.0
     # via
     #   pytest
@@ -265,7 +265,7 @@ pygments==2.20.0
     #   pytest
     #   rich
 pypdf==6.16.0
-    # via paperlessagent (pyproject.toml)
+    # via deepcatalog (pyproject.toml)
 pypika==0.51.1
     # via chromadb
 pyproject-hooks==1.2.0
@@ -274,24 +274,24 @@ pyproject-hooks==1.2.0
     #   pip-tools
 pytest==9.1.1
     # via
-    #   paperlessagent (pyproject.toml)
+    #   deepcatalog (pyproject.toml)
     #   pytest-cov
 pytest-cov==7.1.0
-    # via paperlessagent (pyproject.toml)
+    # via deepcatalog (pyproject.toml)
 python-dateutil==2.9.0.post0
     # via kubernetes
 python-dotenv==1.2.2
     # via
     #   google-adk
-    #   paperlessagent (pyproject.toml)
+    #   deepcatalog (pyproject.toml)
     #   pydantic-settings
     #   uvicorn
 python-multipart==0.0.32
     # via
     #   google-adk
-    #   paperlessagent (pyproject.toml)
+    #   deepcatalog (pyproject.toml)
 pywebview==6.2.1
-    # via paperlessagent (pyproject.toml)
+    # via deepcatalog (pyproject.toml)
 pyyaml==6.0.3
     # via
     #   chromadb
@@ -321,7 +321,7 @@ rpds-py==2026.6.3
     #   jsonschema
     #   referencing
 ruff==0.16.3
-    # via paperlessagent (pyproject.toml)
+    # via deepcatalog (pyproject.toml)
 shellingham==1.5.4
     # via typer
 six==1.17.0
@@ -355,7 +355,7 @@ truststore==0.10.4
 typer==0.27.1
     # via chromadb
 types-pillow==10.2.0.20240822
-    # via paperlessagent (pyproject.toml)
+    # via deepcatalog (pyproject.toml)
 typing-extensions==4.16.0
     # via
     #   chromadb
@@ -389,13 +389,13 @@ uvicorn==0.52.3
     # via
     #   chromadb
     #   google-adk
-    #   paperlessagent (pyproject.toml)
+    #   deepcatalog (pyproject.toml)
 uvloop==0.22.1
     # via uvicorn
 watchdog==6.0.0
     # via
     #   google-adk
-    #   paperlessagent (pyproject.toml)
+    #   deepcatalog (pyproject.toml)
 watchfiles==1.2.0
     # via uvicorn
 websocket-client==1.9.0

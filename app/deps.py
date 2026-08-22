@@ -6,8 +6,8 @@ from pathlib import Path
 
 from fastapi import HTTPException, Request
 
-from paperless_agent.config import ARCHIVE_DIR
-from paperless_agent.local_security import (
+from deepcatalog.config import ARCHIVE_DIR
+from deepcatalog.local_security import (
     AUTH_HEADER,
     COOKIE_NAME,
     extract_bearer_token,
@@ -16,14 +16,14 @@ from paperless_agent.local_security import (
     request_appears_https,
     token_matches,
 )
-from paperless_agent.privacy import require_cloud_disclaimer
-from paperless_agent.sessions import session_is_valid
-from paperless_agent.settings import load_settings
+from deepcatalog.privacy import require_cloud_disclaimer
+from deepcatalog.sessions import session_is_valid
+from deepcatalog.settings import load_settings
 
 # CSRF: browsers cannot attach custom headers to cross-site form posts without
 # CORS preflight (which this app never grants).
 CSRF_HEADER_NAME = "X-Requested-With"
-CSRF_HEADER_VALUE = "PaperlessAgent"
+CSRF_HEADER_VALUE = "DeepCatalog"
 MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # Health + session bootstrap must work before a cookie exists.
 AUTH_EXEMPT_PATHS = frozenset(
@@ -50,7 +50,7 @@ def client_host(request: Request) -> str | None:
     End-user client host for logging / forwarded HTTPS detection / rate limits.
 
     Honors X-Forwarded-For only when the TCP peer is listed in
-    PAPERLESS_TRUSTED_PROXIES. Never use this to grant authentication.
+    DEEPCATALOG_TRUSTED_PROXIES. Never use this to grant authentication.
     """
     return forwarded_client_host(
         peer_host=peer_host(request),
@@ -72,7 +72,7 @@ def request_is_https(request: Request) -> bool:
 
 
 def request_presents_credentials(request: Request) -> bool:
-    """True when the request carries a Bearer header or a pa_session cookie."""
+    """True when the request carries a Bearer header or a deepcatalog_session cookie."""
     if (request.headers.get(AUTH_HEADER) or "").strip():
         return True
     cookie = request.cookies.get(COOKIE_NAME)
@@ -81,7 +81,7 @@ def request_presents_credentials(request: Request) -> bool:
 
 def request_has_valid_token(request: Request) -> bool:
     """
-    Authenticate via Bearer PAPERLESS_API_TOKEN (machine clients) or pa_session cookie.
+    Authenticate via Bearer DEEPCATALOG_API_TOKEN (machine clients) or deepcatalog_session cookie.
 
     The cookie must be a random session id — never the long-lived API secret.
     Query parameters (``token``, ``access_token``, …) are never authentication;
@@ -116,5 +116,11 @@ def archive_roots() -> list[Path]:
 def require_cloud_disclaimer_or_403() -> None:
     try:
         require_cloud_disclaimer()
-    except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except PermissionError:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Approve the cloud processing disclaimer in Settings → AI provider "
+                "before signing in or saving a cloud API key."
+            ),
+        ) from None

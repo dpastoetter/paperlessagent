@@ -6,21 +6,21 @@ from pathlib import Path
 
 import pytest
 
-from paperless_agent.config import ensure_data_dirs
-from paperless_agent.settings import clear_settings_cache, load_settings
-from paperless_agent.tools import filesystem, metadata_db, rag_index
+from deepcatalog.config import ensure_data_dirs
+from deepcatalog.settings import clear_settings_cache, load_settings
+from deepcatalog.tools import filesystem, metadata_db, rag_index
 
 
 @pytest.fixture()
 def isolated_data(tmp_path, monkeypatch):
     data = tmp_path / "data"
-    monkeypatch.setattr("paperless_agent.config.DATA_DIR", data)
-    monkeypatch.setattr("paperless_agent.config.INBOX_DIR", data / "inbox")
-    monkeypatch.setattr("paperless_agent.config.ARCHIVE_DIR", data / "archive")
-    monkeypatch.setattr("paperless_agent.config.DB_PATH", data / "paperless.db")
-    monkeypatch.setattr("paperless_agent.config.CHROMA_DIR", data / "chroma")
-    monkeypatch.setattr("paperless_agent.tools.metadata_db.DB_PATH", data / "paperless.db")
-    monkeypatch.setattr("paperless_agent.tools.rag_index.CHROMA_DIR", data / "chroma")
+    monkeypatch.setattr("deepcatalog.config.DATA_DIR", data)
+    monkeypatch.setattr("deepcatalog.config.INBOX_DIR", data / "inbox")
+    monkeypatch.setattr("deepcatalog.config.ARCHIVE_DIR", data / "archive")
+    monkeypatch.setattr("deepcatalog.config.DB_PATH", data / "deepcatalog.db")
+    monkeypatch.setattr("deepcatalog.config.CHROMA_DIR", data / "chroma")
+    monkeypatch.setattr("deepcatalog.tools.metadata_db.DB_PATH", data / "deepcatalog.db")
+    monkeypatch.setattr("deepcatalog.tools.rag_index.CHROMA_DIR", data / "chroma")
     clear_settings_cache()
     ensure_data_dirs()
     load_settings()

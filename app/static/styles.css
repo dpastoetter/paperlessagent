@@ -93,6 +93,7 @@ body {
 .side-brand {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 0.6rem;
   padding: 0.25rem 0.5rem;
   min-width: 0;
@@ -113,12 +114,21 @@ body {
 .brand-mark .icon { stroke-width: 2; }
 
 .brand-name {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
   font-weight: 700;
   font-size: 1.02rem;
   letter-spacing: -0.03em;
+  line-height: 1.1;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+.brand-studio {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
 }
 
 .side-nav {
@@ -3228,4 +3238,37 @@ select:focus-visible {
   .toast[data-leaving="true"] {
     animation: none !important;
   }
+}
+
+/* Chromeless AppImage / --app window: read as a desktop shell, not a website. */
+html.dc-desktop,
+html.dc-desktop body {
+  overscroll-behavior: none;
+}
+
+html.dc-desktop .sidebar {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+html.dc-desktop .sidebar a,
+html.dc-desktop .sidebar button,
+html.dc-desktop .sidebar input,
+html.dc-desktop .nav-item,
+html.dc-desktop .side-status {
+  -webkit-app-region: no-drag;
+}
+
+html.dc-desktop .view-head {
+  padding-bottom: 0.1rem;
+}
+
+html.dc-desktop .view-head h1 {
+  font-size: 1.15rem;
+  letter-spacing: -0.03em;
+}
+
+html.dc-desktop .view-head p {
+  margin-top: 0.15rem;
+  font-size: 0.82rem;
 }

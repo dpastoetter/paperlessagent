@@ -22,7 +22,7 @@ fail() {
 }
 
 echo "[1/3] Python syntax"
-python -m compileall -q paperless_agent app query_agent tests scripts \
+python -m compileall -q deepcatalog app query_agent tests scripts \
   || fail "Python syntax errors"
 
 echo "[2/3] Secret & data guard"

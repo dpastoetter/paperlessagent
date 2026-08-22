@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import mimetypes
 import re
 from pathlib import Path
@@ -12,11 +13,12 @@ from fastapi.responses import FileResponse
 
 from app.deps import archive_roots, is_within
 from app.schemas import AskRequest
-from paperless_agent.runner import run_query
-from paperless_agent.tools.filesystem import reveal_in_explorer
-from paperless_agent.tools.metadata_db import get_document, search_metadata
-from paperless_agent.tools.rag_index import retrieve_chunks
+from deepcatalog.runner import run_query
+from deepcatalog.tools.filesystem import reveal_in_explorer
+from deepcatalog.tools.metadata_db import get_document, search_metadata
+from deepcatalog.tools.rag_index import retrieve_chunks
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["documents"])
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -73,7 +75,7 @@ def api_reveal_document(document_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="document has no path")
     revealed = reveal_in_explorer(path)
     if revealed.get("status") != "success":
-        raise HTTPException(status_code=500, detail=revealed.get("error", "reveal failed"))
+        raise HTTPException(status_code=500, detail="could not open the file manager")
     return revealed
 
 
@@ -134,5 +136,6 @@ async def api_ask(body: AskRequest) -> dict[str, Any]:
     history = [{"role": t.role, "content": t.content} for t in body.history]
     try:
         return await run_query(body.question, history=history)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception:
+        logger.exception("ask failed")
+        raise HTTPException(status_code=500, detail="could not answer the question") from None

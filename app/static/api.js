@@ -52,15 +52,15 @@ export function displayText(value, fallback = "") {
 
 export async function api(path, options = {}) {
   // Mockup mode (Settings → Appearance): serve canned demo data, block writes.
-  if (window.PA_MOCK?.enabled) {
-    return window.PA_MOCK.respond(path, options);
+  if (window.DC_MOCK?.enabled) {
+    return window.DC_MOCK.respond(path, options);
   }
   const headers = new Headers(options.headers || {});
   // Custom header required by the server on mutating routes — blocks CSRF
   // from cross-site form posts (browsers cannot attach it without CORS).
-  headers.set("X-Requested-With", "PaperlessAgent");
-  // Auth is the HttpOnly pa_session cookie (set via POST /api/auth/session or
-  // direct loopback bootstrap). Never put PAPERLESS_API_TOKEN in JS / sessionStorage.
+  headers.set("X-Requested-With", "DeepCatalog");
+  // Auth is the HttpOnly deepcatalog_session cookie (set via POST /api/auth/session or
+  // direct loopback bootstrap). Never put DEEPCATALOG_API_TOKEN in JS / sessionStorage.
   let body = options.body;
   if (
     body != null &&
@@ -573,7 +573,7 @@ const HEALTH_POLL_MS = 15000;
 let healthPollTimer = null;
 
 export function startHealthPolling() {
-  if (healthPollTimer || window.PA_MOCK?.enabled) return;
+  if (healthPollTimer || window.DC_MOCK?.enabled) return;
   healthPollTimer = window.setInterval(() => {
     refreshHealth().catch(() => {});
   }, HEALTH_POLL_MS);

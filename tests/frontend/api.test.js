@@ -64,7 +64,7 @@ describe("escapeHtml / helpers", () => {
 
 describe("api()", () => {
   beforeEach(() => {
-    window.PA_MOCK = undefined;
+    window.DC_MOCK = undefined;
     window.PA_API_TOKEN = undefined;
     sessionStorage.clear();
     vi.restoreAllMocks();
@@ -81,7 +81,7 @@ describe("api()", () => {
     const data = await api("/api/ping", { method: "GET" });
     expect(data.value).toBe(1);
     const [, opts] = fetchMock.mock.calls[0];
-    expect(opts.headers.get("X-Requested-With")).toBe("PaperlessAgent");
+    expect(opts.headers.get("X-Requested-With")).toBe("DeepCatalog");
   });
 
   it("throws formatted errors on HTTP failure", async () => {

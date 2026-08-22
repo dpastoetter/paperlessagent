@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from paperless_agent import auth
+from deepcatalog import auth
 
 
 def test_resolve_from_env(monkeypatch, tmp_path):

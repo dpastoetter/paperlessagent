@@ -31,6 +31,7 @@ import {
   setSetupStatus,
 } from "./settings.js";
 import { initKeyboard } from "./keyboard.js";
+import { initDesktopShell } from "./desktop-shell.js";
 
 hooks.setProcessInboxBusy = setProcessInboxBusy;
 hooks.refreshInbox = refreshInbox;
@@ -48,6 +49,7 @@ initAsk();
 initSettings();
 initWorkflowEvents();
 initKeyboard();
+initDesktopShell();
 
 /* ————— Boot (same sequence as the former monolithic app.js) ————— */
 
@@ -56,8 +58,8 @@ initTheme();
 initSessionUnlock();
 resetStepStatuses("idle");
 renderWorkflow();
-document.getElementById("mock-toggle").checked = Boolean(window.PA_MOCK?.enabled);
-if (window.PA_MOCK?.enabled) {
+document.getElementById("mock-toggle").checked = Boolean(window.DC_MOCK?.enabled);
+if (window.DC_MOCK?.enabled) {
   applyMockScene();
 } else {
   connectWorkflowEvents();

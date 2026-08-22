@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from paperless_agent.progress import (
+from deepcatalog.progress import (
     PIPELINE_STEPS,
     _buffer,
     emit_step,

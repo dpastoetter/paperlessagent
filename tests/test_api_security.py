@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import CSRF_HEADER_NAME, CSRF_HEADER_VALUE, app
-from paperless_agent.local_security import (
+from deepcatalog.local_security import (
     COOKIE_NAME,
     assert_bind_allowed,
     forwarded_client_host,
@@ -19,7 +19,7 @@ from paperless_agent.local_security import (
     request_appears_https,
     trusted_proxy_networks,
 )
-from paperless_agent.sessions import clear_all_sessions, session_is_valid
+from deepcatalog.sessions import clear_all_sessions, session_is_valid
 
 
 def test_loopback_bind_helpers():
@@ -37,36 +37,36 @@ def test_loopback_bind_helpers():
 
 
 def test_assert_bind_requires_remote_opt_in_token_and_tls(tmp_path, monkeypatch):
-    monkeypatch.delenv("PAPERLESS_API_TOKEN", raising=False)
-    monkeypatch.delenv("PAPERLESS_ALLOW_REMOTE", raising=False)
-    monkeypatch.delenv("PAPERLESS_SSL_CERTFILE", raising=False)
-    monkeypatch.delenv("PAPERLESS_SSL_KEYFILE", raising=False)
+    monkeypatch.delenv("DEEPCATALOG_API_TOKEN", raising=False)
+    monkeypatch.delenv("DEEPCATALOG_ALLOW_REMOTE", raising=False)
+    monkeypatch.delenv("DEEPCATALOG_SSL_CERTFILE", raising=False)
+    monkeypatch.delenv("DEEPCATALOG_SSL_KEYFILE", raising=False)
 
-    with pytest.raises(RuntimeError, match="PAPERLESS_ALLOW_REMOTE"):
+    with pytest.raises(RuntimeError, match="DEEPCATALOG_ALLOW_REMOTE"):
         assert_bind_allowed("0.0.0.0")
 
-    monkeypatch.setenv("PAPERLESS_ALLOW_REMOTE", "1")
-    with pytest.raises(RuntimeError, match="PAPERLESS_API_TOKEN"):
+    monkeypatch.setenv("DEEPCATALOG_ALLOW_REMOTE", "1")
+    with pytest.raises(RuntimeError, match="DEEPCATALOG_API_TOKEN"):
         assert_bind_allowed("0.0.0.0")
 
-    monkeypatch.setenv("PAPERLESS_API_TOKEN", generate_api_token())
-    with pytest.raises(RuntimeError, match="PAPERLESS_SSL_CERTFILE"):
+    monkeypatch.setenv("DEEPCATALOG_API_TOKEN", generate_api_token())
+    with pytest.raises(RuntimeError, match="DEEPCATALOG_SSL_CERTFILE"):
         assert_bind_allowed("0.0.0.0")
 
     cert = tmp_path / "cert.pem"
     key = tmp_path / "key.pem"
     cert.write_text("cert", encoding="utf-8")
     key.write_text("key", encoding="utf-8")
-    monkeypatch.setenv("PAPERLESS_SSL_CERTFILE", str(cert))
-    monkeypatch.setenv("PAPERLESS_SSL_KEYFILE", str(key))
+    monkeypatch.setenv("DEEPCATALOG_SSL_CERTFILE", str(cert))
+    monkeypatch.setenv("DEEPCATALOG_SSL_KEYFILE", str(key))
     assert_bind_allowed("0.0.0.0")  # network mode fully configured
     assert_bind_allowed("192.168.1.20")
 
     # Loopback stays local mode (HTTP OK, no remote flags needed).
-    monkeypatch.delenv("PAPERLESS_ALLOW_REMOTE", raising=False)
-    monkeypatch.delenv("PAPERLESS_API_TOKEN", raising=False)
-    monkeypatch.delenv("PAPERLESS_SSL_CERTFILE", raising=False)
-    monkeypatch.delenv("PAPERLESS_SSL_KEYFILE", raising=False)
+    monkeypatch.delenv("DEEPCATALOG_ALLOW_REMOTE", raising=False)
+    monkeypatch.delenv("DEEPCATALOG_API_TOKEN", raising=False)
+    monkeypatch.delenv("DEEPCATALOG_SSL_CERTFILE", raising=False)
+    monkeypatch.delenv("DEEPCATALOG_SSL_KEYFILE", raising=False)
     assert_bind_allowed("127.0.0.1")
     assert_bind_allowed("localhost")
 
@@ -80,7 +80,7 @@ def test_invalid_host_header_rejected(isolated_data):
 
 def test_token_required_when_configured(isolated_data, monkeypatch):
     token = generate_api_token()
-    monkeypatch.setenv("PAPERLESS_API_TOKEN", token)
+    monkeypatch.setenv("DEEPCATALOG_API_TOKEN", token)
     clear_all_sessions()
     bare = TestClient(app)
     denied = bare.get("/api/inbox")
@@ -99,7 +99,7 @@ def test_token_required_when_configured(isolated_data, monkeypatch):
 
 def test_session_exchange_sets_independent_cookie(isolated_data, monkeypatch):
     token = generate_api_token()
-    monkeypatch.setenv("PAPERLESS_API_TOKEN", token)
+    monkeypatch.setenv("DEEPCATALOG_API_TOKEN", token)
     clear_all_sessions()
     client = TestClient(app)
     client.headers.update({CSRF_HEADER_NAME: CSRF_HEADER_VALUE})
@@ -128,7 +128,7 @@ def test_session_exchange_sets_independent_cookie(isolated_data, monkeypatch):
 
 def test_mutations_still_need_csrf_with_token(isolated_data, monkeypatch):
     token = generate_api_token()
-    monkeypatch.setenv("PAPERLESS_API_TOKEN", token)
+    monkeypatch.setenv("DEEPCATALOG_API_TOKEN", token)
     client = TestClient(app)
     resp = client.post(
         "/api/process-inbox",
@@ -148,7 +148,7 @@ def test_mutations_still_need_csrf_with_token(isolated_data, monkeypatch):
 
 
 def test_health_exempt_from_bearer(isolated_data, monkeypatch):
-    monkeypatch.setenv("PAPERLESS_API_TOKEN", generate_api_token())
+    monkeypatch.setenv("DEEPCATALOG_API_TOKEN", generate_api_token())
     client = TestClient(app)
     resp = client.get("/api/health")
     assert resp.status_code == 200
@@ -161,7 +161,7 @@ def test_health_exempt_from_bearer(isolated_data, monkeypatch):
 
 def test_diagnostics_requires_bearer_when_token_set(isolated_data, monkeypatch):
     token = generate_api_token()
-    monkeypatch.setenv("PAPERLESS_API_TOKEN", token)
+    monkeypatch.setenv("DEEPCATALOG_API_TOKEN", token)
     client = TestClient(app)
     assert client.get("/api/diagnostics").status_code == 401
     ok = client.get("/api/diagnostics", headers={"Authorization": f"Bearer {token}"})
@@ -175,7 +175,7 @@ def test_diagnostics_requires_bearer_when_token_set(isolated_data, monkeypatch):
 
 def test_index_sets_random_session_cookie_on_loopback(isolated_data, monkeypatch):
     token = generate_api_token()
-    monkeypatch.setenv("PAPERLESS_API_TOKEN", token)
+    monkeypatch.setenv("DEEPCATALOG_API_TOKEN", token)
     clear_all_sessions()
     client = TestClient(app)
     resp = client.get("/")
@@ -190,12 +190,12 @@ def test_index_sets_random_session_cookie_on_loopback(isolated_data, monkeypatch
 
 def test_query_token_is_ignored(isolated_data, monkeypatch):
     token = generate_api_token()
-    monkeypatch.setenv("PAPERLESS_API_TOKEN", token)
-    monkeypatch.setenv("PAPERLESS_ALLOWED_HOSTS", "paperless.example.com")
+    monkeypatch.setenv("DEEPCATALOG_API_TOKEN", token)
+    monkeypatch.setenv("DEEPCATALOG_ALLOWED_HOSTS", "deepcatalog.example.com")
     clear_all_sessions()
     # Non-loopback peer so localhost auto-login cannot mask a query exchange.
     client = TestClient(app, client=("203.0.113.9", 50000))
-    headers = {"Host": "paperless.example.com"}
+    headers = {"Host": "deepcatalog.example.com"}
     resp = client.get(f"/?token={token}", headers=headers, follow_redirects=False)
     assert resp.status_code == 200
     assert resp.headers.get("location") is None
@@ -211,7 +211,7 @@ def test_query_token_is_ignored(isolated_data, monkeypatch):
 
 def test_loopback_query_token_does_not_authenticate(isolated_data, monkeypatch):
     token = generate_api_token()
-    monkeypatch.setenv("PAPERLESS_API_TOKEN", token)
+    monkeypatch.setenv("DEEPCATALOG_API_TOKEN", token)
     clear_all_sessions()
     client = TestClient(app)
     assert client.get(f"/api/inbox?token={token}").status_code == 401
@@ -224,7 +224,7 @@ def test_loopback_query_token_does_not_authenticate(isolated_data, monkeypatch):
 
 
 def test_forwarded_headers_only_from_trusted_proxies(monkeypatch):
-    monkeypatch.setenv("PAPERLESS_TRUSTED_PROXIES", "10.0.0.1,192.168.0.0/24")
+    monkeypatch.setenv("DEEPCATALOG_TRUSTED_PROXIES", "10.0.0.1,192.168.0.0/24")
     # Untrusted peer — ignore spoofed XFF.
     assert (
         forwarded_client_host(
@@ -259,30 +259,30 @@ def test_forwarded_headers_only_from_trusted_proxies(monkeypatch):
     )
     assert remote_auth_must_be_https(
         peer_host="203.0.113.9",
-        host_header="paperless.example.com",
+        host_header="deepcatalog.example.com",
         url_scheme="http",
         x_forwarded_proto=None,
     )
     assert not remote_auth_must_be_https(
         peer_host="203.0.113.9",
-        host_header="paperless.example.com",
+        host_header="deepcatalog.example.com",
         url_scheme="https",
         x_forwarded_proto=None,
     )
     assert not remote_auth_must_be_https(
         peer_host="10.0.0.1",
-        host_header="paperless.example.com",
+        host_header="deepcatalog.example.com",
         url_scheme="http",
         x_forwarded_proto="https",
     )
     assert remote_auth_must_be_https(
         peer_host="8.8.8.8",
-        host_header="paperless.example.com",
+        host_header="deepcatalog.example.com",
         url_scheme="http",
         x_forwarded_proto="https",
     )
     # Spoofed loopback on the left must not win over the real client on the right.
-    monkeypatch.setenv("PAPERLESS_TRUSTED_PROXIES", "127.0.0.1")
+    monkeypatch.setenv("DEEPCATALOG_TRUSTED_PROXIES", "127.0.0.1")
     # nginx/Caddy on loopback is a trusted hop, not a direct browser — HTTP is not enough.
     assert remote_auth_must_be_https(
         peer_host="127.0.0.1",
@@ -306,7 +306,7 @@ def test_forwarded_headers_only_from_trusted_proxies(monkeypatch):
 
 
 def test_forwarded_for_skips_only_explicit_trusted_hops(monkeypatch):
-    monkeypatch.setenv("PAPERLESS_TRUSTED_PROXIES", "10.0.0.1")
+    monkeypatch.setenv("DEEPCATALOG_TRUSTED_PROXIES", "10.0.0.1")
     # 10.0.0.2 is on the same LAN but not listed — it is the client, not a hop to skip.
     assert (
         forwarded_client_host(
@@ -318,7 +318,7 @@ def test_forwarded_for_skips_only_explicit_trusted_hops(monkeypatch):
 
 
 def test_malformed_forwarded_for_is_rejected(monkeypatch):
-    monkeypatch.setenv("PAPERLESS_TRUSTED_PROXIES", "10.0.0.1")
+    monkeypatch.setenv("DEEPCATALOG_TRUSTED_PROXIES", "10.0.0.1")
     # Hostname / garbage hops invalidate the header — do not treat them as the client.
     assert (
         forwarded_client_host(
@@ -351,7 +351,7 @@ def test_malformed_forwarded_for_is_rejected(monkeypatch):
 
 
 def test_catch_all_trusted_proxy_cidrs_are_ignored(monkeypatch):
-    monkeypatch.setenv("PAPERLESS_TRUSTED_PROXIES", "0.0.0.0/0,::/0,not-a-cidr")
+    monkeypatch.setenv("DEEPCATALOG_TRUSTED_PROXIES", "0.0.0.0/0,::/0,not-a-cidr")
     assert trusted_proxy_networks() == []
     assert not is_trusted_proxy("8.8.8.8")
     assert not is_trusted_proxy("2001:db8::1")
@@ -368,13 +368,13 @@ def test_catch_all_trusted_proxy_cidrs_are_ignored(monkeypatch):
         x_forwarded_proto="https",
     )
     # A real proxy IP still works when listed beside a discarded catch-all.
-    monkeypatch.setenv("PAPERLESS_TRUSTED_PROXIES", "0.0.0.0/0,10.0.0.1")
+    monkeypatch.setenv("DEEPCATALOG_TRUSTED_PROXIES", "0.0.0.0/0,10.0.0.1")
     assert is_trusted_proxy("10.0.0.1")
     assert not is_trusted_proxy("8.8.8.8")
 
 
 def test_spoofed_forwarded_proto_from_untrusted_peer(monkeypatch):
-    monkeypatch.setenv("PAPERLESS_TRUSTED_PROXIES", "10.0.0.1")
+    monkeypatch.setenv("DEEPCATALOG_TRUSTED_PROXIES", "10.0.0.1")
     assert not request_appears_https(
         peer_host="203.0.113.9",
         url_scheme="http",
@@ -404,31 +404,31 @@ def test_spoofed_forwarded_proto_from_untrusted_peer(monkeypatch):
 
 
 def test_direct_loopback_request_ignores_forwarded_headers(monkeypatch):
-    monkeypatch.delenv("PAPERLESS_TRUSTED_PROXIES", raising=False)
+    monkeypatch.delenv("DEEPCATALOG_TRUSTED_PROXIES", raising=False)
     assert is_direct_loopback_request(peer_host="127.0.0.1", host_header="localhost")
     assert is_direct_loopback_request(peer_host="testclient", host_header="testserver")
     assert not is_direct_loopback_request(
-        peer_host="127.0.0.1", host_header="paperless.example.com"
+        peer_host="127.0.0.1", host_header="deepcatalog.example.com"
     )
     assert not is_direct_loopback_request(peer_host="203.0.113.9", host_header="localhost")
 
-    monkeypatch.setenv("PAPERLESS_TRUSTED_PROXIES", "127.0.0.1,::1")
+    monkeypatch.setenv("DEEPCATALOG_TRUSTED_PROXIES", "127.0.0.1,::1")
     # nginx on loopback is a trusted hop — never treat it as the user.
     assert not is_direct_loopback_request(peer_host="127.0.0.1", host_header="localhost")
     assert not is_direct_loopback_request(
-        peer_host="127.0.0.1", host_header="paperless.example.com"
+        peer_host="127.0.0.1", host_header="deepcatalog.example.com"
     )
 
 
 def test_spoofed_xff_does_not_issue_session_behind_proxy(isolated_data, monkeypatch):
     token = generate_api_token()
-    monkeypatch.setenv("PAPERLESS_API_TOKEN", token)
-    monkeypatch.setenv("PAPERLESS_TRUSTED_PROXIES", "127.0.0.1")
-    monkeypatch.setenv("PAPERLESS_ALLOWED_HOSTS", "paperless.example.com")
+    monkeypatch.setenv("DEEPCATALOG_API_TOKEN", token)
+    monkeypatch.setenv("DEEPCATALOG_TRUSTED_PROXIES", "127.0.0.1")
+    monkeypatch.setenv("DEEPCATALOG_ALLOWED_HOSTS", "deepcatalog.example.com")
     clear_all_sessions()
     client = TestClient(app, client=("127.0.0.1", 50000))
     spoof = {
-        "Host": "paperless.example.com",
+        "Host": "deepcatalog.example.com",
         "X-Forwarded-For": "127.0.0.2",
     }
     resp = client.get("/", headers=spoof)
@@ -445,13 +445,13 @@ def test_spoofed_xff_does_not_issue_session_behind_proxy(isolated_data, monkeypa
 
 def test_spoofed_forwarded_proto_does_not_issue_session(isolated_data, monkeypatch):
     token = generate_api_token()
-    monkeypatch.setenv("PAPERLESS_API_TOKEN", token)
-    monkeypatch.setenv("PAPERLESS_ALLOWED_HOSTS", "paperless.example.com")
-    monkeypatch.delenv("PAPERLESS_TRUSTED_PROXIES", raising=False)
+    monkeypatch.setenv("DEEPCATALOG_API_TOKEN", token)
+    monkeypatch.setenv("DEEPCATALOG_ALLOWED_HOSTS", "deepcatalog.example.com")
+    monkeypatch.delenv("DEEPCATALOG_TRUSTED_PROXIES", raising=False)
     clear_all_sessions()
     client = TestClient(app, client=("203.0.113.9", 50000))
     spoof = {
-        "Host": "paperless.example.com",
+        "Host": "deepcatalog.example.com",
         "X-Forwarded-For": "127.0.0.1",
         "X-Forwarded-Proto": "https",
     }
@@ -462,23 +462,23 @@ def test_spoofed_forwarded_proto_does_not_issue_session(isolated_data, monkeypat
 
 
 def test_spoofed_xff_does_not_skip_auth_without_token(isolated_data, monkeypatch):
-    monkeypatch.delenv("PAPERLESS_API_TOKEN", raising=False)
-    monkeypatch.setenv("PAPERLESS_TRUSTED_PROXIES", "127.0.0.1")
-    monkeypatch.setenv("PAPERLESS_ALLOWED_HOSTS", "paperless.example.com")
+    monkeypatch.delenv("DEEPCATALOG_API_TOKEN", raising=False)
+    monkeypatch.setenv("DEEPCATALOG_TRUSTED_PROXIES", "127.0.0.1")
+    monkeypatch.setenv("DEEPCATALOG_ALLOWED_HOSTS", "deepcatalog.example.com")
     client = TestClient(app, client=("127.0.0.1", 50000))
     resp = client.get(
         "/api/inbox",
-        headers={"Host": "paperless.example.com", "X-Forwarded-For": "127.0.0.2"},
+        headers={"Host": "deepcatalog.example.com", "X-Forwarded-For": "127.0.0.2"},
     )
     assert resp.status_code == 403
-    assert "PAPERLESS_API_TOKEN" in resp.json()["detail"]
+    assert "DEEPCATALOG_API_TOKEN" in resp.json()["detail"]
 
 
 def test_remote_credentials_require_https(isolated_data, monkeypatch):
     token = generate_api_token()
-    monkeypatch.setenv("PAPERLESS_API_TOKEN", token)
-    monkeypatch.setenv("PAPERLESS_ALLOWED_HOSTS", "paperless.example.com")
-    monkeypatch.delenv("PAPERLESS_TRUSTED_PROXIES", raising=False)
+    monkeypatch.setenv("DEEPCATALOG_API_TOKEN", token)
+    monkeypatch.setenv("DEEPCATALOG_ALLOWED_HOSTS", "deepcatalog.example.com")
+    monkeypatch.delenv("DEEPCATALOG_TRUSTED_PROXIES", raising=False)
     clear_all_sessions()
     auth = {"Authorization": f"Bearer {token}"}
 
@@ -486,19 +486,21 @@ def test_remote_credentials_require_https(isolated_data, monkeypatch):
     assert loopback.get("/api/inbox", headers=auth).status_code == 200
 
     remote_http = TestClient(
-        app, client=("203.0.113.9", 50000), base_url="http://paperless.example.com"
+        app, client=("203.0.113.9", 50000), base_url="http://deepcatalog.example.com"
     )
     denied = remote_http.get("/api/inbox", headers=auth)
     assert denied.status_code == 403
     assert "HTTPS" in denied.json()["detail"]
 
     remote_https = TestClient(
-        app, client=("203.0.113.9", 50000), base_url="https://paperless.example.com"
+        app, client=("203.0.113.9", 50000), base_url="https://deepcatalog.example.com"
     )
     assert remote_https.get("/api/inbox", headers=auth).status_code == 200
 
-    monkeypatch.setenv("PAPERLESS_TRUSTED_PROXIES", "10.0.0.1")
-    via_proxy = TestClient(app, client=("10.0.0.1", 50000), base_url="http://paperless.example.com")
+    monkeypatch.setenv("DEEPCATALOG_TRUSTED_PROXIES", "10.0.0.1")
+    via_proxy = TestClient(
+        app, client=("10.0.0.1", 50000), base_url="http://deepcatalog.example.com"
+    )
     assert (
         via_proxy.get(
             "/api/inbox",
@@ -507,8 +509,8 @@ def test_remote_credentials_require_https(isolated_data, monkeypatch):
         == 200
     )
 
-    monkeypatch.delenv("PAPERLESS_TRUSTED_PROXIES", raising=False)
-    spoofed = TestClient(app, client=("8.8.8.8", 50000), base_url="http://paperless.example.com")
+    monkeypatch.delenv("DEEPCATALOG_TRUSTED_PROXIES", raising=False)
+    spoofed = TestClient(app, client=("8.8.8.8", 50000), base_url="http://deepcatalog.example.com")
     spoofed_denied = spoofed.get(
         "/api/inbox",
         headers={**auth, "X-Forwarded-Proto": "https"},
@@ -517,7 +519,7 @@ def test_remote_credentials_require_https(isolated_data, monkeypatch):
     assert "HTTPS" in spoofed_denied.json()["detail"]
 
     session_http = TestClient(
-        app, client=("203.0.113.9", 50000), base_url="http://paperless.example.com"
+        app, client=("203.0.113.9", 50000), base_url="http://deepcatalog.example.com"
     )
     session_denied = session_http.post(
         "/api/auth/session",
@@ -528,7 +530,7 @@ def test_remote_credentials_require_https(isolated_data, monkeypatch):
     assert "HTTPS" in session_denied.json()["detail"]
 
     no_cred = TestClient(
-        app, client=("203.0.113.9", 50000), base_url="http://paperless.example.com"
+        app, client=("203.0.113.9", 50000), base_url="http://deepcatalog.example.com"
     )
     missing = no_cred.get("/api/inbox")
     assert missing.status_code == 401

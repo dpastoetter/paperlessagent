@@ -9,7 +9,7 @@ import pytest
 import uvicorn
 
 from app.main import app
-from paperless_agent.local_security import (
+from deepcatalog.local_security import (
     assert_bind_allowed,
     bind_host_from_argv,
     configured_bind_host,
@@ -19,33 +19,33 @@ from paperless_agent.local_security import (
     is_wildcard_or_non_loopback_bind,
     sync_configured_bind,
 )
-from paperless_agent.serve import main as serve_main
-from paperless_agent.serve import run as serve_run
+from deepcatalog.serve import main as serve_main
+from deepcatalog.serve import run as serve_run
 
 
 def _clear_network_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # setenv (not only delenv) so pytest reverts later os.environ writes such as
-    # sync_configured_bind() — otherwise PAPERLESS_HOST leaks into other tests.
-    monkeypatch.setenv("PAPERLESS_HOST", "")
-    monkeypatch.setenv("PAPERLESS_PORT", "")
-    monkeypatch.delenv("PAPERLESS_HOST", raising=False)
-    monkeypatch.delenv("PAPERLESS_PORT", raising=False)
-    monkeypatch.delenv("PAPERLESS_ALLOW_REMOTE", raising=False)
-    monkeypatch.delenv("PAPERLESS_API_TOKEN", raising=False)
-    monkeypatch.delenv("PAPERLESS_SSL_CERTFILE", raising=False)
-    monkeypatch.delenv("PAPERLESS_SSL_KEYFILE", raising=False)
+    # sync_configured_bind() — otherwise DEEPCATALOG_HOST leaks into other tests.
+    monkeypatch.setenv("DEEPCATALOG_HOST", "")
+    monkeypatch.setenv("DEEPCATALOG_PORT", "")
+    monkeypatch.delenv("DEEPCATALOG_HOST", raising=False)
+    monkeypatch.delenv("DEEPCATALOG_PORT", raising=False)
+    monkeypatch.delenv("DEEPCATALOG_ALLOW_REMOTE", raising=False)
+    monkeypatch.delenv("DEEPCATALOG_API_TOKEN", raising=False)
+    monkeypatch.delenv("DEEPCATALOG_SSL_CERTFILE", raising=False)
+    monkeypatch.delenv("DEEPCATALOG_SSL_KEYFILE", raising=False)
 
 
 def test_configured_bind_defaults_and_sync(monkeypatch):
     _clear_network_env(monkeypatch)
     assert configured_bind_host() == "127.0.0.1"
     assert configured_bind_port() == 8080
-    monkeypatch.setenv("PAPERLESS_HOST", "localhost")
-    monkeypatch.setenv("PAPERLESS_PORT", "9090")
+    monkeypatch.setenv("DEEPCATALOG_HOST", "localhost")
+    monkeypatch.setenv("DEEPCATALOG_PORT", "9090")
     assert configured_bind_host() == "localhost"
     assert configured_bind_port() == 9090
-    monkeypatch.setenv("PAPERLESS_HOST", "0.0.0.0")
-    monkeypatch.setenv("PAPERLESS_PORT", "8443")
+    monkeypatch.setenv("DEEPCATALOG_HOST", "0.0.0.0")
+    monkeypatch.setenv("DEEPCATALOG_PORT", "8443")
     sync_configured_bind("0.0.0.0", 8443)
     assert configured_bind_host() == "0.0.0.0"
     assert configured_bind_port() == 8443
@@ -68,9 +68,9 @@ def test_wildcard_and_lan_hosts_require_network_mode(monkeypatch):
 
 def test_argv_manual_uvicorn_host(monkeypatch):
     _clear_network_env(monkeypatch)
-    monkeypatch.setenv("PAPERLESS_HOST", "127.0.0.1")
+    monkeypatch.setenv("DEEPCATALOG_HOST", "127.0.0.1")
     monkeypatch.setattr(
-        "paperless_agent.local_security.discover_uvicorn_bind_host",
+        "deepcatalog.local_security.discover_uvicorn_bind_host",
         lambda: None,
     )
     assert (
@@ -89,7 +89,7 @@ def test_argv_manual_uvicorn_host(monkeypatch):
 
 def test_effective_host_follows_uvicorn_server_not_env(monkeypatch):
     _clear_network_env(monkeypatch)
-    monkeypatch.setenv("PAPERLESS_HOST", "127.0.0.1")
+    monkeypatch.setenv("DEEPCATALOG_HOST", "127.0.0.1")
     config = uvicorn.Config(app=app, host="0.0.0.0", port=9999, log_level="error")
     server = uvicorn.Server(config)
     try:
@@ -170,7 +170,7 @@ def test_serve_run_passes_same_host_to_uvicorn(monkeypatch, tmp_path):
     def fake_run(**kwargs):
         captured.update(kwargs)
 
-    monkeypatch.setattr("paperless_agent.serve.uvicorn.run", fake_run)
+    monkeypatch.setattr("deepcatalog.serve.uvicorn.run", fake_run)
     serve_run(host="127.0.0.1", port=18080)
     assert captured["host"] == "127.0.0.1"
     assert captured["port"] == 18080
@@ -183,10 +183,10 @@ def test_serve_run_passes_same_host_to_uvicorn(monkeypatch, tmp_path):
     key = tmp_path / "key.pem"
     cert.write_text("cert", encoding="utf-8")
     key.write_text("key", encoding="utf-8")
-    monkeypatch.setenv("PAPERLESS_ALLOW_REMOTE", "1")
-    monkeypatch.setenv("PAPERLESS_API_TOKEN", generate_api_token())
-    monkeypatch.setenv("PAPERLESS_SSL_CERTFILE", str(cert))
-    monkeypatch.setenv("PAPERLESS_SSL_KEYFILE", str(key))
+    monkeypatch.setenv("DEEPCATALOG_ALLOW_REMOTE", "1")
+    monkeypatch.setenv("DEEPCATALOG_API_TOKEN", generate_api_token())
+    monkeypatch.setenv("DEEPCATALOG_SSL_CERTFILE", str(cert))
+    monkeypatch.setenv("DEEPCATALOG_SSL_KEYFILE", str(key))
     captured.clear()
     serve_run(host="192.168.1.20", port=8443)
     assert captured["host"] == "192.168.1.20"
@@ -201,6 +201,6 @@ def test_serve_main_cli_host(monkeypatch):
         captured["host"] = host
         captured["port"] = port
 
-    monkeypatch.setattr("paperless_agent.serve.run", fake_run)
+    monkeypatch.setattr("deepcatalog.serve.run", fake_run)
     assert serve_main(["--host", "localhost", "--port", "8081"]) == 0
     assert captured == {"host": "localhost", "port": 8081}

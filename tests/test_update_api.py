@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from paperless_agent.updater import get_current_version
+import httpx
+
+from deepcatalog.updater import get_current_version
 
 
 def test_update_status_local_only(client):
@@ -18,7 +20,7 @@ def test_update_status_local_only(client):
 
 def test_update_status_check_reports_newer(client, monkeypatch):
     monkeypatch.setattr(
-        "paperless_agent.updater._fetch_latest_release",
+        "deepcatalog.updater._fetch_latest_release",
         lambda: {
             "tag": "v99.0.0",
             "name": "v99.0.0",
@@ -29,8 +31,8 @@ def test_update_status_check_reports_newer(client, monkeypatch):
             "verifiable": True,
             "verification_error": None,
             "artifact": {
-                "filename": "paperlessagent-99.0.0.tar.gz",
-                "download_url": "https://example.invalid/paperlessagent-99.0.0.tar.gz",
+                "filename": "deepcatalog-99.0.0.tar.gz",
+                "download_url": "https://example.invalid/deepcatalog-99.0.0.tar.gz",
                 "expected_sha256": "a" * 64,
             },
         },
@@ -46,7 +48,7 @@ def test_update_status_check_reports_newer(client, monkeypatch):
 
 
 def test_update_status_check_handles_no_releases(client, monkeypatch):
-    monkeypatch.setattr("paperless_agent.updater._fetch_latest_release", lambda: None)
+    monkeypatch.setattr("deepcatalog.updater._fetch_latest_release", lambda: None)
     body = client.get("/api/update/status?check=true").json()
     assert body["status"] == "success"
     assert body["update_available"] is False
@@ -55,7 +57,7 @@ def test_update_status_check_handles_no_releases(client, monkeypatch):
 
 def test_update_apply_conflicts_when_up_to_date(client, monkeypatch):
     monkeypatch.setattr(
-        "paperless_agent.updater._fetch_latest_release",
+        "deepcatalog.updater._fetch_latest_release",
         lambda: {
             "tag": f"v{get_current_version()}",
             "name": "current",
@@ -84,9 +86,9 @@ def test_update_restart_endpoint_schedules(client, monkeypatch):
 
 
 def test_update_status_check_appimage_not_installable(client, monkeypatch):
-    monkeypatch.setattr("paperless_agent.updater.running_as_appimage", lambda: True)
+    monkeypatch.setattr("deepcatalog.updater.running_as_appimage", lambda: True)
     monkeypatch.setattr(
-        "paperless_agent.updater._fetch_latest_release",
+        "deepcatalog.updater._fetch_latest_release",
         lambda: {
             "tag": "v99.0.0",
             "name": "v99.0.0",
@@ -97,14 +99,14 @@ def test_update_status_check_appimage_not_installable(client, monkeypatch):
             "verifiable": True,
             "verification_error": None,
             "artifact": {
-                "filename": "paperlessagent-99.0.0.tar.gz",
-                "download_url": "https://example.invalid/paperlessagent-99.0.0.tar.gz",
+                "filename": "deepcatalog-99.0.0.tar.gz",
+                "download_url": "https://example.invalid/deepcatalog-99.0.0.tar.gz",
                 "expected_sha256": "a" * 64,
             },
             "assets": [
                 {
-                    "name": "PaperlessAgent-99.0.0-x86_64.AppImage",
-                    "browser_download_url": "https://example.invalid/PaperlessAgent-99.0.0-x86_64.AppImage",
+                    "name": "DeepCatalog-99.0.0-x86_64.AppImage",
+                    "browser_download_url": "https://example.invalid/DeepCatalog-99.0.0-x86_64.AppImage",
                 }
             ],
         },
@@ -117,7 +119,19 @@ def test_update_status_check_appimage_not_installable(client, monkeypatch):
 
 
 def test_update_apply_conflicts_on_appimage(client, monkeypatch):
-    monkeypatch.setattr("paperless_agent.updater.running_as_appimage", lambda: True)
+    monkeypatch.setattr("deepcatalog.updater.running_as_appimage", lambda: True)
     resp = client.post("/api/update/apply")
     assert resp.status_code == 409
     assert "AppImage" in resp.json()["detail"]
+
+
+def test_update_status_check_hides_http_error_details(client, monkeypatch):
+    def boom():
+        raise httpx.ConnectError("secret-internal-host.example")
+
+    monkeypatch.setattr("deepcatalog.updater._fetch_latest_release", boom)
+    body = client.get("/api/update/status?check=true").json()
+    assert body["status"] == "error"
+    blob = str(body).lower()
+    assert "secret-internal-host" not in blob
+    assert "could not reach github" in body["error"].lower()

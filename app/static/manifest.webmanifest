@@ -1,0 +1,16 @@
+{
+  "name": "DeepCatalog Studio",
+  "short_name": "DeepCatalog",
+  "display": "standalone",
+  "start_url": "/?desktop=1",
+  "background_color": "#0e1317",
+  "theme_color": "#1f8fa1",
+  "icons": [
+    {
+      "src": "/static/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

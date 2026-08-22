@@ -29,7 +29,7 @@ fail() {
 echo "[1/2] pip-audit (OSV)"
 "$PY" -m pip install -q pip-audit
 # chromadb PYSEC-2026-311 / GHSA-f4j7-r4q5-qw2c: pre-auth RCE in the *FastAPI server*
-# collection endpoint (trust_remote_code). PaperlessAgent only uses embedded
+# collection endpoint (trust_remote_code). DeepCatalog only uses embedded
 # PersistentClient on the local data dir and never exposes Chroma's HTTP API.
 # Revisit when chromadb publishes a fixed release past 1.5.9.
 if command -v pip-audit >/dev/null 2>&1; then

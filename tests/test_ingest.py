@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from paperless_agent.ingest import normalize_extracted_fields
+from deepcatalog.ingest import normalize_extracted_fields
 
 
 def test_normalize_maps_parties_to_counterparties():
@@ -119,7 +119,7 @@ def test_normalize_clamps_oversized_model_fields():
 
 
 def test_text_for_extract_prompt_uses_head_and_tail():
-    from paperless_agent.ingest import _text_for_extract_prompt
+    from deepcatalog.ingest import _text_for_extract_prompt
 
     text = "A" * 100 + "MIDDLE" + "B" * 100
     sampled = _text_for_extract_prompt(text, max_chars=120)
@@ -131,7 +131,7 @@ def test_text_for_extract_prompt_uses_head_and_tail():
 
 
 def test_text_for_extract_prompt_short_text_unchanged():
-    from paperless_agent.ingest import _text_for_extract_prompt
+    from deepcatalog.ingest import _text_for_extract_prompt
 
     text = "Short letter about rent."
     assert _text_for_extract_prompt(text, max_chars=48000) == text

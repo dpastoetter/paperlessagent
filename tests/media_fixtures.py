@@ -8,7 +8,7 @@ from pathlib import Path
 from PIL import Image
 
 
-def write_minimal_pdf(path: Path, line: str = "Hello PaperlessAgent") -> Path:
+def write_minimal_pdf(path: Path, line: str = "Hello DeepCatalog") -> Path:
     """Write a tiny valid one-page PDF (Helvetica text)."""
     content = f"BT /F1 12 Tf 100 700 Td ({line}) Tj ET"
     stream = content.encode("latin-1", errors="replace")
@@ -39,7 +39,7 @@ def write_minimal_pdf(path: Path, line: str = "Hello PaperlessAgent") -> Path:
     return path
 
 
-def minimal_pdf_bytes(line: str = "Hello PaperlessAgent") -> bytes:
+def minimal_pdf_bytes(line: str = "Hello DeepCatalog") -> bytes:
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmp:

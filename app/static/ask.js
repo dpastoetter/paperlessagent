@@ -2,7 +2,7 @@ import { api, escapeHtml, refreshHealth, toast } from "./api.js";
 import { setHashQuery } from "./router.js";
 
 export const ASK_HISTORY_MAX_TURNS = 6;
-export const ASK_EXAMPLES_STORAGE_KEY = "pa-ask-examples";
+export const ASK_EXAMPLES_STORAGE_KEY = "dc-ask-examples";
 export const ASK_EXAMPLES = [
   "What invoices did I receive this year?",
   "Find my most recent insurance documents",
@@ -353,7 +353,7 @@ export async function fetchDocumentBlob(url) {
 }
 
 export async function openDocumentFile(url) {
-  if (window.PA_MOCK?.enabled) {
+  if (window.DC_MOCK?.enabled) {
     throw new Error("Mockup mode is on — files are demo data. Turn it off in Settings.");
   }
   const win = window.open("about:blank", "_blank");

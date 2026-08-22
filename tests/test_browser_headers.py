@@ -38,7 +38,7 @@ def test_spa_has_no_external_fonts_or_inline_theme_script():
     assert "fonts.googleapis.com" not in html
     assert "fonts.gstatic.com" not in html
     assert 'src="/static/theme-boot.js' in html
-    assert 'localStorage.getItem("pa-theme")' not in html
+    assert 'localStorage.getItem("dc-theme")' not in html
     assert "<script>\n" not in html
 
     css = Path("app/static/styles.css").read_text(encoding="utf-8")
@@ -50,17 +50,17 @@ def test_spa_has_no_external_fonts_or_inline_theme_script():
 def test_theme_boot_script_is_served(client):
     resp = client.get("/static/theme-boot.js")
     assert resp.status_code == 200
-    assert "pa-theme" in resp.text
+    assert "dc-theme" in resp.text
     assert resp.headers.get("Content-Security-Policy")
     assert resp.headers.get("X-Frame-Options") == "DENY"
     assert resp.headers.get("Referrer-Policy") == "no-referrer"
 
 
 def test_error_responses_also_carry_headers(isolated_data, monkeypatch):
-    from paperless_agent.local_security import generate_api_token
-    from paperless_agent.sessions import clear_all_sessions
+    from deepcatalog.local_security import generate_api_token
+    from deepcatalog.sessions import clear_all_sessions
 
-    monkeypatch.setenv("PAPERLESS_API_TOKEN", generate_api_token())
+    monkeypatch.setenv("DEEPCATALOG_API_TOKEN", generate_api_token())
     clear_all_sessions()
     bare = TestClient(app)
     resp = bare.get("/api/inbox")

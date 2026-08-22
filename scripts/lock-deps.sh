@@ -39,9 +39,9 @@ echo "Compiling constraints.txt from pyproject.toml…"
 
 # Drop the editable self-reference if pip-tools emits the local project name.
 # Constraints files should only pin third-party distributions.
-if grep -qE '^paperlessagent(==| @)' constraints.txt 2>/dev/null; then
+if grep -qE '^deepcatalog(==| @)' constraints.txt 2>/dev/null; then
   tmp="$(mktemp)"
-  grep -vE '^paperlessagent(==| @)' constraints.txt > "$tmp"
+  grep -vE '^deepcatalog(==| @)' constraints.txt > "$tmp"
   mv "$tmp" constraints.txt
 fi
 

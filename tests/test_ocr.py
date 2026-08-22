@@ -8,8 +8,8 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from paperless_agent import config
-from paperless_agent.ocr import (
+from deepcatalog import config
+from deepcatalog.ocr import (
     assess_text_quality,
     page_uses_text_layer,
     recover_document_text,
@@ -89,8 +89,8 @@ def test_recover_image_uses_ai_ocr(tmp_path: Path, monkeypatch):
             for i in page_indices
         }
 
-    monkeypatch.setattr("paperless_agent.ocr._ai_vision_transcribe_indices", fake_indices)
-    monkeypatch.setenv("PAPERLESS_OCR_MODE", "balanced")
+    monkeypatch.setattr("deepcatalog.ocr._ai_vision_transcribe_indices", fake_indices)
+    monkeypatch.setenv("DEEPCATALOG_OCR_MODE", "balanced")
 
     result = asyncio.run(recover_document_text(img_path))
     assert result["status"] == "success"
@@ -109,10 +109,10 @@ def test_balanced_skips_vision_when_text_layer_good(tmp_path: Path, monkeypatch)
     async def boom(*_a, **_k):
         raise AssertionError("vision should not run for good text layer")
 
-    monkeypatch.setattr("paperless_agent.ocr._ai_vision_transcribe_indices", boom)
-    monkeypatch.setenv("PAPERLESS_OCR_MODE", "balanced")
+    monkeypatch.setattr("deepcatalog.ocr._ai_vision_transcribe_indices", boom)
+    monkeypatch.setenv("DEEPCATALOG_OCR_MODE", "balanced")
     monkeypatch.setattr(
-        "paperless_agent.ocr.resolve_ocr_page_limit",
+        "deepcatalog.ocr.resolve_ocr_page_limit",
         lambda *_args, **_kwargs: 1,
     )
 
@@ -137,10 +137,10 @@ def test_maximum_always_calls_vision(tmp_path: Path, monkeypatch):
         calls.extend(page_indices)
         return {i: f"vision-{i}" for i in page_indices}
 
-    monkeypatch.setattr("paperless_agent.ocr._ai_vision_transcribe_indices", fake_indices)
-    monkeypatch.setenv("PAPERLESS_OCR_MODE", "maximum")
+    monkeypatch.setattr("deepcatalog.ocr._ai_vision_transcribe_indices", fake_indices)
+    monkeypatch.setenv("DEEPCATALOG_OCR_MODE", "maximum")
     monkeypatch.setattr(
-        "paperless_agent.ocr.resolve_ocr_page_limit",
+        "deepcatalog.ocr.resolve_ocr_page_limit",
         lambda *_args, **_kwargs: 1,
     )
 
@@ -158,10 +158,10 @@ def test_recover_falls_back_to_text_layer_when_ai_fails(tmp_path: Path, monkeypa
     async def failing_indices(*_a, **_k):
         raise RuntimeError("vision unavailable")
 
-    monkeypatch.setattr("paperless_agent.ocr._ai_vision_transcribe_indices", failing_indices)
-    monkeypatch.setenv("PAPERLESS_OCR_MODE", "maximum")
+    monkeypatch.setattr("deepcatalog.ocr._ai_vision_transcribe_indices", failing_indices)
+    monkeypatch.setenv("DEEPCATALOG_OCR_MODE", "maximum")
     monkeypatch.setattr(
-        "paperless_agent.ocr.resolve_ocr_page_limit",
+        "deepcatalog.ocr.resolve_ocr_page_limit",
         lambda *_args, **_kwargs: 1,
     )
 
@@ -180,12 +180,12 @@ def test_per_page_ocr_concatenates_pages(tmp_path: Path, monkeypatch):
         calls.extend(page_indices)
         return {i: f"content-{i}" for i in page_indices}
 
-    monkeypatch.setattr("paperless_agent.ocr._ai_vision_transcribe_indices", fake_indices)
+    monkeypatch.setattr("deepcatalog.ocr._ai_vision_transcribe_indices", fake_indices)
     monkeypatch.setattr(
-        "paperless_agent.ocr.resolve_ocr_page_limit",
+        "deepcatalog.ocr.resolve_ocr_page_limit",
         lambda *_args, **_kwargs: 3,
     )
-    monkeypatch.setenv("PAPERLESS_OCR_MODE", "maximum")
+    monkeypatch.setenv("DEEPCATALOG_OCR_MODE", "maximum")
 
     result = asyncio.run(recover_document_text(img_path))
     assert result["status"] == "success"
@@ -200,7 +200,7 @@ def test_resolve_ocr_page_limit_unlimited_clamps_to_safety(tmp_path: Path, monke
     pdf_path = tmp_path / "big.pdf"
     pdf_path.write_bytes(b"%PDF-1.4 stub")
 
-    monkeypatch.setattr("paperless_agent.ocr.pdf_page_count", lambda _p: 150)
+    monkeypatch.setattr("deepcatalog.ocr.pdf_page_count", lambda _p: 150)
     monkeypatch.setattr(config, "OCR_MAX_PAGES", 0)
     monkeypatch.setattr(config, "OCR_SAFETY_MAX_PAGES", 128)
 
@@ -211,7 +211,7 @@ def test_resolve_ocr_page_limit_respects_explicit_cap(tmp_path: Path, monkeypatc
     pdf_path = tmp_path / "doc.pdf"
     pdf_path.write_bytes(b"%PDF-1.4 stub")
 
-    monkeypatch.setattr("paperless_agent.ocr.pdf_page_count", lambda _p: 20)
+    monkeypatch.setattr("deepcatalog.ocr.pdf_page_count", lambda _p: 20)
     monkeypatch.setattr(config, "OCR_MAX_PAGES", 4)
     monkeypatch.setattr(config, "OCR_SAFETY_MAX_PAGES", 128)
 
@@ -222,7 +222,7 @@ def test_resolve_ocr_page_timeout_longer_for_ollama(monkeypatch):
     monkeypatch.setattr(config, "LLM_PROVIDER", "openai")
     monkeypatch.setattr(config, "OCR_PAGE_TIMEOUT", 180.0)
     monkeypatch.setattr(config, "OLLAMA_OCR_PAGE_TIMEOUT", 600.0)
-    from paperless_agent.ocr import resolve_ocr_page_timeout
+    from deepcatalog.ocr import resolve_ocr_page_timeout
 
     assert resolve_ocr_page_timeout() == 180.0
     monkeypatch.setattr(config, "LLM_PROVIDER", "ollama")
@@ -239,14 +239,14 @@ def test_resolve_ocr_concurrency_serial_for_ollama(monkeypatch):
 
 
 def test_resolve_ocr_mode_env_overrides(monkeypatch):
-    monkeypatch.setenv("PAPERLESS_OCR_MODE", "fast")
+    monkeypatch.setenv("DEEPCATALOG_OCR_MODE", "fast")
     assert resolve_ocr_mode() == "fast"
-    monkeypatch.setenv("PAPERLESS_OCR_MODE", "maximum")
+    monkeypatch.setenv("DEEPCATALOG_OCR_MODE", "maximum")
     assert resolve_ocr_mode() == "maximum"
 
 
 def test_prepare_page_image_for_vision_downscales_and_jpeg_for_ollama(monkeypatch):
-    from paperless_agent.ocr import prepare_page_image_for_vision
+    from deepcatalog.ocr import prepare_page_image_for_vision
 
     monkeypatch.setattr(config, "OCR_MAX_IMAGE_PX", 800)
     monkeypatch.setattr(config, "LLM_PROVIDER", "ollama")

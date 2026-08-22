@@ -214,7 +214,7 @@ function applyTheme(name) {
     document.documentElement.dataset.theme = theme;
   }
   try {
-    localStorage.setItem("pa-theme", theme);
+    localStorage.setItem("dc-theme", theme);
   } catch (_err) {
     // private mode — theme just won't persist
   }
@@ -227,7 +227,7 @@ export function initTheme() {
   const param = new URLSearchParams(window.location.search).get("theme");
   let stored = null;
   try {
-    stored = localStorage.getItem("pa-theme");
+    stored = localStorage.getItem("dc-theme");
   } catch (_err) {
     // ignore
   }
@@ -236,7 +236,7 @@ export function initTheme() {
 
 export function applyMockScene() {
   // Frozen mid-run workflow so the inbox screenshot shows the pipeline alive.
-  const scene = window.PA_MOCK.workflow;
+  const scene = window.DC_MOCK.workflow;
   workflowState.activeFilename = scene.activeFilename;
   workflowState.activeFileId = scene.activeFileId || "demo-f2";
   workflowState.jobTotal = scene.jobTotal;
@@ -255,7 +255,7 @@ export function applyMockScene() {
     question.value = "Which invoices did I get from Acme this quarter?";
     question.dispatchEvent(new Event("input"));
   }
-  hooks.renderAskResult(window.PA_MOCK.ask);
+  hooks.renderAskResult(window.DC_MOCK.ask);
 }
 
 function setUpdateStatus(message, tone = "") {
@@ -277,7 +277,7 @@ export function updateApplyAllowed(data) {
 
 export async function refreshUpdateVersion() {
   const data = await api("/api/update/status");
-  setUpdateStatus(`PaperlessAgent v${data.current_version}`);
+  setUpdateStatus(`DeepCatalog v${data.current_version}`);
   const link = document.getElementById("update-repo-link");
   if (link && data.repo) link.href = `https://github.com/${data.repo}`;
 }
@@ -515,7 +515,7 @@ export function settingsShellHtml() {
           </div>
           <label class="check-field">
             <input type="checkbox" id="autostart-toggle" />
-            <span>Start PaperlessAgent when the system boots</span>
+            <span>Start DeepCatalog Studio when the system boots</span>
           </label>
           <p id="autostart-hint" class="fine">
             Installs a systemd user service, enables it across reboots, and keeps the web UI available at boot.
@@ -1023,7 +1023,7 @@ export function initSettings() {
   }
 
   document.getElementById("mock-toggle").addEventListener("change", (e) => {
-    window.PA_MOCK?.setEnabled(e.target.checked);
+    window.DC_MOCK?.setEnabled(e.target.checked);
     const url = new URL(window.location.href);
     if (url.searchParams.has("mock")) {
       // Drop the ?mock= override so the stored preference takes effect.
@@ -1079,7 +1079,7 @@ export function initSettings() {
         }
       } else {
         setUpdateStatus(
-          data.message || `PaperlessAgent v${data.current_version} — up to date`,
+          data.message || `DeepCatalog v${data.current_version} — up to date`,
           "ok",
         );
       }
@@ -1112,7 +1112,7 @@ export function initSettings() {
   document.getElementById("update-restart").addEventListener("click", async () => {
     const btn = document.getElementById("update-restart");
     btn.disabled = true;
-    setUpdateStatus("Restarting PaperlessAgent…");
+    setUpdateStatus("Restarting DeepCatalog…");
     try {
       await api("/api/update/restart", { method: "POST" });
     } catch (_err) {
@@ -1135,7 +1135,7 @@ export function initSettings() {
     try {
       const data = await api("/api/data", {
         method: "DELETE",
-        body: { confirmation: "DELETE ALL PAPERLESSAGENT DATA" },
+        body: { confirmation: "DELETE ALL DEEPCATALOG DATA" },
       });
       setDangerStatus(data.message || "All stored data removed.", "ok");
       toast("All stored data removed", "ok");
@@ -1163,7 +1163,7 @@ export function initSettings() {
       renderAutostartStatus(data.autostart);
       toast(
         enabled
-          ? "PaperlessAgent will start automatically at boot."
+          ? "DeepCatalog Studio will start automatically at boot."
           : "Boot autostart disabled.",
         "success",
       );

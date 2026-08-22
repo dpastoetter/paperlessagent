@@ -1,1 +1,1 @@
-"""Local FastAPI application for PaperlessAgent."""
+"""Local FastAPI application for DeepCatalog Studio."""
