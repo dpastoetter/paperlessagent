@@ -331,6 +331,7 @@
     ].map((name) => ({ name, folder: `/home/demo/Paperless/archive/${name}` })),
     batch: { poll_interval_seconds: 30 },
     review: { require_approval: true },
+    ocr: { mode: "balanced" },
   };
 
   const ASK = {

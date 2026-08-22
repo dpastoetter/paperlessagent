@@ -1,8 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="PaperlessAgent">
-  <rect width="128" height="128" rx="24" fill="#1e293b"/>
-  <path fill="#e2e8f0" d="M36 24h40l20 20v60a8 8 0 0 1-8 8H36a8 8 0 0 1-8-8V32a8 8 0 0 1 8-8z"/>
-  <path fill="#94a3b8" d="M76 24v16a4 4 0 0 0 4 4h16"/>
-  <rect x="40" y="60" width="48" height="6" rx="3" fill="#38bdf8"/>
-  <rect x="40" y="74" width="36" height="6" rx="3" fill="#7dd3fc"/>
-  <rect x="40" y="88" width="28" height="6" rx="3" fill="#bae6fd"/>
+  <!-- Same mark as the web UI sidebar: accent gradient tile + Lucide file icon. -->
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3cbfd4"/>
+      <stop offset="100%" stop-color="#1f8fa1"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#brand)"/>
+  <g
+    transform="translate(64 64) scale(3.15) translate(-12 -12)"
+    fill="none"
+    stroke="#06282e"
+    stroke-width="1.8"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
+    <polyline points="13 2 13 9 20 9"/>
+  </g>
 </svg>

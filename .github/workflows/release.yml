@@ -20,7 +20,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to pack and publish (e.g. v0.2.9)"
+        description: "Tag to pack and publish (e.g. v0.3.0)"
         required: true
         type: string
 

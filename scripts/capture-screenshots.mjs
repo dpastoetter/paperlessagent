@@ -3,7 +3,8 @@
  *
  * Prerequisites:
  *   uvicorn app.main:app --host 127.0.0.1 --port 8080
- *   npx playwright install chromium   # once
+ *   npm install --no-save playwright   # first time
+ *   npx playwright install chromium    # first time
  *
  * Usage:
  *   node scripts/capture-screenshots.mjs
@@ -18,6 +19,13 @@ const ROOT = path.resolve(__dirname, "..");
 const OUT = process.env.PAPERLESS_SHOT_OUT || path.join(ROOT, "docs", "screenshots");
 const BASE = process.env.PAPERLESS_SHOT_BASE || "http://127.0.0.1:8080";
 const VIEWS = ["inbox", "review", "archive", "ask", "settings"];
+const READY = {
+  inbox: "#workflow .pipeline-step",
+  review: "#review-workbench .rv-filename",
+  archive: "#docs .doc-row",
+  ask: "#ask-thread .ask-turn",
+  settings: "#setup-ocr-mode",
+};
 
 // High-res for deck: 1920×1200 @ 2× DPR → 3840×2400 bitmaps
 const WIDTH = 1920;
@@ -45,14 +53,12 @@ for (const view of VIEWS) {
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await settle();
   await page.waitForFunction(() => window.PA_MOCK?.enabled === true);
-  if (view === "inbox") {
-    await page
-      .waitForSelector(".workflow, #workflow, [class*='workflow']", { timeout: 5000 })
-      .catch(() => {});
-  }
-  if (view === "ask") {
-    await page.waitForSelector("#question", { timeout: 5000 }).catch(() => {});
-  }
+  await page.waitForSelector(READY[view], { timeout: 10000 });
+  await page.evaluate(() => {
+    document.getElementById("session-unlock")?.setAttribute("hidden", "");
+    document.getElementById("session-unlock")?.classList.add("hidden");
+    document.getElementById("toast-stack")?.replaceChildren();
+  });
   const dest = path.join(OUT, `${view}.png`);
   await page.screenshot({ path: dest, type: "png", fullPage: false });
   const stat = fs.statSync(dest);

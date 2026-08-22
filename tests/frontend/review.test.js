@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import {
   adjacentIndex,
+  filenameWithEnteredDate,
   isDirty,
   isTypingTarget,
   nextIndexAfterRemoval,
+  normalizeReviewDocDate,
   overridesEqual,
   shouldPreserveReviewEditor,
+  syncFilenameDatePrefix,
 } from "../../app/static/review.js";
 
 describe("nextIndexAfterRemoval", () => {
@@ -88,6 +91,62 @@ describe("isTypingTarget", () => {
     textarea.remove();
     select.remove();
     div.remove();
+  });
+});
+
+describe("filenameWithEnteredDate", () => {
+  const undated =
+    "undated_Invoice_Blank_Invoice_Template_With_Payment_Fiel_Company_Name_USD0.pdf";
+
+  it("replaces a leading undated prefix once a full date is typed", () => {
+    expect(filenameWithEnteredDate(undated, "2024-03-15")).toBe(
+      "2024-03-15_Invoice_Blank_Invoice_Template_With_Payment_Fiel_Company_Name_USD0.pdf",
+    );
+    expect(filenameWithEnteredDate(undated, "2024/03/15")).toBe(
+      "2024-03-15_Invoice_Blank_Invoice_Template_With_Payment_Fiel_Company_Name_USD0.pdf",
+    );
+  });
+
+  it("leaves undated filenames alone until the date is complete", () => {
+    expect(filenameWithEnteredDate(undated, "2024")).toBe(undated);
+    expect(filenameWithEnteredDate(undated, "2024-03")).toBe(undated);
+    expect(filenameWithEnteredDate(undated, "2024-13-01")).toBe(undated);
+  });
+
+  it("does not rewrite custom filenames that are not undated", () => {
+    expect(filenameWithEnteredDate("scan.pdf", "2024-03-15")).toBe("scan.pdf");
+    expect(filenameWithEnteredDate("2023-01-01_Invoice.pdf", "2024-03-15")).toBe(
+      "2023-01-01_Invoice.pdf",
+    );
+  });
+
+  it("keeps updating a prefix that this field auto-applied", () => {
+    expect(
+      filenameWithEnteredDate("2024-03-15_Invoice.pdf", "2024-04-01", "2024-03-15"),
+    ).toBe("2024-04-01_Invoice.pdf");
+    expect(filenameWithEnteredDate("2024-03-15_Invoice.pdf", "", "2024-03-15")).toBe(
+      "undated_Invoice.pdf",
+    );
+  });
+});
+
+describe("normalizeReviewDocDate", () => {
+  it("accepts ISO and slash dates and rejects impossible days", () => {
+    expect(normalizeReviewDocDate(" 2024/3/15 ")).toBe(null);
+    expect(normalizeReviewDocDate("2024/03/15")).toBe("2024-03-15");
+    expect(normalizeReviewDocDate("2024-02-30")).toBe(null);
+  });
+});
+
+describe("syncFilenameDatePrefix", () => {
+  it("writes the date into an undated filename and tracks the auto prefix", () => {
+    const input = document.createElement("input");
+    input.value = "undated_Invoice.pdf";
+    expect(syncFilenameDatePrefix(input, "2024-08-22")).toBe(true);
+    expect(input.value).toBe("2024-08-22_Invoice.pdf");
+    expect(input.dataset.autoDatePrefix).toBe("2024-08-22");
+    expect(syncFilenameDatePrefix(input, "2024-09-01")).toBe(true);
+    expect(input.value).toBe("2024-09-01_Invoice.pdf");
   });
 });
 

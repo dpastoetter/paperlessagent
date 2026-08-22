@@ -4,7 +4,7 @@ Local-first document agent: drop scanned PDFs and photos into an inbox, and it r
 
 Built with [Google ADK](https://adk.dev/) (Python) + FastAPI. Works with **OpenAI (ChatGPT OAuth or API key)**, **Gemini**, or **Ollama (fully local)**. Everything runs and stays on your machine.
 
-![Inbox with live pipeline](docs/screenshots/inbox.png)
+![Inbox workbench with a live ingest pipeline](docs/screenshots/inbox.png)
 
 ## Features
 
@@ -26,17 +26,24 @@ Built with [Google ADK](https://adk.dev/) (Python) + FastAPI. Works with **OpenA
 
 ## Screenshots
 
-All screenshots use the built-in mockup mode (Settings → Look & feel), which fills the UI with demo data.
+All five shots use **mockup mode** (Settings → Look & feel) with the **Slate** theme — demo documents only, nothing is read from or written to a real archive. Open the same scene in a browser with `http://127.0.0.1:8080/?mock=1&theme=slate`.
 
-| Review queue | Archive |
+The hero shot above is **Inbox**: drop zone on the left, live workflow strip (Open → Transcribe → Find details → Name → Save → Review → Make searchable) and per-file queue on the right.
+
+| Review workbench | Archive |
 | --- | --- |
-| ![Review](docs/screenshots/review.png) | ![Archive](docs/screenshots/archive.png) |
+| ![Review queue, preview, and metadata editor](docs/screenshots/review.png) | ![Archive list with search and filters](docs/screenshots/archive.png) |
 
-| Ask the archive | Settings |
+| Ask | Settings |
 | --- | --- |
-| ![Ask](docs/screenshots/ask.png) | ![Settings](docs/screenshots/settings.png) |
+| ![Ask thread with cited sources and chat composer](docs/screenshots/ask.png) | ![Settings: AI provider and filing](docs/screenshots/settings.png) |
 
-All five shots use mockup mode with the Slate theme (`?mock=1&theme=slate`). Regenerate with `node scripts/capture-screenshots.mjs` while the app is running on port 8080.
+- **Review** — queue, document preview, and the editor (filename, category, date, parties, amount, summary). Approving files the document; rejecting removes the scan.
+- **Archive** — full-height list with search, category, counterparty, and date filters.
+- **Ask** — chat-style question and grounded answer with source documents.
+- **Settings** — AI provider (ChatGPT / local or remote Ollama) and filing & scanning (inbox path, categories, OCR mode, human review).
+
+Regenerate with `node scripts/capture-screenshots.mjs` while the app is on port 8080 (see [Project layout](#project-layout) for Playwright setup).
 
 Product deck (open in a browser): [`docs/deck/index.html`](docs/deck/index.html) — arrow keys or Space to advance.
 
@@ -468,7 +475,7 @@ Override the release source with `PAPERLESS_UPDATE_REPO=owner/repo` if you fork 
 
 GitHub Actions **packages the Linux AppImage as part of the release SDLC**: quality gate → dependency audit → AppImage (Ubuntu 22.04 / glibc 2.35+) → tarball + checksums → attach everything to the GitHub Release. That runs when you:
 
-- push a version tag (`git tag v0.2.9 && git push origin v0.2.9`)
+- push a version tag (`git tag v0.3.0 && git push origin v0.3.0`)
 - publish a GitHub Release in the UI (or `gh release create`) for a `v*` tag
 - run **Actions → Release → Run workflow** with the tag (rebuild / replace assets)
 
@@ -584,8 +591,9 @@ data/                  # created at runtime (gitignored)
 Regenerate README screenshots (server must be running on port 8080):
 
 ```bash
-# uvicorn app.main:app --port 8080
-npx playwright install chromium   # once
+# uvicorn app.main:app --host 127.0.0.1 --port 8080
+npm install --no-save playwright   # first time
+npx playwright install chromium    # first time
 node scripts/capture-screenshots.mjs
 ```
 

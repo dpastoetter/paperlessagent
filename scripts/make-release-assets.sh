@@ -149,6 +149,7 @@ REQUIRED_PATHS=(
   "packaging/linux/AppRun"
   "packaging/linux/paperlessagent.desktop"
   "packaging/linux/paperlessagent.svg"
+  "packaging/linux/paperlessagent.png"
   "scripts/build-appimage.sh"
   "scripts/install.sh"
   "scripts/install.ps1"

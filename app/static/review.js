@@ -81,6 +81,62 @@ export function isDirty(baseline, current) {
   return !overridesEqual(baseline, current);
 }
 
+const ISO_DOC_DATE = /^(\d{4})[/-](\d{2})[/-](\d{2})$/;
+const UNDATED_FILENAME_PREFIX = /^undated(?=[._]|$)/i;
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Normalize a typed review date to YYYY-MM-DD, or null if incomplete/invalid. */
+export function normalizeReviewDocDate(raw) {
+  const match = String(raw || "").trim().match(ISO_DOC_DATE);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return `${match[1]}-${match[2]}-${match[3]}`;
+}
+
+/**
+ * Swap an `undated` filename prefix (or a previously auto-applied date) for the
+ * date the reviewer just typed. Leaves custom filenames alone.
+ */
+export function filenameWithEnteredDate(filename, date, previousAutoDate = null) {
+  const name = String(filename || "");
+  if (!name) return name;
+  const normalized = normalizeReviewDocDate(date);
+  const prefix = normalized || "undated";
+  if (UNDATED_FILENAME_PREFIX.test(name)) {
+    if (!normalized) return name;
+    return name.replace(UNDATED_FILENAME_PREFIX, normalized);
+  }
+  const previous = String(previousAutoDate || "").trim();
+  if (!previous) return name;
+  const previousPrefix = new RegExp(`^${escapeRegExp(previous)}(?=[._]|$)`);
+  if (!previousPrefix.test(name)) return name;
+  return name.replace(previousPrefix, prefix);
+}
+
+export function syncFilenameDatePrefix(filenameInput, dateValue) {
+  if (!filenameInput) return false;
+  const previous = filenameInput.dataset.autoDatePrefix || null;
+  const next = filenameWithEnteredDate(filenameInput.value, dateValue, previous);
+  if (next === filenameInput.value) return false;
+  filenameInput.value = next;
+  filenameInput.dataset.autoDatePrefix = normalizeReviewDocDate(dateValue) || "";
+  return true;
+}
+
 function duplicateNoticeHtml(duplicates) {
   if (!duplicates || !duplicates.length) return "";
   const KIND_LABELS = {
@@ -623,7 +679,14 @@ export function initReview() {
   });
 
   root.addEventListener("input", (e) => {
-    if (e.target.closest("#review-editor")) updateDirtyIndicator();
+    const editor = e.target.closest("#review-editor");
+    if (!editor) return;
+    if (e.target.matches(".rv-doc-date")) {
+      syncFilenameDatePrefix(editor.querySelector(".rv-filename"), e.target.value);
+    } else if (e.target.matches(".rv-filename")) {
+      e.target.dataset.autoDatePrefix = "";
+    }
+    updateDirtyIndicator();
   });
 
   root.addEventListener("click", async (e) => {

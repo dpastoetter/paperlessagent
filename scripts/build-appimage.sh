@@ -219,15 +219,22 @@ fi
 if [ ! -f "$SRC/packaging/linux/AppRun" ]; then
   die "packaging/linux/AppRun missing from commit ${COMMIT_SHORT} — commit packaging assets first"
 fi
+if [ ! -f "$SRC/packaging/linux/paperlessagent.png" ]; then
+  die "packaging/linux/paperlessagent.png missing from commit ${COMMIT_SHORT}"
+fi
 
 rewrite_pyproject_version "$SRC/pyproject.toml" "$VERSION"
 
 install -m 0755 "$SRC/packaging/linux/AppRun" "$APPDIR/AppRun"
 install -m 0644 "$SRC/packaging/linux/paperlessagent.desktop" "$APPDIR/paperlessagent.desktop"
 install -m 0644 "$SRC/packaging/linux/paperlessagent.svg" "$APPDIR/paperlessagent.svg"
+install -m 0644 "$SRC/packaging/linux/paperlessagent.png" "$APPDIR/paperlessagent.png"
 mkdir -p "$APPDIR/usr/share/icons/hicolor/scalable/apps"
+mkdir -p "$APPDIR/usr/share/icons/hicolor/256x256/apps"
 install -m 0644 "$SRC/packaging/linux/paperlessagent.svg" \
   "$APPDIR/usr/share/icons/hicolor/scalable/apps/paperlessagent.svg"
+install -m 0644 "$SRC/packaging/linux/paperlessagent.png" \
+  "$APPDIR/usr/share/icons/hicolor/256x256/apps/paperlessagent.png"
 
 cat > "$APPDIR/usr/bin/paperlessagent" <<'WRAP'
 #!/usr/bin/env bash
